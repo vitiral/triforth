@@ -1,4 +1,4 @@
 
 triforth: triforth.S
-	@as triforth.S -o out/triforth.o
-	@ld out/triforth.o -o out/triforth
+	@as triforth.S --32 -o out/triforth.o
+	@ld out/triforth.o -m elf_i386 -o out/triforth
