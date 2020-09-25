@@ -287,8 +287,14 @@ testDsPushPop:
   call testing_underflow
   cmp $0, panic_err
   jne testDsPushPop_fail
-  ret
 
+  # TODO: not working
+  movl $77, panic_err
+  setPanicCatch $panicHandle0
+  call testing_overflow
+  cmp $0, panic_err
+  jne testDsPushPop_fail
+  ret
 testDsPushPop_fail:
   call testFailed
 testing_underflow:
@@ -296,6 +302,12 @@ testing_underflow:
   dpush $4
   dpop %eax
   dpop %eax # underflow
+  call unreachable
+testing_overflow:
+  call assertDstackEmpty
+  movl $dstackMin, %eax
+  addl $4, %eax
+  dpush $4  # overflow
   call unreachable
   
 
