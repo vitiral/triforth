@@ -42,7 +42,7 @@ panic:
 	#
 	# Important point: when testing, we will _expect_ panics. This is why we
 	# first defined functions like reset/etc
-	.long sysexit
+	.long sysexit # default (for now) is to just call sysexit
 errno:
 	# Reserved space for recording an integer error number. Most panic
 	# implementations will report this integer before exiting.
@@ -56,43 +56,24 @@ rstackCheckpoint:
 panicFlags: # flags that panic uses
 	.long 0
 
+.align 8
+testPanicHandle_handle:
+	call dbgexit
+	# 3.
+	movl $0, errno
+	call reset # note: reset returns to addr at rstackCheckpoint
+	call unreachable
+
 .section .text
+########################
+# Testing
+# Before we even start running our program, we are going to fill
+# out our test infrastructure
 
 testSuite: # ( -- )
 	# We will call this to run all our assembly-level tests.
 	# As we write tests they should be put here.
-	call testAsserts
-	call testIndirectCall
-	ret
-
-assertEaxEbxEq:
-	cmp %eax, %ebx
-	je 1f
-	jmp testFailed
-1:
-	ret
-
-testAsserts:
-	# Test that all assertions work as expected
-	movl $42, %eax
-	movl $42, %ebx
-	call assertEaxEbxEq
-	ret
-
-testIndirectCall:
-	movl $42, %eax
-	movl $0, %ebx
-	movl $testing_setEbx42, panic
-	call *(panic) # indirect call directly to memory
-	call assertEaxEbxEq
-	movl $0, %ebx
-	movl $testing_setEbx42, panic
-	movl $panic, %ebx
-	call *(%ebx) # indirect call from register
-	movl $sysexit, panic # reset panic to sysexit
-	ret
-testing_setEbx42:
-	movl $42, %ebx
+	call testPanicHandle
 	ret
 
 reset: # ( * -- ) ( R: * -- )
@@ -108,12 +89,6 @@ reset: # ( * -- ) ( R: * -- )
 	movl $22, %ebx
 	call sysexit
 
-sysexit: # %ebx:rc ( -- )
-	# exit the program with the return code in %ebx
-	# This is our first function. We put our forth-style type signature at the
-	# top, with register inputs/outputs outside of the parens
-	movl $SYS_EXIT, %eax
-	int  $LINUX_SYSCALL
 
 unreachable:
 	# Call to distinguish unrechable code. exits with RC_UNREACHABLE
@@ -125,9 +100,15 @@ testFailed:
 	movl $RC_TFAIL, %ebx
 	call sysexit
 
+sysexit: # %ebx:rc ( -- )
+	# exit the program with the return code in %ebx
+	# This is our first function. We put our forth-style type signature at the
+	# top, with register inputs/outputs outside of the parens
+	movl $SYS_EXIT, %eax
+	int  $LINUX_SYSCALL
+
 dbgexit: # ( -- )
 	# Exits immediately with rc=222
-	# Mainly used in debugging.
 	movl $222, %ebx
 	call sysexit
 
@@ -136,14 +117,81 @@ exit0: # ( -- )
 	movl $0, %ebx
 	call sysexit
 
+
+testPanicHandle: # ( * -- )
+  # The first thing we need to do is test the panic handling code we just
+	# wrote. The steps are:
+	# 1. set up our handling code by setting panic, rstackCheckpoint and errno
+	# 2. call a function which calls another function, which panics.
+	# 3. handle the panic by setting errno to 0 and resetting
+	# 4. assert errno is 0 as the code continues.
+	movl $testPanicHandle_handle, panic
+	movl $42, errno
+	# Move esp-4 into rstackCheckpoint. This is where the rstack will be reset to.
+	leal -4(%esp), %eax
+	movl %eax, rstackCheckpoint
+
+	# 2.
+	# call *(panic)
+	# FIXME: cannot get indirect calling to work :(
+	movl $testPanicHandle_handle, panic
+	call *(panic)
+	call dbgexit
+
+	call exit0
+	call testing_willPanic
+	cmp $0, (errno)
+	je 1f
+	call testFailed
+1:
+	# test passed
+	ret
+	
+testing_willPanic:
+	call testing_panics
+	call unreachable
+testing_panics:
+	call *(panic)
+	call unreachable
+# 	.text
+# 	.align 4
+# testPanicHandle_handle:
+# 	call dbgexit
+# 	# 3.
+# 	movl $0, errno
+# 	call reset # note: reset returns to addr at rstackCheckpoint
+# 	call unreachable
+
+
+########################
+# Start of our program
 .globl _start
 _start:
+	movl $dstackMax, %ebp        # ebp is our SP (data stack pointer)
+	movl $rstackMax, %esp       # esp is our R (return stack pointer)
 	call testSuite
-
 	movl $0, %ebx
 	call sysexit
 
+# dpush: # ( -- %eax )
+# 	# push %eax onto the data stack
+# 	subl $4, %ebp      # grow stack down
+# 	cmp $dstackMin, %ebp  # check for stack overflow
+# 	jl 1f
+# 	movl %eax, (%ebp)  # put value in
+# 	ret
+# 1:
+# 	movl $2, %ebx
+# 	call sysexit
+# 
+# dpop: # ( u -- ) %eax=u
+# 	# pop a value in the data stack into %eax
+# 	cmp $dstackMax, %ebp # check for stack underflow
+# 	jge 1f
+# 	movl (%ebp), %eax # move the value in to return
+# 	addl $4, %ebp     # shrink stack upwards
+# 	ret
+# 1:
+# 	movl $3, %ebx
+# 	call *(exit)
 
-setEbx43:
-	movl $43, %ebx
-	ret
