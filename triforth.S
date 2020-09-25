@@ -35,6 +35,7 @@ rstackMin: # return stack
 	.space 256
 rstackMax:
 
+.align 8
 panic:
 	# This is the _address_ that should be called indirectly when panicing.
 	# panicing is like exiting, except our panic code can also do things
@@ -56,6 +57,7 @@ rstackCheckpoint:
 panicFlags: # flags that panic uses
 	.long 0
 
+.align 8
 testPanicHandle_handle:
 	call dbgexit
 	# 3.
@@ -134,8 +136,8 @@ testPanicHandle: # ( * -- )
 	# 2.
 	# call *(panic)
 	# FIXME: cannot get indirect calling to work :(
-	movl $testPanicHandle_handle, %eax
-	jmp *(%eax)
+	movl $testPanicHandle_handle, panic
+	call *(panic)
 	call dbgexit
 
 	call exit0
