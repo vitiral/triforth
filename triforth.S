@@ -56,6 +56,13 @@ rstackCheckpoint:
 panicFlags: # flags that panic uses
 	.long 0
 
+testPanicHandle_handle:
+	call dbgexit
+	# 3.
+	movl $0, errno
+	call reset # note: reset returns to addr at rstackCheckpoint
+	call unreachable
+
 .section .text
 ########################
 # Testing
@@ -104,7 +111,13 @@ dbgexit: # ( -- )
 	movl $222, %ebx
 	call sysexit
 
+exit0: # ( -- )
+	# Exits immediately with rc=0
+	movl $0, %ebx
+	call sysexit
 
+
+.align 4
 testPanicHandle: # ( * -- )
   # The first thing we need to do is test the panic handling code we just
 	# wrote. The steps are:
@@ -115,10 +128,17 @@ testPanicHandle: # ( * -- )
 	movl $testPanicHandle_handle, panic
 	movl $42, errno
 	# Move esp-4 into rstackCheckpoint. This is where the rstack will be reset to.
-	leal -4(%esp), %ebx
-	movl %ebx, rstackCheckpoint
+	leal -4(%esp), %eax
+	movl %eax, rstackCheckpoint
 
 	# 2.
+	# call *(panic)
+	# FIXME: cannot get indirect calling to work :(
+	movl $testPanicHandle_handle, %eax
+	jmp *(%eax)
+	call dbgexit
+
+	call exit0
 	call testing_willPanic
 	cmp $0, (errno)
 	je 1f
@@ -131,15 +151,16 @@ testing_willPanic:
 	call testing_panics
 	call unreachable
 testing_panics:
-	movl panic, %eax
-	call *(%eax)
+	call *(panic)
 	call unreachable
-testPanicHandle_handle:
-	# 3.
-	movl $0, (errno)
-	call reset # note: reset returns to addr at rstackCheckpoint
-	call unreachable
-
+# 	.text
+# 	.align 4
+# testPanicHandle_handle:
+# 	call dbgexit
+# 	# 3.
+# 	movl $0, errno
+# 	call reset # note: reset returns to addr at rstackCheckpoint
+# 	call unreachable
 
 
 ########################
