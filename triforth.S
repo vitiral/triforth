@@ -7,27 +7,31 @@
 
 #############
 # Constants
-  # Return codes
-  .equ RC_DBG,99 # 99 problems and debugging ain't one
-  .equ RC_TFAIL,100
-  .equ RC_UNREACHABLE,101
-  .equ RC_INVALIDRESET,102
+# Return codes
+.equ RC_DBG,99 # 99 problems and debugging ain't one
+.equ RC_TFAIL,100
+.equ RC_UNREACHABLE,101
+.equ RC_INVALIDRESET,102
 
-  .equ LINUX_SYSCALL,0x80  # linux kernel interrupt vector
-  # System call numbers
-  .equ SYS_OPEN, 5
-  .equ SYS_WRITE, 4
-  .equ SYS_READ, 3
-  .equ SYS_CLOSE, 6
-  .equ SYS_EXIT, 1
-  
-  # File open options
-  .equ O_RDONLY, 0
+# Panic Error Codes
+.equ ERR_PSTACK_OVERFLOW,0x300
+.equ ERR_PSTACK_UNDERFLOW,0x301
 
-  #standard file descriptors
-  .equ STDIN, 0
-  .equ STDOUT, 1
-  .equ STDERR, 2
+# Numbers used in Linux syscalls
+.equ LINUX_SYSCALL,0x80  # linux kernel interrupt vector
+.equ SYS_OPEN, 5
+.equ SYS_WRITE, 4
+.equ SYS_READ, 3
+.equ SYS_CLOSE, 6
+.equ SYS_EXIT, 1
+
+# File open options
+.equ O_RDONLY, 0
+
+# Standard file descriptors
+.equ STDIN, 0
+.equ STDOUT, 1
+.equ STDERR, 2
 
 ######################################################
 ### DATA SECTION
@@ -36,10 +40,10 @@
 # the definitions are here. Refer here when you see the
 # data used in the code.
 .section .data
-dstackMin: .space 256 # data stack
-dstackMax:
 rstackMin: .space 1024 # return stack
 rstackMax:
+dstackMin: .space 256 # data stack
+dstackMax:
 .equ IO_BUFFER_SIZE,128
 ioBuffer: .space IO_BUFFER_SIZE
 ioBufferLen: .double 0  # number of chars in ioBuffer
@@ -69,13 +73,13 @@ panicFlags: .double 0
 
 ##############################
 # Core Testing Functions
-
 testSuite: # ( -- )
   # We will call this to run all our assembly-level tests.
   # As we write tests they should be put here.
   call testAsserts
   call testIndirectCall
   call testPanicHandle
+  call testDsPushPop
   ret
 
 assertEaxEbxEq:
@@ -112,20 +116,6 @@ testing_setEbx42:
 
 ##############################
 # Error Handling Functions
-
-reset: # ( * -- ) ( R: * -- )
-  # Clears the data and return stacks. Important: this is used in panic
-  # handling code.
-  cmp $0, rstackCheckpoint        # if rstackCheckpoint is 0 then we must exit
-                              # since we don't know where to return
-  je 1f
-  movl rstackCheckpoint, %esp   # reset the rstack to the landing pad
-  movl $dstackMax, %ebp            # clear the data stack
-  ret                              # return to the top value in new return stack
-1:
-  movl $RC_INVALIDRESET, %ebx
-  jmp sysexit
-
 sysexit: # %ebx:rc ( -- )
   # exit the program with the return code in %ebx
   # This is our first function. We put our forth-style type signature at the
@@ -154,6 +144,25 @@ exit0: # ( -- )
   movl $0, %ebx
   jmp sysexit
 
+reset: # ( * -- ) ( R: * -- )
+  # Clears the data and return stacks and returns control at rstackCheckpoint
+  # Important: this is ONLY used in panic handling code during testing.
+  cmp $0, rstackCheckpoint        # if rstackCheckpoint is 0 then we must exit
+                              # since we don't know where to return
+  je 1f
+  movl rstackCheckpoint, %esp   # reset the rstack to the landing pad
+  movl $dstackMax, %ebp            # clear the data stack
+  ret                              # return to the top value in new return stack
+1:
+  movl $RC_INVALIDRESET, %ebx
+  jmp sysexit
+
+# A macro to take the checkpoint will be useful.
+.macro takeRstackCheckpoint
+  leal -4(%esp), %eax  # leal takes the ADDRESS pointed to by the first
+  movl %eax, rstackCheckpoint
+.endm
+
 testPanicHandle: # ( * -- )
   # The first thing we need to do is test the panic handling code we just
   # wrote. The steps are:
@@ -163,8 +172,7 @@ testPanicHandle: # ( * -- )
   # 4. assert panic_err is 0 as the code continues.
   movl $testPanicHandle_handle, panic
   movl $42, panic_err
-  leal -4(%esp), %eax
-  movl %eax, rstackCheckpoint
+  takeRstackCheckpoint
 
   # 2.
   call testing_willPanic
@@ -173,6 +181,7 @@ testPanicHandle: # ( * -- )
   je 1f
   call testFailed
 1:
+  movl $sysexit, panic
   ret
 testPanicHandle_handle:
   # 3.
@@ -186,13 +195,99 @@ testing_panics:
   call *(panic)
   jmp unreachable
 
+
+
 ##############################
 # Stack Operations
+#
+# The data stack is our primary means of passing data -- both in assembly
+# functions and in Forth. This keeps our implementations simpler, as we rarely
+# have to think about registers non-locally.
+#
+# The return stack is the standard assembly one, managed by %esp and the call/ret
+# operations. In some cases we may store local variables in it, but that will be
+# rare.
+#
+# Note: All the stacks grow downwards, meaning the top of the stack is at the
+# lowest point in memory.
+#
+# We utilize macros to make the core push/pop functions simpler. 
+#
+# Data stack: grows downwards bounded by [dstackMin,dstackMax), %ebp is top
+# Return stack: grows downwards bounded by [rstackMin,rstackMax), %esp is top
 
+checkPushDs:
+  # Checks to make sure that the datastack hasn't overflowed.
+  # If it has, re-increments and panics with appropriate error.
+  cmp $dstackMin, %ebp
+  jl 1f
+  ret
+1:
+  addl $4, %ebp
+  movl $ERR_PSTACK_OVERFLOW, panic_err
+  call *(panic)
+  jmp unreachable
+
+.macro dpush reg
+  subl $4, %ebp
+  call checkPushDs
+  movl \reg , (%ebp)
+.endm
+
+checkPopDs:
+  # Checks to make sure that the datastack hasn't underflowed.
+  # If it has, re-decrements and panics with appropriate error.
+  cmp $dstackMax, %ebp
+  jge 1f
+  ret
+1:
+  subl $4, %ebp
+  movl $ERR_PSTACK_UNDERFLOW, panic_err
+  call *(panic)
+  jmp unreachable
+
+.macro dpop reg
+  movl (%ebp) , \reg
+  call checkPopDs
+  addl $4, %ebp
+.endm
+
+assertDstackEmpty:
+  # Assert that the datastack is empty
+  movl %ebp, %eax
+  movl $dstackMax, %ebx
+  call assertEaxEbxEq
+  ret
+
+testDsPushPop:
+  call assertDstackEmpty
+
+  # push/pop works
+  dpush $42
+  dpop %eax
+  movl $42, %ebx
+  call assertEaxEbxEq
+  call assertDstackEmpty
+
+  # push2 / pop2 works
+  dpush $43
+  dpush $44
+  dpop %eax
+  movl $44, %ebx
+  call assertEaxEbxEq
+  dpop %eax
+  movl $43, %ebx
+  call assertEaxEbxEq
+  call assertDstackEmpty
+
+  ret
+# TODO: test data stack push/pop
 
 ##############################
 # Main Entrypoint
 .globl _start
 _start:
+  movl $rstackMax, %esp
+  movl $dstackMax, %ebp
   call testSuite
   jmp exit0
