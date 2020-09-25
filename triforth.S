@@ -65,6 +65,9 @@ panicFlags: .double 0
 ######################################################
 .section .text
 
+##############################
+# Core Testing Functions
+
 testSuite: # ( -- )
 	# We will call this to run all our assembly-level tests.
 	# As we write tests they should be put here.
@@ -104,6 +107,9 @@ testIndirectCall:
 testing_setEbx42:
 	movl $42, %ebx
 	ret
+
+##############################
+# Error Handling Functions
 
 reset: # ( * -- ) ( R: * -- )
 	# Clears the data and return stacks. Important: this is used in panic
@@ -146,11 +152,6 @@ exit0: # ( -- )
 	movl $0, %ebx
 	jmp sysexit
 
-.globl _start
-_start:
-	call testSuite
-	jmp exit0
-
 testPanicHandle: # ( * -- )
   # The first thing we need to do is test the panic handling code we just
 	# wrote. The steps are:
@@ -183,7 +184,9 @@ testing_panics:
 	call *(panic)
 	jmp unreachable
 
-
-setEbx43:
-	movl $43, %ebx
-	ret
+##############################
+# Main Entrypoint
+.globl _start
+_start:
+	call testSuite
+	jmp exit0
