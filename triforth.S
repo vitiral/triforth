@@ -158,7 +158,8 @@ reset: # ( * -- ) ( R: * -- )
   jmp sysexit
 
 # A macro to take the checkpoint will be useful.
-.macro takeRstackCheckpoint
+.macro setPanicCatch a
+  movl \a, panic
   leal -4(%esp), %eax  # leal takes the ADDRESS pointed to by the first
   movl %eax, rstackCheckpoint
 .endm
@@ -170,9 +171,8 @@ testPanicHandle: # ( * -- )
   # 2. call a function which calls another function, which panics.
   # 3. handle the panic by setting panic_err to 0 and resetting
   # 4. assert panic_err is 0 as the code continues.
-  movl $testPanicHandle_handle, panic
   movl $42, panic_err
-  takeRstackCheckpoint
+  setPanicCatch $panicHandle0
 
   # 2.
   call testing_willPanic
@@ -183,8 +183,10 @@ testPanicHandle: # ( * -- )
 1:
   movl $sysexit, panic
   ret
-testPanicHandle_handle:
+panicHandle0:
   # 3.
+  # This is part of this test, but is also the "standard" panic handle for
+  # tests. It simply sets panic_err=0
   movl $0, panic_err
   call reset # note: reset returns to addr at rstackCheckpoint
   jmp unreachable
@@ -280,7 +282,23 @@ testDsPushPop:
   call assertEaxEbxEq
   call assertDstackEmpty
 
+  movl $77, panic_err
+  setPanicCatch $panicHandle0
+  call testing_underflow
+  cmp $0, panic_err
+  jne testDsPushPop_fail
   ret
+
+testDsPushPop_fail:
+  call testFailed
+testing_underflow:
+  call assertDstackEmpty
+  dpush $4
+  dpop %eax
+  dpop %eax # underflow
+  call unreachable
+  
+
 # TODO: test data stack push/pop
 
 ##############################
