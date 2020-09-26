@@ -82,6 +82,7 @@ BASE: .int 10   # base for default number conversions
 testPrefixStr: .ascii "**TEST \0"
 testPassStr: .ascii " PASS\n\0"
 panicStr: .ascii "!! PANIC ENCOUNtERED\n\0"
+stackStr: .ascii "Stack< \0"
 
 # Test Names
 testIoBufferStr: .ascii "testIoBuffer\0"
@@ -110,6 +111,7 @@ testSuite: # ( -- )
   call testCountNt
   call testIoBuffer
   call testDOT
+  call testDOTs
   call assertEmpty
 
   ret
@@ -378,6 +380,11 @@ swap: # ( a b -- b a )
   dpush %eax
   ret
 
+dup: # ( a -- a a )
+  movl (%ebp), %eax
+  dpush %eax
+  ret
+
 drop: # ( a -- )
   dpop %eax
   ret
@@ -623,6 +630,66 @@ testDOT:
   call countnt
   call typeTestPass
   call assertEmpty
+  ret
+
+MUL: # ( a b -- u )
+  # Forth *, multiply the two numbers
+  dpop %eax
+  dpop %ecx
+  mull %ecx # %eax=%eax*%ecx
+  dpush %eax
+  ret
+
+DOTs: # ( -- )
+  # Forth .S, prints the current stack
+  dpush $stackStr
+  # "Stack< DEPTH > "
+  call countnt
+  call type
+
+  call depth 
+  dpush $10
+  call DOTbase
+
+  dpush $'>'
+  call emit
+  dpush $' '
+  call emit
+
+  call depth # 4(%ebp) is depth
+  dpush $0   # (%ebp) is index
+1:
+  movl (%ebp), %eax
+  cmp %eax, 4(%ebp)
+  je 2f
+  call dup
+  dpush $4
+  call MUL 
+  dpop %eax # index * 4
+  addl %ebp, %eax
+  addl $8, %eax # skip depth+index
+
+  # print the number in hex
+  movl (%eax), %ebx
+  dpush %ebx
+  dpush $16
+  call DOTbase
+
+  addl $1, (%ebp) # increment index
+  jmp 1b # loop
+
+2:
+  call _2drop
+  ret
+
+testDOTs:
+  dpush $0x01
+  dpush $0x02
+  dpush $0xAA
+  dpush $0x1A2B
+  call DOTs
+  call _2drop
+  call _2drop
   ret
 
 
