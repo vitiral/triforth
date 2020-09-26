@@ -74,6 +74,7 @@ panicFlags: .int 0
 emitFd: .int 2  # STDERR
 .equ EMIT_BUFFER_SIZE,16
 emitBuffer: .space EMIT_BUFFER_SIZE # scratch space for emit and DOT
+emitBufferMax:
 BASE: .int 10   # base for default number conversions
 
 ##############################
@@ -549,8 +550,8 @@ DOT: # ( n -- )
 
 cSTORE: # ( c addr -- )
   # forth C!. Store character at address
-  dpop %eax
-  dpop %ebx
+  dpop %eax  # addr
+  dpop %ebx  # c
   movb %bl, (%eax)
   ret
 
@@ -568,8 +569,7 @@ DOTbase: # ( n u:base -- )
   dpush %edx # remainder
   call uTOascii
 
-  movl $EMIT_BUFFER_SIZE - 1, %eax
-  addl $emitBuffer, %eax
+  movl $emitBufferMax-1, %eax
   subl 4(%ebp), %eax # address to store at. We are writing right->left
   dpush %eax
   call cSTORE
@@ -578,7 +578,9 @@ DOTbase: # ( n u:base -- )
   cmp $0, 8(%ebp) # check if number is 0
   jne 1b # loop
   # ( n u:base u:count )
-  dpush $emitBuffer
+  movl $emitBufferMax, %eax
+  subl (%ebp), %eax
+  dpush %eax
   call swap
 
   call type
