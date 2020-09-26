@@ -12,6 +12,8 @@
 .equ RC_TFAIL,100
 .equ RC_UNREACHABLE,101
 .equ RC_INVALIDRESET,102
+.equ RC_ARRAYBOUNDS,103
+.equ RC_PANIC,104
 
 # Panic Error Codes
 .equ ERR_PSTACK_OVERFLOW,0x300
@@ -44,9 +46,9 @@ rstackMin: .space 1024 # return stack
 rstackMax:
 dstackMin: .space 256 # data stack
 dstackMax:
-.equ IO_BUFFER_SIZE,128
-ioBuffer: .space IO_BUFFER_SIZE
-ioBufferLen: .double 0  # number of chars in ioBuffer
+.equ IO_BUFFER_SIZE, 128
+ioBuffer: .space 128
+ioBufferLen: .int 0  # number of chars in ioBuffer
 
 # This is the _address_ that should be called indirectly when panicing.
 # panicing is like exiting, except our panic code can also do things
@@ -54,17 +56,28 @@ ioBufferLen: .double 0  # number of chars in ioBuffer
 #
 # Important point: when testing, we will _expect_ panics. This is why we
 # first defined functions like reset/etc
-panic: .double 0
+panic: .int 0
 # Reserved space for recording an integer error number. Most panic
 # implementations will report this integer before exiting.
-panic_err: .double 0
+panicErr: .int 0
 # This is used in panic handling code. If reset is called, then
 # the rstack will be returned to this value before returning.
 #
 # Note:reset is typically only called in panic-handling code.
-rstackCheckpoint: .double 0
+rstackCheckpoint: .int 0
 # flags that panic uses
-panicFlags: .double 0
+panicFlags: .int 0
+
+# The fd that standard printing commands output to.
+emitFd: .int 2  # STDERR
+emitBuf: .int 0
+
+##############################
+# Test Strings: unaligned printed strings in tests
+testPrefixStr: .ascii "  TEST "
+testPassStr: .ascii " PASS\n"
+
+testIoBufferStr: .ascii "testIoBuffer"
 
 ######################################################
 ### CODE SECTION
@@ -80,6 +93,8 @@ testSuite: # ( -- )
   call testIndirectCall
   call testPanicHandle
   call testDsPushPop
+  call testEmit
+  call testIoBuffer
   ret
 
 assertEaxEbxEq:
@@ -108,7 +123,8 @@ testIndirectCall:
   movl $panic, %ebx
   call *(%ebx) # indirect call from register
 
-  movl $sysexit, panic # reset panic to sysexit
+  movl $defaultPanic, panic # reset panic to sysexit
+  movl $0, rstackCheckpoint
   ret
 testing_setEbx42:
   movl $42, %ebx
@@ -164,30 +180,35 @@ reset: # ( * -- ) ( R: * -- )
   movl %eax, rstackCheckpoint
 .endm
 
+resetPanicCatch:
+  movl $defaultPanic, panic
+  movl $0, rstackCheckpoint
+  ret
+
 testPanicHandle: # ( * -- )
   # The first thing we need to do is test the panic handling code we just
   # wrote. The steps are:
-  # 1. set up our handling code by setting panic, rstackCheckpoint and panic_err
+  # 1. set up our handling code by setting panic, rstackCheckpoint and panicErr
   # 2. call a function which calls another function, which panics.
-  # 3. handle the panic by setting panic_err to 0 and resetting
-  # 4. assert panic_err is 0 as the code continues.
-  movl $42, panic_err
+  # 3. handle the panic by setting panicErr to 0 and resetting
+  # 4. assert panicErr is 0 as the code continues.
+  movl $42, panicErr
   setPanicCatch $panicHandle0
 
   # 2.
   call testing_willPanic
   # 4.
-  cmp $0, panic_err
+  cmp $0, panicErr
   je 1f
   call testFailed
 1:
-  movl $sysexit, panic
+  call resetPanicCatch
   ret
 panicHandle0:
   # 3.
   # This is part of this test, but is also the "standard" panic handle for
-  # tests. It simply sets panic_err=0
-  movl $0, panic_err
+  # tests. It simply sets panicErr=0
+  movl $0, panicErr
   call reset # note: reset returns to addr at rstackCheckpoint
   jmp unreachable
 testing_willPanic:
@@ -196,7 +217,6 @@ testing_willPanic:
 testing_panics:
   call *(panic)
   jmp unreachable
-
 
 
 ##############################
@@ -213,10 +233,10 @@ testing_panics:
 # Note: All the stacks grow downwards, meaning the top of the stack is at the
 # lowest point in memory.
 #
-# We utilize macros to make the core push/pop functions simpler. 
+# We utilize macros to make the core push/pop functions simpler. We also check
+# for over/under flow
 #
-# Data stack: grows downwards bounded by [dstackMin,dstackMax), %ebp is top
-# Return stack: grows downwards bounded by [rstackMin,rstackMax), %esp is top
+# Ds: data stack grows downwards bounded by [dstackMin,dstackMax), %ebp is top
 
 checkPushDs:
   # Checks to make sure that the datastack hasn't overflowed.
@@ -226,7 +246,7 @@ checkPushDs:
   ret
 1:
   addl $4, %ebp
-  movl $ERR_PSTACK_OVERFLOW, panic_err
+  movl $ERR_PSTACK_OVERFLOW, panicErr
   call *(panic)
   jmp unreachable
 
@@ -244,7 +264,7 @@ checkPopDs:
   ret
 1:
   subl $4, %ebp
-  movl $ERR_PSTACK_UNDERFLOW, panic_err
+  movl $ERR_PSTACK_UNDERFLOW, panicErr
   call *(panic)
   jmp unreachable
 
@@ -254,6 +274,13 @@ checkPopDs:
   addl $4, %ebp
 .endm
 
+depth: # ( -- u )
+  # returns the depth of the stack
+  movl $dstackMax, %eax
+  subl %ebp, %eax
+  dpush %eax
+  ret
+
 assertDstackEmpty:
   # Assert that the datastack is empty
   movl %ebp, %eax
@@ -262,6 +289,7 @@ assertDstackEmpty:
   ret
 
 testDsPushPop:
+  # test push/pop and overflow/underflow checking
   call assertDstackEmpty
 
   # push/pop works
@@ -282,17 +310,16 @@ testDsPushPop:
   call assertEaxEbxEq
   call assertDstackEmpty
 
-  movl $77, panic_err
+  movl $77, panicErr
   setPanicCatch $panicHandle0
   call testing_underflow
-  cmp $0, panic_err
+  cmp $0, panicErr
   jne testDsPushPop_fail
 
-  # TODO: not working
-  movl $77, panic_err
+  movl $77, panicErr
   setPanicCatch $panicHandle0
   call testing_overflow
-  cmp $0, panic_err
+  cmp $0, panicErr
   jne testDsPushPop_fail
   ret
 testDsPushPop_fail:
@@ -305,13 +332,126 @@ testing_underflow:
   call unreachable
 testing_overflow:
   call assertDstackEmpty
-  movl $dstackMin, %eax
-  addl $4, %eax
+  movl $dstackMin, %ebp
+  addl $4, %eax # overflows when <=, so will still overflow 4 above.
   dpush $4  # overflow
   call unreachable
-  
 
-# TODO: test data stack push/pop
+emit: # ( c -- )
+  # emits a single character to emitFd
+  dpop %eax
+  movb %al, emitBuf
+  movl emitFd, %ebx   # fd
+  movl $emitBuf, %ecx # &buf
+  movl $1, %edx       # bytesToWrite
+syswrite: # %ebx:fd %ecx:&buff %edx:bytesToWrite ( -- )
+  # Direct call to SYS_WRITE syscall with error checking.
+  movl $SYS_WRITE, %eax
+  int $0x80
+	cmp $0, %eax
+	jl 1f
+  ret
+1:
+  movl %eax, panicErr
+  call *(panic)
+  jmp unreachable
+
+testEmit:
+  dpush $'E'
+  call emit
+  dpush $' '
+  call emit
+  dpush $'P'
+  call emit
+  dpush $'A'
+  call emit
+  dpush $'S'
+  call emit
+  dpush $'S'
+  call emit
+  dpush $'\n'
+  call emit
+  ret
+
+ioBuffer_pushC: # ( c -- )
+  # push a character into ioBuffer
+  dpop %eax
+  movl ioBufferLen, %ebx  # address to write to
+  cmp $IO_BUFFER_SIZE, %ebx
+  jge 1f
+  movl $ioBuffer, %ebx
+  addl ioBufferLen, %ebx
+  movb %al, (%ebx)
+  ret
+1:
+  movl $RC_ARRAYBOUNDS, panicErr
+  call *(panic)
+  jmp unreachable
+
+ioBuffer_pushNt: # ( addr -- )
+  # push a null-terminated (c-style) string into ioBuffer
+  # This will panic on out-of-bounds
+  # This is useful for writing our test results and error messages,
+  # since assembler .ascii directive is null-terminated strings.
+  dpop %eax # src
+  movl $ioBuffer, %ebx
+  addl ioBufferLen, %ebx  # dest
+  movl $ioBuffer, %edi
+  addl $IO_BUFFER_SIZE, %edi # address to panic at
+1:
+  cmp %ebx, %edi
+  jle 3f  # index out of bounds
+  movb (%eax), %cl
+  movb %cl, (%ebx)
+  addl $1, ioBufferLen
+  inc %eax
+  inc %ebx
+  cmpb $0, (%eax) # check for null-termination
+  jne 1b  # loop
+  ret
+3:
+  movl $RC_ARRAYBOUNDS, panicErr
+  call *(panic)
+  jmp unreachable
+
+ioBuffer_emit: # ( -- )
+  # Emit the entire IO buffer to emitFd
+  movl emitFd, %ebx   # fd
+  movl $ioBuffer, %ecx # &buf
+  movl ioBufferLen, %edx       # bytesToWrite
+  call syswrite
+  ret
+
+ioBuffer_reset: # ( -- )
+  movl $0, ioBufferLen
+  ret
+
+emitTestPass: # ( ntstr -- )
+  # emits "TEST <ntstr> PASS\n" to emitFd
+  dpush $testPrefixStr
+  call ioBuffer_pushNt # "TEST "
+  # call ioBuffer_pushNt # <ntstr>
+  # dpush $testPassStr
+  # call ioBuffer_pushNt # " PASS\n"
+  call ioBuffer_emit
+  call ioBuffer_reset
+  ret
+
+testIoBuffer:
+  call ioBuffer_reset
+  # dpush $testIoBufferStr
+  call emitTestPass
+  ret
+
+defaultPanic: # ( -- )
+  # The default panic implemention uses the above tools to ouput
+  # relevant panic messages.
+  dpush $'\n'
+  call emit
+  dpush $'!'
+  call emit
+  movl $RC_PANIC, %ebp
+  jmp sysexit
 
 ##############################
 # Main Entrypoint
