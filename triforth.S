@@ -18,6 +18,7 @@
 # Panic Error Codes
 .equ ERR_PSTACK_OVERFLOW,0x300
 .equ ERR_PSTACK_UNDERFLOW,0x301
+.equ ERR_ASCII_BOUNDS,0x302
 
 # Numbers used in Linux syscalls
 .equ LINUX_SYSCALL,0x80  # linux kernel interrupt vector
@@ -71,7 +72,8 @@ rstackCheckpoint: .int 0
 panicFlags: .int 0
 
 emitFd: .int 2  # STDERR
-emitBuf: .int 0 # scratch space for emit
+emitBuffer: .space 16 # scratch space for emit and DOT
+BASE: .int 10   # base for default number conversions
 
 ##############################
 # Text Strings: unaligned strings for IO buffer
@@ -81,6 +83,7 @@ panicStr: .ascii "!! PANIC ENCOUNtERED\n\0"
 
 # Test Names
 testIoBufferStr: .ascii "testIoBuffer\0"
+testDOTStr: .ascii "testDOT\0"
 
 .align 8
 
@@ -94,6 +97,7 @@ testIoBufferStr: .ascii "testIoBuffer\0"
 testSuite: # ( -- )
   # We will call this to run all our assembly-level tests.
   # As we write tests they should be put here.
+  call assertEmpty
   call testAsserts
   call testIndirectCall
   call testPanicHandle
@@ -103,6 +107,9 @@ testSuite: # ( -- )
   call testEmit
   call testCountNt
   call testIoBuffer
+  call testDOT
+  call assertEmpty
+
   ret
 
 assertEaxEbxEq:
@@ -305,7 +312,7 @@ depth: # ( -- u )
   dpush %eax
   ret
 
-assertDstackEmpty:
+assertEmpty:
   # Assert that the datastack is empty
   movl %ebp, %eax
   movl $dstackMax, %ebx
@@ -314,14 +321,14 @@ assertDstackEmpty:
 
 testDsPushPop:
   # test push/pop and overflow/underflow checking
-  call assertDstackEmpty
+  call assertEmpty
 
   # push/pop works
   dpush $42
   dpop %eax
   movl $42, %ebx
   call assertEaxEbxEq
-  call assertDstackEmpty
+  call assertEmpty
 
   # push2 / pop2 works
   dpush $43
@@ -332,7 +339,7 @@ testDsPushPop:
   dpop %eax
   movl $43, %ebx
   call assertEaxEbxEq
-  call assertDstackEmpty
+  call assertEmpty
 
   movl $77, panicErr
   setPanicCatch $panicHandle0
@@ -349,13 +356,13 @@ testDsPushPop:
 testDsPushPop_fail:
   call testFailed
 testing_underflow:
-  call assertDstackEmpty
+  call assertEmpty
   dpush $4
   dpop %eax
   dpop %eax # underflow
   call unreachable
 testing_overflow:
-  call assertDstackEmpty
+  call assertEmpty
   movl $dstackMin, %ebp
   addl $4, %eax # overflows when <=, so will still overflow 4 above.
   dpush $4  # overflow
@@ -370,6 +377,11 @@ swap: # ( a b -- b a )
   ret
 
 drop: # ( a -- )
+  dpop %eax
+  ret
+
+_2drop: # ( a b -- )
+  dpop %eax
   dpop %eax
   ret
 
@@ -435,14 +447,16 @@ testStackBasic:
   movl $2, %ebx
   call assertEaxEbxEq
 
+  call _2drop
+  call drop
   ret
 
 emit: # ( c -- )
   # emits a single character to emitFd
   dpop %eax
-  movb %al, emitBuf
+  movb %al, emitBuffer
   movl emitFd, %ebx   # fd
-  movl $emitBuf, %ecx # &buf
+  movl $emitBuffer, %ecx # &buf
   movl $1, %edx       # bytesToWrite
 syswrite: # %ebx:fd %ecx:&buff %edx:bytesToWrite ( -- )
   # Direct call to SYS_WRITE syscall with error checking.
@@ -455,13 +469,6 @@ syswrite: # %ebx:fd %ecx:&buff %edx:bytesToWrite ( -- )
   movl %eax, panicErr
   call *(panic)
   jmp unreachable
-
-dot: # ( n -- )
-  # forth '.', emit the value on the stack.
-  dpop %eax
-1:
-  # TODO: implement this
-  call unreachable
 
 testEmit:
   dpush $'E'
@@ -529,6 +536,91 @@ testIoBuffer:
   call countnt
   call typeTestPass
   ret
+
+DOT: # ( n -- )
+  # forth '.', emit the value on the stack.
+  movl BASE, %eax
+  dpush %eax
+  call DOTbase
+  dpush $' '
+  call emit
+  ret
+
+cSTORE: # ( c addr -- )
+  # forth C!. Store character at address
+  dpop %eax
+  dpop %ebx
+  movb %bl, (%eax)
+  ret
+
+DOTbase: # ( n u:base -- )
+  # emit the number using the given base.
+  # TODO: deal with negatives
+  dpush $0 # characters in buffer
+1:
+  movl 4(%ebp), %ebx # base
+  movl $0, %edx
+  movl 8(%ebp), %eax # %edx:%eax=number
+
+  divl %ebx  # %edx:%eax / %ebx => %eax=quotient %edx=remainder
+  movl %eax, 8(%ebp) # store new number in stack
+  dpush %edx # remainder
+  call uTOascii
+
+  movl 4(%ebp), %eax # characters in buffer
+  addl $emitBuffer, %eax # address to store at
+  dpush %eax
+  call cSTORE
+  addl $1, (%ebp) # increment characters in buffer
+
+  cmp $0, 8(%ebp) # check if number is 0
+  jne 1b # loop
+  # ( n u:base u:count )
+  dpush $emitBuffer
+  call swap
+
+  call type
+  call _2drop
+  ret
+
+uTOascii: # ( u -- c )
+  # convert a number (typically 1-16) into ascii equivalent
+  # This is used with DOTbase (above)
+  dpop %ebx
+  cmp $9, %ebx
+  jg 1f
+  # number <= 9
+  addl $'0', %ebx
+  jmp 2f
+1: # number > 9
+  subl $10, %ebx
+  cmpl $23, %ebx
+  jg 3f
+  addl $'A', %ebx
+2: # push and return
+  dpush %ebx
+  ret
+3: # error
+  movl $ERR_ASCII_BOUNDS, panicErr
+  call *(panic)
+  call unreachable
+
+testDOT:
+  dpush $0
+  call DOT
+  dpush $12
+  call DOT
+  dpush $0x1A2B
+  dpush $16
+  call DOTbase
+  dpush $'\n'
+  call emit
+  dpush $testDOTStr
+  call countnt
+  call typeTestPass
+  call assertEmpty
+  ret
+
 
 defaultPanic: # ( -- )
   # The default panic implemention uses the above tools to ouput
