@@ -58,7 +58,7 @@ ioBufferLen: .int 0  # number of chars in ioBuffer
 #
 # Important point: when testing, we will _expect_ panics. This is why we
 # first defined functions like reset/etc
-panic: .int 0
+panic: .int defaultPanic
 # Reserved space for recording an integer error number. Most panic
 # implementations will report this integer before exiting.
 panicErr: .int 0
@@ -99,7 +99,9 @@ testSuite: # ( -- )
   call testPanicHandle
   call testMemLocations
   call testDsPushPop
+  call testStackBasic
   call testEmit
+  call testCountNt
   call testIoBuffer
   ret
 
@@ -359,6 +361,82 @@ testing_overflow:
   dpush $4  # overflow
   call unreachable
 
+swap: # ( a b -- b a )
+  # Forth SWAP
+  dpop %ebx
+  dpop %eax
+  dpush %ebx
+  dpush %eax
+  ret
+
+drop: # ( a -- )
+  dpop %eax
+  ret
+
+rot: # ( a b c -- b c a )
+  # Forth ROT, rotates left
+  dpop %ecx
+  dpop %ebx
+  dpop %eax
+  dpush %ebx
+  dpush %ecx
+  dpush %eax
+  ret
+
+rotr: # ( a b c -- c a b )
+  # Forth -ROT, rotates right
+  dpop %ecx
+  dpop %ebx
+  dpop %eax
+  dpush %ecx
+  dpush %eax
+  dpush %ebx
+  ret
+
+over: # ( a b -- a b a )
+  movl 4(%ebp), %eax
+  dpush %eax
+  ret
+
+testStackBasic:
+  dpush $2
+  dpush $1
+  dpush $0 # ( 2 1 0)
+  call swap # ( 2 0 1 )
+
+  movl (%ebp), %eax
+  movl $1, %ebx
+  call assertEaxEbxEq
+  movl 4(%ebp), %eax
+  movl $0, %ebx
+  call assertEaxEbxEq
+
+  call rot # ( 0 1 2 )
+
+  movl (%ebp), %eax
+  movl $2, %ebx
+  call assertEaxEbxEq
+  movl 4(%ebp), %eax
+  movl $1, %ebx
+  call assertEaxEbxEq
+  movl 8(%ebp), %eax
+  movl $0, %ebx
+  call assertEaxEbxEq
+
+  call rotr # ( 2 0 1 )
+
+  movl (%ebp), %eax
+  movl $1, %ebx
+  call assertEaxEbxEq
+  movl 4(%ebp), %eax
+  movl $0, %ebx
+  call assertEaxEbxEq
+  movl 8(%ebp), %eax
+  movl $2, %ebx
+  call assertEaxEbxEq
+
+  ret
+
 emit: # ( c -- )
   # emits a single character to emitFd
   dpop %eax
@@ -402,93 +480,64 @@ testEmit:
   call emit
   ret
 
-
-ioBuffer_pushC: # ( c -- )
-  # push a character into ioBuffer
-  dpop %eax
-  movl ioBufferLen, %ebx
-  inc %ebx
-  cmp $IO_BUFFER_SIZE, %ebx  # check overflow
-  jge 1f
-  movl $ioBuffer, %ebx
-  addl ioBufferLen, %ebx  # address to write to
-  movb %al, (%ebx)
-  ret
+countnt: # ( addr -- addr count )
+  # Given a null-terminated (c-style) string re-returns the string address and
+  # the count
+  movl (%ebp), %eax # addr
+  movl $0, %ebx # count
 1:
-  movl $RC_ARRAYBOUNDS, panicErr
-  call *(panic)
-  jmp unreachable
-
-ioBuffer_pushNt: # ( addr -- )
-  # push a null-terminated (c-style) string into ioBuffer
-  # This will panic on out-of-bounds
-  # This is useful for writing our test results and error messages,
-  # since assembler .ascii directive is null-terminated strings.
-  dpop %eax # src
-  movl $ioBuffer, %ebx
-  addl ioBufferLen, %ebx  # dst
-  movl $ioBuffer, %edi
-  addl $IO_BUFFER_SIZE, %edi # address to panic at
-  movl $0, %ecx
-1:
-  cmp %ebx, %edi
-  jle 3f  # index out of bounds
-  movb (%eax), %cl
-  movb %cl, (%ebx)
-  addl $1, ioBufferLen
-  inc %eax
+  cmpb $0, (%eax,%ebx,1)
+  je 2f # exit loop
   inc %ebx
-  cmpb $0, (%eax) # check for null-termination
-  jne 1b  # loop
+  jmp 1b # loop
+2:
+  dpush %ebx
   ret
-3:
-  movl $RC_ARRAYBOUNDS, panicErr
-  call *(panic)
-  jmp unreachable
 
-ioBuffer_emit: # ( -- )
-  # Emit the entire IO buffer to emitFd
+testCountNt:
+  dpush $testPassStr
+  call countnt
+  dpop %ebx
+  movl $6, %eax
+  call assertEaxEbxEq
+  call drop
+  ret
+
+type: # ( addr count -- )
+  # Forth TYPE. Writes count characters at addr to emitFd
   movl emitFd, %ebx   # fd
-  movl $ioBuffer, %ecx # &buf
-  movl ioBufferLen, %edx       # bytesToWrite
+  dpop %edx # bytesToWrite=count
+  dpop %ecx # &buf
   call syswrite
   ret
 
-ioBuffer_reset: # ( -- )
-  movl $0, ioBufferLen
-  ret
-
-ioBuffer_printNt: # ( addr -- )
-  # Emit a NT string immediately and reset io buffer.
-  call ioBuffer_pushNt
-  call ioBuffer_emit
-  call ioBuffer_reset
-  ret
-
-emitTestPass: # ( ntstr -- )
-  # emits "TEST <ntstr> PASS\n" to emitFd
+typeTestPass: # ( addr count -- )
+  # types "TEST <addr count> PASS\n" to emitFd
   dpush $testPrefixStr
-  call ioBuffer_pushNt # "TEST "
-  call ioBuffer_pushNt # <ntstr>
+  call countnt
+  call type
+
+  call type
+
   dpush $testPassStr
-  call ioBuffer_pushNt # " PASS\n"
-  call ioBuffer_emit
-  call ioBuffer_reset
+  call countnt
+  call type
   ret
 
 testIoBuffer:
-  call ioBuffer_reset
   dpush $testIoBufferStr
-  call emitTestPass
+  call countnt
+  call typeTestPass
   ret
 
 defaultPanic: # ( -- )
   # The default panic implemention uses the above tools to ouput
   # relevant panic messages.
   dpush $panicStr
-  call ioBuffer_printNt
+  call countnt
+  call typeTestPass
   # TODO: emit the stack
-  movl $RC_PANIC, %ebp
+  movl $RC_PANIC, %ebx
   jmp sysexit
 
 ##############################
