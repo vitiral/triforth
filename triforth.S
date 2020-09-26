@@ -72,7 +72,8 @@ rstackCheckpoint: .int 0
 panicFlags: .int 0
 
 emitFd: .int 2  # STDERR
-emitBuffer: .space 16 # scratch space for emit and DOT
+.equ EMIT_BUFFER_SIZE,16
+emitBuffer: .space EMIT_BUFFER_SIZE # scratch space for emit and DOT
 BASE: .int 10   # base for default number conversions
 
 ##############################
@@ -567,8 +568,9 @@ DOTbase: # ( n u:base -- )
   dpush %edx # remainder
   call uTOascii
 
-  movl 4(%ebp), %eax # characters in buffer
-  addl $emitBuffer, %eax # address to store at
+  movl $EMIT_BUFFER_SIZE - 1, %eax
+  addl $emitBuffer, %eax
+  subl 4(%ebp), %eax # address to store at. We are writing right->left
   dpush %eax
   call cSTORE
   addl $1, (%ebp) # increment characters in buffer
