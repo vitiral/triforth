@@ -42,9 +42,11 @@
 # the definitions are here. Refer here when you see the
 # data used in the code.
 .section .data
-rstackMin: .space 1024 # return stack
+.equ RSTACK_SIZE, 1024
+rstackMin: .space RSTACK_SIZE # return stack
 rstackMax:
-dstackMin: .space 256 # data stack
+.equ DSTACK_SIZE, 256
+dstackMin: .space DSTACK_SIZE # data stack
 dstackMax:
 .equ IO_BUFFER_SIZE, 128
 ioBuffer: .space 128
@@ -68,16 +70,19 @@ rstackCheckpoint: .int 0
 # flags that panic uses
 panicFlags: .int 0
 
-# The fd that standard printing commands output to.
 emitFd: .int 2  # STDERR
-emitBuf: .int 0
+emitBuf: .int 0 # scratch space for emit
 
 ##############################
-# Test Strings: unaligned printed strings in tests
-testPrefixStr: .ascii "  TEST "
-testPassStr: .ascii " PASS\n"
+# Text Strings: unaligned strings for IO buffer
+testPrefixStr: .ascii "**TEST \0"
+testPassStr: .ascii " PASS\n\0"
+panicStr: .ascii "!! PANIC ENCOUNtERED\n\0"
 
-testIoBufferStr: .ascii "testIoBuffer"
+# Test Names
+testIoBufferStr: .ascii "testIoBuffer\0"
+
+.align 8
 
 ######################################################
 ### CODE SECTION
@@ -92,6 +97,7 @@ testSuite: # ( -- )
   call testAsserts
   call testIndirectCall
   call testPanicHandle
+  call testMemLocations
   call testDsPushPop
   call testEmit
   call testIoBuffer
@@ -110,6 +116,7 @@ testAsserts:
   movl $42, %ebx
   call assertEaxEbxEq
   ret
+
 
 testIndirectCall:
   movl $42, %eax
@@ -217,6 +224,21 @@ testing_willPanic:
 testing_panics:
   call *(panic)
   jmp unreachable
+
+
+testMemLocations:
+  # Sanity check to make sure memory locations are set as expected.
+  movl $rstackMax, %eax
+  subl $rstackMin, %eax
+  cmp $RSTACK_SIZE, %eax
+  jne 1f
+  movl $ioBufferLen, %eax
+  subl $IO_BUFFER_SIZE, %eax
+  cmp $ioBuffer, %eax
+  jne 1f
+  ret
+1:
+  call testFailed
 
 
 ##############################
@@ -356,6 +378,13 @@ syswrite: # %ebx:fd %ecx:&buff %edx:bytesToWrite ( -- )
   call *(panic)
   jmp unreachable
 
+dot: # ( n -- )
+  # forth '.', emit the value on the stack.
+  dpop %eax
+1:
+  # TODO: implement this
+  call unreachable
+
 testEmit:
   dpush $'E'
   call emit
@@ -373,14 +402,16 @@ testEmit:
   call emit
   ret
 
+
 ioBuffer_pushC: # ( c -- )
   # push a character into ioBuffer
   dpop %eax
-  movl ioBufferLen, %ebx  # address to write to
-  cmp $IO_BUFFER_SIZE, %ebx
+  movl ioBufferLen, %ebx
+  inc %ebx
+  cmp $IO_BUFFER_SIZE, %ebx  # check overflow
   jge 1f
   movl $ioBuffer, %ebx
-  addl ioBufferLen, %ebx
+  addl ioBufferLen, %ebx  # address to write to
   movb %al, (%ebx)
   ret
 1:
@@ -395,9 +426,10 @@ ioBuffer_pushNt: # ( addr -- )
   # since assembler .ascii directive is null-terminated strings.
   dpop %eax # src
   movl $ioBuffer, %ebx
-  addl ioBufferLen, %ebx  # dest
+  addl ioBufferLen, %ebx  # dst
   movl $ioBuffer, %edi
   addl $IO_BUFFER_SIZE, %edi # address to panic at
+  movl $0, %ecx
 1:
   cmp %ebx, %edi
   jle 3f  # index out of bounds
@@ -426,30 +458,36 @@ ioBuffer_reset: # ( -- )
   movl $0, ioBufferLen
   ret
 
+ioBuffer_printNt: # ( addr -- )
+  # Emit a NT string immediately and reset io buffer.
+  call ioBuffer_pushNt
+  call ioBuffer_emit
+  call ioBuffer_reset
+  ret
+
 emitTestPass: # ( ntstr -- )
   # emits "TEST <ntstr> PASS\n" to emitFd
   dpush $testPrefixStr
   call ioBuffer_pushNt # "TEST "
-  # call ioBuffer_pushNt # <ntstr>
-  # dpush $testPassStr
-  # call ioBuffer_pushNt # " PASS\n"
+  call ioBuffer_pushNt # <ntstr>
+  dpush $testPassStr
+  call ioBuffer_pushNt # " PASS\n"
   call ioBuffer_emit
   call ioBuffer_reset
   ret
 
 testIoBuffer:
   call ioBuffer_reset
-  # dpush $testIoBufferStr
+  dpush $testIoBufferStr
   call emitTestPass
   ret
 
 defaultPanic: # ( -- )
   # The default panic implemention uses the above tools to ouput
   # relevant panic messages.
-  dpush $'\n'
-  call emit
-  dpush $'!'
-  call emit
+  dpush $panicStr
+  call ioBuffer_printNt
+  # TODO: emit the stack
   movl $RC_PANIC, %ebp
   jmp sysexit
 
