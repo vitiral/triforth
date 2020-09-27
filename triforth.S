@@ -107,8 +107,7 @@
 .equ RSTACK_SIZE, 1024
 rstackMin: .space RSTACK_SIZE # return stack
 rstackMax:
-.equ PANIC_RESERVE_SIZE,32
-panicReserve: .space PANIC_RESERVE_SIZE
+registerSnapshot: .space 24
 .equ DSTACK_SIZE, 256
 dstackMin: .space DSTACK_SIZE # data stack
 dstackMax:
@@ -881,8 +880,8 @@ testCmove:
 
 dumpInfo:
   # Registers
-  movl %eax, panicReserve
-  movl $panicReserve, %eax
+  movl %eax, registerSnapshot
+  movl $registerSnapshot, %eax
   movl %ebx, 4(%eax)
   movl %ecx, 8(%eax)
   movl %edx, 12(%eax)
@@ -891,41 +890,41 @@ dumpInfo:
   dpush $registersAdStr
   call countnt
   call type
-  movl $panicReserve, %ebx
+  movl $registerSnapshot, %ebx
   movl (%ebx), %eax  # eax
   dpush %eax
   dpush $16
   call DOTbase
 
-  movl $panicReserve, %ebx
+  movl $registerSnapshot, %ebx
   movl 4(%ebx), %eax # ebx
   dpush %eax
   dpush $16
   call DOTbase
 
-  movl $panicReserve, %ebx
+  movl $registerSnapshot, %ebx
   movl 8(%ebx), %eax # ecx
   dpush %eax
   dpush $16
   call DOTbase
 
-  movl $panicReserve, %ebx
+  movl $registerSnapshot, %ebx
   movl 12(%ebx), %eax # edx
   dpush %eax
   dpush $16
   call DOTbase
 
-  movl $panicReserve, %ebx
+  movl $registerSnapshot, %ebx
   dpush $registersDsStr
   call countnt
   call type
-  movl $panicReserve, %ebx
+  movl $registerSnapshot, %ebx
   movl 16(%ebx), %eax # edi
   dpush %eax
   dpush $16
   call DOTbase
 
-  movl $panicReserve, %ebx
+  movl $registerSnapshot, %ebx
   movl 20(%ebx), %eax # esi
   dpush %eax
   dpush $16
