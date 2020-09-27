@@ -112,7 +112,7 @@ testSuite: # ( -- )
   call testCountNt
   call testIoBuffer
   call testDOT
-  # call testDOTs
+  call testDOTs
   call assertEmpty
   ret
 
@@ -626,6 +626,8 @@ DOTbase: # ( n u:base -- )
   dpush %eax # ( count addr )
   call swap
   call type
+  dpush $' '
+  call emit
   ret
 
 uTOascii: # ( u -- c )
@@ -686,9 +688,9 @@ DOTs: # ( -- )
   dpush $10
   call DOTbase
 
-  dpush $' '
-  call emit
   dpush $'>'
+  call emit
+  dpush $' '
   call emit
 
   call depth # 4(%ebp) is depth
