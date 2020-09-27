@@ -106,14 +106,14 @@ testSuite: # ( -- )
   call testPanicHandle
   call testMemLocations
   call testDsPushPop
+  call testModDIV
   call testStackBasic
   call testEmit
   call testCountNt
   call testIoBuffer
   call testDOT
-  call testDOTs
+  # call testDOTs
   call assertEmpty
-
   ret
 
 assertEaxEbxEq:
@@ -309,13 +309,6 @@ checkPopDs:
   addl $4, %ebp
 .endm
 
-depth: # ( -- u )
-  # returns the depth of the stack
-  movl $dstackMax, %eax
-  subl %ebp, %eax
-  dpush %eax
-  ret
-
 assertEmpty:
   # Assert that the datastack is empty
   movl %ebp, %eax
@@ -372,6 +365,42 @@ testing_overflow:
   dpush $4  # overflow
   call unreachable
 
+modDIV: # ( u:a u:b -- u u )
+  # Forth MOD/, unsigned divide a by b
+  # returns: quotient remainder
+  dpop %ebx # divisor
+  movl $0, %edx
+  dpop %eax # %edx:%eax=number
+
+  divl %ebx  # %edx:%eax / %ebx => %eax=quotient %edx=remainder
+  dpush %eax
+  dpush %edx
+  ret
+
+testModDIV:
+  dpush $13
+  dpush $5
+  call modDIV
+  dpop %ebx
+  movl $3, %eax # remainder
+  call assertEaxEbxEq
+  dpop %eax
+  movl $2, %ebx # quotient
+  call assertEaxEbxEq
+  call assertEmpty
+  ret
+
+depth: # ( -- u )
+  # returns the depth of the stack
+  movl $dstackMax, %eax
+  subl %ebp, %eax
+  dpush %eax
+  dpush $4
+  call modDIV
+  call drop # drop remainder
+  ret
+
+
 swap: # ( a b -- b a )
   # Forth SWAP
   dpop %ebx
@@ -383,6 +412,13 @@ swap: # ( a b -- b a )
 dup: # ( a -- a a )
   movl (%ebp), %eax
   dpush %eax
+  ret
+
+_2dup: # ( a b -- a b a b )
+  movl 4(%ebp), %eax
+  movl (%ebp), %ebx
+  dpush %eax
+  dpush %ebx
   ret
 
 drop: # ( a -- )
@@ -546,6 +582,13 @@ testIoBuffer:
   call typeTestPass
   ret
 
+cSTORE: # ( c addr -- )
+  # forth C!. Store character at address
+  dpop %eax  # addr
+  dpop %ebx  # c
+  movb %bl, (%eax)
+  ret
+
 DOT: # ( n -- )
   # forth '.', emit the value on the stack.
   movl BASE, %eax
@@ -555,43 +598,34 @@ DOT: # ( n -- )
   call emit
   ret
 
-cSTORE: # ( c addr -- )
-  # forth C!. Store character at address
-  dpop %eax  # addr
-  dpop %ebx  # c
-  movb %bl, (%eax)
-  ret
-
 DOTbase: # ( n u:base -- )
   # emit the number using the given base.
   # TODO: deal with negatives
-  dpush $0 # characters in buffer
+  dpush $0 # count: characters in buffer
+  call rotr # ( count n base )
 1:
-  movl 4(%ebp), %ebx # base
-  movl $0, %edx
-  movl 8(%ebp), %eax # %edx:%eax=number
+  call dup  # ( count n base base )
+  call rotr # ( count base n base )
+  call modDIV # ( count base quot rem )
+  call uTOascii # ( count base quot c )
 
-  divl %ebx  # %edx:%eax / %ebx => %eax=quotient %edx=remainder
-  movl %eax, 8(%ebp) # store new number in stack
-  dpush %edx # remainder
-  call uTOascii
-
+  # write characters right->left
   movl $emitBufferMax-1, %eax
-  subl 4(%ebp), %eax # address to store at. We are writing right->left
-  dpush %eax
-  call cSTORE
-  addl $1, (%ebp) # increment characters in buffer
-
-  cmp $0, 8(%ebp) # check if number is 0
+  subl 12(%ebp), %eax # note: count at index=3
+  dpush %eax # address to store character at
+  # ( count base quot c addr )
+  call cSTORE # ( count base quot )
+  call swap   # ( count quot base )
+  addl $1, 8(%ebp) # increment count
+  cmp $0, 4(%ebp) # check if quot=0
   jne 1b # loop
-  # ( n u:base u:count )
+
+  call _2drop # no need for quot or base
   movl $emitBufferMax, %eax
   subl (%ebp), %eax
-  dpush %eax
+  dpush %eax # ( count addr )
   call swap
-
   call type
-  call _2drop
   ret
 
 uTOascii: # ( u -- c )
@@ -617,8 +651,9 @@ uTOascii: # ( u -- c )
   call unreachable
 
 testDOT:
-  dpush $0
+  dpush $1
   call DOT
+  call assertEmpty
   dpush $12
   call DOT
   dpush $0x1A2B
@@ -651,9 +686,9 @@ DOTs: # ( -- )
   dpush $10
   call DOTbase
 
-  dpush $'>'
-  call emit
   dpush $' '
+  call emit
+  dpush $'>'
   call emit
 
   call depth # 4(%ebp) is depth
