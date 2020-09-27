@@ -697,18 +697,19 @@ DOTs: # ( -- )
   dpush $0   # (%ebp) is index
 1:
   movl (%ebp), %eax
-  cmp %eax, 4(%ebp)
+  cmp %eax, 4(%ebp) # compare depth with index
   je 2f
   call dup
   dpush $4
   call MUL 
   dpop %eax # index * 4
-  addl %ebp, %eax
-  addl $8, %eax # skip depth+index
+  movl $dstackMax, %ebx
+  subl $4, %ebx   # first item is under dstackMax
+  subl %eax, %ebx # ebx=dstackMax - 4 - index*4
 
   # print the number in hex
-  movl (%eax), %ebx
-  dpush %ebx
+  movl (%ebx), %eax
+  dpush %eax
   dpush $16
   call DOTbase
 
