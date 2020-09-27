@@ -82,6 +82,7 @@ BASE: .int 10   # base for default number conversions
 testPrefixStr: .ascii "**TEST \0"
 testPassStr: .ascii " PASS\n\0"
 panicStr: .ascii "!! PANIC ENCOUNTERED code=\0"
+panicIoBufferStr: .ascii "ioBuffer: \0"
 stackStr: .ascii "Stack< \0"
 
 # Test Names
@@ -107,22 +108,24 @@ testSuite: # ( -- )
   call testMemLocations
   call testDsPushPop
   call testModDIV
+  call testDepth
   call testStackBasic
+  call assertCleanState
+
   call testEmit
   call testCountNt
   call testIoBuffer
   call testDOT
   call testDOTs
-  call assertEmpty
-  call *(panic)
+  call assertCleanState
   ret
+
 
 assertEaxEbxEq:
   cmp %eax, %ebx
-  je 1f
-  jmp testFailed
-1:
+  jne testFailed
   ret
+
 
 testAsserts:
   # Test that all assertions work as expected
@@ -317,6 +320,19 @@ assertEmpty:
   call assertEaxEbxEq
   ret
 
+assertCleanState:
+  call assertEmpty
+
+  movl panic, %eax
+  movl $defaultPanic, %ebx
+  call assertEaxEbxEq
+
+  movl rstackCheckpoint, %eax
+  movl $0, %ebx
+  call assertEaxEbxEq
+  ret
+
+
 testDsPushPop:
   # test push/pop and overflow/underflow checking
   call assertEmpty
@@ -350,6 +366,9 @@ testDsPushPop:
   call testing_overflow
   cmp $0, panicErr
   jne testDsPushPop_fail
+
+  call resetPanicCatch
+  call assertCleanState
   ret
 testDsPushPop_fail:
   call testFailed
@@ -390,17 +409,6 @@ testModDIV:
   call assertEaxEbxEq
   call assertEmpty
   ret
-
-depth: # ( -- u )
-  # returns the depth of the stack
-  movl $dstackMax, %eax
-  subl %ebp, %eax
-  dpush %eax
-  dpush $4
-  call modDIV
-  call drop # drop remainder
-  ret
-
 
 swap: # ( a b -- b a )
   # Forth SWAP
@@ -454,6 +462,37 @@ rotr: # ( a b c -- c a b )
 over: # ( a b -- a b a )
   movl 4(%ebp), %eax
   dpush %eax
+  ret
+
+depth: # ( -- u )
+  # returns the depth of the stack
+  movl $dstackMax, %eax
+  subl %ebp, %eax
+  dpush %eax
+  dpush $4
+  call modDIV
+  call drop # drop remainder
+  ret
+
+testDepth:
+  dpush $1
+  dpush $2
+  call depth
+  dpop %eax
+  movl $2, %ebx
+  call assertEaxEbxEq
+
+  call drop
+  call depth
+  dpop %eax
+  movl $1, %ebx
+  call assertEaxEbxEq
+
+  call drop
+  call depth
+  dpop %eax
+  movl $0, %ebx
+  call assertEaxEbxEq
   ret
 
 testStackBasic:
@@ -734,14 +773,31 @@ testDOTs:
 defaultPanic: # ( -- )
   # The default panic implemention uses the above tools to ouput
   # relevant panic messages.
+
+  # header with error code
   dpush $panicStr
   call countnt
-  call typeTestPass
+  call type
   movl panicErr, %eax
   call DOT
+
+  # Stack
   dpush $'\n'
   call emit
   call DOTs
+
+  # IO buffer
+  dpush $panicIoBufferStr
+  call countnt
+  call type
+  dpush $ioBuffer
+  movl ioBufferLen, %eax
+  dpush %eax
+  call type
+
+  dpush $'\n'
+  call emit
+
   movl $RC_PANIC, %ebx
   jmp sysexit
 
