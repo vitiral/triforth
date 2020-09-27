@@ -81,7 +81,7 @@ BASE: .int 10   # base for default number conversions
 # Text Strings: unaligned strings for IO buffer
 testPrefixStr: .ascii "**TEST \0"
 testPassStr: .ascii " PASS\n\0"
-panicStr: .ascii "!! PANIC ENCOUNtERED\n\0"
+panicStr: .ascii "!! PANIC ENCOUNTERED code=\0"
 stackStr: .ascii "Stack< \0"
 
 # Test Names
@@ -114,6 +114,7 @@ testSuite: # ( -- )
   call testDOT
   call testDOTs
   call assertEmpty
+  call *(panic)
   ret
 
 assertEaxEbxEq:
@@ -730,14 +731,17 @@ testDOTs:
   call _2drop
   ret
 
-
 defaultPanic: # ( -- )
   # The default panic implemention uses the above tools to ouput
   # relevant panic messages.
   dpush $panicStr
   call countnt
   call typeTestPass
-  # TODO: emit the stack
+  movl panicErr, %eax
+  call DOT
+  dpush $'\n'
+  call emit
+  call DOTs
   movl $RC_PANIC, %ebx
   jmp sysexit
 
