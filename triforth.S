@@ -1,26 +1,74 @@
-# Available registers:
+# Welcome to the triforth tutorial and programming language.
+#
+# This programming language and tutorial is created for the Civboot project.
+# To learn more about that project visit civboot.org
+#
+# This tutorial follows from the excellent tutorial "Programming from the ground up"
+# chapters 1-5 which gives an excellent introduction to assembly language. Almost
+# every assembly instruction here is explained in detail there.
+#
+# This tutorial draws inspiration from "jonesforth", a tutorial which describes how
+# to write a similar forth implementation. I am not an assembly programmer and found
+# a little too much hand-waviness in the jonesforth introduction, probably more a
+# demonstration of my own lack of knowledge. This tutorial chooses to implement forth
+# "naively", sacrificing some performance for performance and defensive programming.
+# This tutorial also takes a more "test driven development" (TDD) attitude,
+# with tests for each function being written as we write the code. It is hoped
+# that this helps the student in playing with code and trying out their own
+# implementations.
+#
+# Go forth and code without fear.
+
+# Why does this language exist?
+#
+# The first reason is because programming languages are built on too much complexity
+# today. So much complexity that most students cannot imagine how it all started. How
+# DID people program the first C compilers? Modern C compilers are written in C and
+# are so complicated (with their complex preprocessor and the amount of standards they
+# must adhere to) that they require a binary to bootstrap them, a binary which
+# is completely obtuse and immune to understanding from naive students of
+# computers like ourselves.
+#
+# Understanding doesn't have to be so HARD. In this tutorial we will use x86
+# assembly to bootstrap our own forth language, called triforth, a pun the
+# "triforce" from the legend of Zelda. Like the triforce, triforth will give us
+# the Power to write scalable type-safe computer programs, the Knowledge of the
+# inner workings of our language and the Courage to deal with the nitty-gritty
+# low level details.
+
+#########################
+# Important References:
+# `call dbgexit`: write this ANYWHERE (after the first few lines of _start)
+# to stop execution and print the stack trace.  Try it now. This can be very
+# useful for understanding the function you are reading or writing.
+#
+# Functions are written
+# funcName: # <type signature>
+# The type signature is forth-style with input registers in front and output
+# registers in back. I.e. 
+#
+#   $eax:foo ( u:baz u:boz -- dee ) %eax:bob
+#
+# Takes in %eax and two unsigned ints on the stack. It outputs dee on the stack and
+# bob in %eax. In actual fact, most functions either take/put values on the stack
+# or take/put registers.
+#
+#
+# REGISTERS: The below is a helpful register reference.
 # general 32bit:    %eax   %ebx   %ecx   %edx  %edi  %esi
-# from above 16bit:  ax     bx     cx     dx
-# from above 8bit: al ah  bl bh  cl ch  dl dh
-# special: %esp (stack ptr)  %ebp (base ptr)
-#          %eip (inst ptr)   %eflags
+# from above 16bit:  ax     bx     cx     dx   none  none
+# from above 8bit: al ah  bl bh  cl ch  dl dh  none  none
+# special:  %esp: stack ptr, our return stack
+#           %ebp: base ptr, our data stack
+#           %eip: inst ptr
+#           %eflags: we won't deal with this
+#
+# TODO: add addressing modes and critical instructions
 
-#############
+##############################
 # Constants
-# Return codes
-.equ RC_DBG,99 # 99 problems and debugging ain't one
-.equ RC_TFAIL,100
-.equ RC_UNREACHABLE,101
-.equ RC_INVALIDRESET,102
-.equ RC_ARRAYBOUNDS,103
-.equ RC_PANIC,104
-
-# Panic Error Codes
-.equ ERR_PSTACK_OVERFLOW,0x300
-.equ ERR_PSTACK_UNDERFLOW,0x301
-.equ ERR_ASCII_BOUNDS,0x302
-
-# Numbers used in Linux syscalls
+# It's better to define these at the top of the file. Use these as a reference
+# as you encounter them.
 .equ LINUX_SYSCALL,0x80  # linux kernel interrupt vector
 .equ SYS_OPEN, 5
 .equ SYS_WRITE, 4
@@ -36,12 +84,25 @@
 .equ STDOUT, 1
 .equ STDERR, 2
 
+# Our Return codes
+.equ RC_DBG,99 # 99 problems and debugging ain't one, `call dbgexit`
+.equ RC_TFAIL,100
+.equ RC_UNREACHABLE,101
+.equ RC_INVALIDRESET,102
+.equ RC_ARRAYBOUNDS,103
+.equ RC_PANIC,104
+
+# Our Panic Error Codes
+.equ ERR_PSTACK_OVERFLOW,0x300
+.equ ERR_PSTACK_UNDERFLOW,0x301
+.equ ERR_ASCII_BOUNDS,0x302
+
+
 ######################################################
 ### DATA SECTION
 ######################################################
-# .data must be defined separately from .text (code), so
-# the definitions are here. Refer here when you see the
-# data used in the code.
+# It's better to define most .data separately from .text (code), so the
+# definitions are here. Refer here when you see the data used in the code.
 .section .data
 .equ RSTACK_SIZE, 1024
 rstackMin: .space RSTACK_SIZE # return stack
@@ -53,34 +114,27 @@ dstackMax:
 ioBuffer: .space 128
 ioBufferLen: .int 0  # number of chars in ioBuffer
 
-# This is the _address_ that should be called indirectly when panicing.
-# panicing is like exiting, except our panic code can also do things
-# like print the current stack, etc.
-#
-# Important point: when testing, we will _expect_ panics. This is why we
-# first defined functions like reset/etc
+# Address that should be called when panicing, can be redirected when testing.
 panic: .int defaultPanic
-# Reserved space for recording an integer error number. Most panic
-# implementations will report this integer before exiting.
+# Specefic error code encountered when panicing.
 panicErr: .int 0
-# This is used in panic handling code. If reset is called, then
-# the rstack will be returned to this value before returning.
-#
-# Note:reset is typically only called in panic-handling code.
+# Used in `reset` to return from a panic in testing.
 rstackCheckpoint: .int 0
 # flags that panic uses
 panicFlags: .int 0
+  .equ PANIC_FLAG_PANICING,1  # TODO: use to avoid recursion during panicing
 
-emitFd: .int 2  # STDERR
+emitFd: .int STDERR # where to EMIT and TYPE to
 .equ EMIT_BUFFER_SIZE,16
 emitBuffer: .space EMIT_BUFFER_SIZE # scratch space for emit and DOT
 emitBufferMax:
 BASE: .int 10   # base for default number conversions
 
 ##############################
-# Text Strings: unaligned strings for IO buffer
+# Text Strings: unaligned strings for printing messages
 testPrefixStr: .ascii "**TEST \0"
 testPassStr: .ascii " PASS\n\0"
+dbgexitStr: .ascii "\nDBG EXIT\n\0"
 panicStr: .ascii "!! PANIC ENCOUNTERED code=\0"
 panicIoBufferStr: .ascii "ioBuffer: \0"
 stackStr: .ascii "Stack< \0"
@@ -88,6 +142,7 @@ stackStr: .ascii "Stack< \0"
 # Test Names
 testIoBufferStr: .ascii "testIoBuffer\0"
 testDOTStr: .ascii "testDOT\0"
+testDOTsStr: .ascii "testDOTs\0"
 
 .align 8
 
@@ -99,13 +154,13 @@ testDOTStr: .ascii "testDOT\0"
 ##############################
 # Core Testing Functions
 testSuite: # ( -- )
-  # We will call this to run all our assembly-level tests.
-  # As we write tests they should be put here.
+  # We are doing test driven development. All assembly tests we write should go
+  # here. You can ignore them for now.
+  call testMemLocations
   call assertEmpty
   call testAsserts
   call testIndirectCall
   call testPanicHandle
-  call testMemLocations
   call testDsPushPop
   call testModDIV
   call testDepth
@@ -120,12 +175,48 @@ testSuite: # ( -- )
   call assertCleanState
   ret
 
+testMemLocations:
+  # Sanity check to make sure memory locations are set as expected.
+  movl $rstackMax, %eax
+  subl $rstackMin, %eax
+  cmp $RSTACK_SIZE, %eax
+  jne 1f
+  movl $ioBufferLen, %eax
+  subl $IO_BUFFER_SIZE, %eax
+  cmp $ioBuffer, %eax
+  jne 1f
+  ret
+1:
+  call testFailed
 
-assertEaxEbxEq:
+
+##############################
+# Exiting functions
+# These are for quickly exiting our program with relevant return codes.
+
+sysexit: # %ebx:rc ( -- )
+  # Directly call SYS_EXIT
+  movl $SYS_EXIT, %eax
+  int  $LINUX_SYSCALL
+
+testFailed: # The test failed
+  movl $RC_TFAIL, %ebx
+  jmp sysexit
+
+unreachable: # ( -- )
+  # We call this frequently to practice defensive programming.
+  movl $RC_UNREACHABLE, %ebx
+  jmp sysexit
+
+exit0: # ( -- )
+  # Exits immediately with rc=0
+  movl $0, %ebx
+  jmp sysexit
+
+assertEaxEbxEq: # %eax %ebx ( -- )
   cmp %eax, %ebx
   jne testFailed
   ret
-
 
 testAsserts:
   # Test that all assertions work as expected
@@ -133,7 +224,6 @@ testAsserts:
   movl $42, %ebx
   call assertEaxEbxEq
   ret
-
 
 testIndirectCall:
   movl $42, %eax
@@ -147,7 +237,7 @@ testIndirectCall:
   movl $panic, %ebx
   call *(%ebx) # indirect call from register
 
-  movl $defaultPanic, panic # reset panic to sysexit
+  movl $defaultPanic, panic # reset panic
   movl $0, rstackCheckpoint
   ret
 testing_setEbx42:
@@ -156,33 +246,18 @@ testing_setEbx42:
 
 ##############################
 # Error Handling Functions
-sysexit: # %ebx:rc ( -- )
-  # exit the program with the return code in %ebx
-  # This is our first function. We put our forth-style type signature at the
-  # top, with register inputs/outputs outside of the parens
-  movl $SYS_EXIT, %eax
-  int  $LINUX_SYSCALL
-
-unreachable:
-  # Call to distinguish unrechable code. exits with RC_UNREACHABLE
-  movl $RC_UNREACHABLE, %ebx
-  jmp sysexit
-
-testFailed:
-  # Call to distinguish unrechable code. exits with RC_TFAIL
-  movl $RC_TFAIL, %ebx
-  jmp sysexit
-
-dbgexit: # ( -- )
-  # Exits immediately with rc=99
-  # Mainly used in debugging.
-  movl $RC_DBG, %ebx
-  jmp sysexit
-
-exit0: # ( -- )
-  # Exits immediately with rc=0
-  movl $0, %ebx
-  jmp sysexit
+# It might seem odd starting here, but we will almost immediately want to write
+# functions which can panic, so we will need to test that behavior to make sure
+# we understand that things are working.
+#
+# Error handling is accomplished via setting a panic catch, which is really
+# 1. assigning a panic handler via  `movl $<addr>, panic`
+# 2. setting an rstackCheckpoint so `call reset` will return operation after
+#    our panicing function.
+#
+# This would not be adequate in production code, since only one function can
+# set a panic catch. We are not going to use this outside of testing however,
+# so this restriction is just fine.
 
 reset: # ( * -- ) ( R: * -- )
   # Clears the data and return stacks and returns control at rstackCheckpoint
@@ -241,21 +316,6 @@ testing_willPanic:
 testing_panics:
   call *(panic)
   jmp unreachable
-
-
-testMemLocations:
-  # Sanity check to make sure memory locations are set as expected.
-  movl $rstackMax, %eax
-  subl $rstackMin, %eax
-  cmp $RSTACK_SIZE, %eax
-  jne 1f
-  movl $ioBufferLen, %eax
-  subl $IO_BUFFER_SIZE, %eax
-  cmp $ioBuffer, %eax
-  jne 1f
-  ret
-1:
-  call testFailed
 
 
 ##############################
@@ -331,7 +391,6 @@ assertCleanState:
   movl $0, %ebx
   call assertEaxEbxEq
   ret
-
 
 testDsPushPop:
   # test push/pop and overflow/underflow checking
@@ -536,6 +595,16 @@ testStackBasic:
   call drop
   ret
 
+##############################
+# String and Emiting/Printing
+# Dealing with strings and outputing to STDERR is important when devleoping and
+# debugging. The below functions allow easier access to data than printing a
+# return code, including DOTs (.S) which allows us to view the stack at any
+# time.
+# In addition, many of these will eventually be included directly as forth
+# words, so by defining them as early as possible we can get the greatest use
+# of them.
+
 emit: # ( c -- )
   # emits a single character to emitFd
   dpop %eax
@@ -608,9 +677,7 @@ typeTestPass: # ( addr count -- )
   dpush $testPrefixStr
   call countnt
   call type
-
   call type
-
   dpush $testPassStr
   call countnt
   call type
@@ -758,6 +825,8 @@ DOTs: # ( -- )
 
 2:
   call _2drop
+  dpush $'\n'
+  call emit
   ret
 
 testDOTs:
@@ -768,24 +837,14 @@ testDOTs:
   call DOTs
   call _2drop
   call _2drop
+  dpush $testDOTsStr
+  call countnt
+  call typeTestPass
   ret
 
-defaultPanic: # ( -- )
-  # The default panic implemention uses the above tools to ouput
-  # relevant panic messages.
-
-  # header with error code
-  dpush $panicStr
-  call countnt
-  call type
-  movl panicErr, %eax
-  call DOT
-
+dumpInfo:
   # Stack
-  dpush $'\n'
-  call emit
   call DOTs
-
   # IO buffer
   dpush $panicIoBufferStr
   call countnt
@@ -794,12 +853,36 @@ defaultPanic: # ( -- )
   movl ioBufferLen, %eax
   dpush %eax
   call type
-
   dpush $'\n'
   call emit
+  ret
 
+dbgexit: # ( -- )
+  # Exits immediately with rc=99
+  # Mainly used in debugging.
+  dpush $dbgexitStr
+  call countnt
+  call type
+  call dumpInfo
+  movl $RC_DBG, %ebx
+  jmp sysexit
+
+defaultPanic: # ( -- )
+  # The default panic implemention uses the above tools to ouput
+  # relevant panic messages.
+  dpush $panicStr
+  call countnt
+  call type
+  movl panicErr, %eax
+  call DOT
+  dpush $'\n'
+  call emit
+  call dumpInfo
   movl $RC_PANIC, %ebx
   jmp sysexit
+
+##############################
+# 
 
 ##############################
 # Main Entrypoint
