@@ -107,6 +107,8 @@
 .equ RSTACK_SIZE, 1024
 rstackMin: .space RSTACK_SIZE # return stack
 rstackMax:
+.equ PANIC_RESERVE_SIZE,32
+panicReserve: .space PANIC_RESERVE_SIZE
 .equ DSTACK_SIZE, 256
 dstackMin: .space DSTACK_SIZE # data stack
 dstackMax:
@@ -136,13 +138,16 @@ testPrefixStr: .ascii "**TEST \0"
 testPassStr: .ascii " PASS\n\0"
 dbgexitStr: .ascii "\nDBG EXIT\n\0"
 panicStr: .ascii "!! PANIC ENCOUNTERED code=\0"
-panicIoBufferStr: .ascii "ioBuffer: \0"
+registersAdStr: .ascii "Registers e(a-d)x: \0"
+registersDsStr: .ascii "e[ds]i: \0"
+ioBufferStr: .ascii "ioBuffer: \0"
 stackStr: .ascii "Stack< \0"
 
 # Test Names
 testIoBufferStr: .ascii "testIoBuffer\0"
 testDOTStr: .ascii "testDOT\0"
 testDOTsStr: .ascii "testDOTs\0"
+testDumpInfoStr: .ascii "testDumpInfo\0"
 
 .align 8
 
@@ -172,6 +177,9 @@ testSuite: # ( -- )
   call testIoBuffer
   call testDOT
   call testDOTs
+  call testCmove
+  call assertCleanState
+  call testDumpInfo
   call assertCleanState
   ret
 
@@ -842,11 +850,93 @@ testDOTs:
   call typeTestPass
   ret
 
+
+cmove: # ( addr1 addr2 count -- )
+  # Forth CMOVE, move count characters from addr1 -> addr2.
+  dpop %eax # count
+  dpop %ecx # addr2
+  dpop %ebx # addr1
+  movl $0, %edi  # index
+1:
+  cmp %edi, %eax
+  je 2f
+  movb (%ebx,%edi,1), %dl
+  movb %dl, (%ecx,%edi,1)
+  inc %edi
+  jmp 1b
+2:
+  ret
+
+
+testCmove:
+  # TODO
+  ret
+
+
+##############################
+# Debug Helpers
+# These will help us as we develop to view the state of the stack and registers
+# anywhere in our program. They will also give us more helpful error messages
+# when things fail.
+
 dumpInfo:
+  # Registers
+  movl %eax, panicReserve
+  movl $panicReserve, %eax
+  movl %ebx, 4(%eax)
+  movl %ecx, 8(%eax)
+  movl %edx, 12(%eax)
+  movl %edi, 16(%eax)
+  movl %esi, 20(%eax)
+  dpush $registersAdStr
+  call countnt
+  call type
+  movl $panicReserve, %ebx
+  movl (%ebx), %eax  # eax
+  dpush %eax
+  dpush $16
+  call DOTbase
+
+  movl $panicReserve, %ebx
+  movl 4(%ebx), %eax # ebx
+  dpush %eax
+  dpush $16
+  call DOTbase
+
+  movl $panicReserve, %ebx
+  movl 8(%ebx), %eax # ecx
+  dpush %eax
+  dpush $16
+  call DOTbase
+
+  movl $panicReserve, %ebx
+  movl 12(%ebx), %eax # edx
+  dpush %eax
+  dpush $16
+  call DOTbase
+
+  movl $panicReserve, %ebx
+  dpush $registersDsStr
+  call countnt
+  call type
+  movl $panicReserve, %ebx
+  movl 16(%ebx), %eax # edi
+  dpush %eax
+  dpush $16
+  call DOTbase
+
+  movl $panicReserve, %ebx
+  movl 20(%ebx), %eax # esi
+  dpush %eax
+  dpush $16
+  call DOTbase
+  dpush $'\n'
+  call emit
+
   # Stack
   call DOTs
   # IO buffer
-  dpush $panicIoBufferStr
+  dpush $ioBufferStr
   call countnt
   call type
   dpush $ioBuffer
@@ -857,19 +947,50 @@ dumpInfo:
   call emit
   ret
 
+testDumpInfo:
+  # preload ioBuffer with something
+  dpush $testDumpInfoStr
+  call countnt
+  movl (%ebp), %eax
+  movl %eax, ioBufferLen
+  dpush $ioBuffer
+  call swap
+  call cmove
+
+  # push some values onto the stack
+  dpush $0xAB
+  dpush $0xAC
+
+  movl $0x01, %eax
+  movl $0x02, %ebx
+  movl $0x03, %ecx
+  movl $0x04, %edx
+  movl $0x10, %edi
+  movl $0x11, %esi
+  call dumpInfo
+
+  call _2drop
+  dpush $testDumpInfoStr
+  call countnt
+  call typeTestPass
+  ret
+
+
 dbgexit: # ( -- )
   # Exits immediately with rc=99
   # Mainly used in debugging.
+  call dumpInfo
   dpush $dbgexitStr
   call countnt
   call type
-  call dumpInfo
   movl $RC_DBG, %ebx
   jmp sysexit
 
 defaultPanic: # ( -- )
+  # TODO: grow the data stack with emergency reservers
   # The default panic implemention uses the above tools to ouput
   # relevant panic messages.
+  call dumpInfo
   dpush $panicStr
   call countnt
   call type
@@ -877,9 +998,9 @@ defaultPanic: # ( -- )
   call DOT
   dpush $'\n'
   call emit
-  call dumpInfo
   movl $RC_PANIC, %ebx
   jmp sysexit
+
 
 ##############################
 # 
