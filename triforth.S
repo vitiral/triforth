@@ -29,12 +29,13 @@
 # is completely obtuse and immune to understanding from naive students of
 # computers like ourselves.
 #
-# Understanding doesn't have to be so HARD. In this tutorial we will use x86
-# assembly to bootstrap our own forth language, called triforth, a pun the
-# "triforce" from the legend of Zelda. Like the triforce, triforth will give us
-# the Power to write scalable type-safe computer programs, the Knowledge of the
-# inner workings of our language and the Courage to deal with the nitty-gritty
-# low level details.
+# Understanding doesn't have to be so HARD. The forth compiler has a peculiar ability
+# to walk VERY early, after only a few lines of assembly.  In this tutorial we
+# will use x86 assembly to bootstrap our own forth language, called triforth
+# which is a pun from the "triforce" from the legend of Zelda. Like the
+# triforce, triforth will give us the Power to write scalable type-safe
+# computer programs, the Knowledge of the inner workings of our language and
+# the Courage to deal with the nitty-gritty low level details.
 
 #########################
 # Important References:
@@ -974,7 +975,6 @@ testDumpInfo:
   call typeTestPass
   ret
 
-
 dbgexit: # ( -- )
   # Exits immediately with rc=99
   # Mainly used in debugging.
@@ -1002,7 +1002,43 @@ defaultPanic: # ( -- )
 
 
 ##############################
+# Forth Dictionary
+# The forth dictionary is our most important datatype. Fundamentally it is singly-linked
+# list. This is a fundamentally simple datatype where each "item" within the list contains
+# a link to the previous item, like this:
+#
+#     ...
+#     link | ... data ...
+#      ^
+#      |
+#     link | ... data ...
+#
+# The dictionary in our forth (and most forths) is such a list, and the data is
+# arrayed like this:
+#
+#     link | info | name | xt | code/data ...
 # 
+# The various fields above are;
+# - link: this is the link to the previous entry in the LL, or 0 if this is the end.
+# - info: N bytes of information containing:
+#   - TODO: fill this out
+# - name: a ctstr (counted str) with the count as the first byte and the string as the rest.
+#    we pad this string so it aligns with 4 bytes.
+# - xt: the EXECUTION TOKEN, a core datatype in forth we will get to.
+# - code/data: the code and data that follows the xt will depend on the word. We will get into
+#   more detail later.
+#
+# The basic execution model of forth is that the "interpreter" will simply execute the
+# xt's in the "code" section of words. Those xt's tokens may in turn execute a
+# list of their own xt's, etc.  Unlike languages like C, no variables have to
+# be passed between the xt-calls, because every xt will simply pop/push from
+# the data stack.
+#
+# Just like the assembly we have been writing, we are going to store the word
+# we are currently executing in our return-stack (%esp). We will be doing an
+# indirect call to the xt pointed at by this, which will increment the word
+# we are executing by 4.
+
 
 ##############################
 # Main Entrypoint
