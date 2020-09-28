@@ -1034,11 +1034,51 @@ defaultPanic: # ( -- )
 # be passed between the xt-calls, because every xt will simply pop/push from
 # the data stack.
 #
-# Just like the assembly we have been writing, we are going to store the word
-# we are currently executing in our return-stack (%esp). We will be doing an
-# indirect call to the xt pointed at by this, which will increment the word
-# we are executing by 4.
+# Unlike assembly, the xt we are executing will be stored in %esi, which is helpful
+# because it allows us to use instructions normally reserved for strings to quickly
+# increment/decrement it.
+#
 
+  # .macro NEXT
+  # # The NEXT macro increments the xt we are executing and the executes it.
+  # # Every forth primitive has to be ended by NEXT. It's kind of like incrementing
+  # # the %eix when instructions are run.
+  # lodsl %eax // %eax=%esi; %esi+=4
+  # jmp *(%eax) // indirect jump
+  # .endm
+
+
+# Just like assembly, before we execute a new xt, we need to store our return address
+# so that the interpreter can continue executing the rest of our words. The operations
+# to modify the return stack are simply `pushl` and `popl`, so we will use those directly.
+
+# DOCOL:
+#   pushl %esi  # push esi onto the return stack
+#   addl $4, %eax # %eax points to our own xt (from NEXT), increment it to point into code
+#   movl %eax, %esi # and set esi to point to it instead.
+#   NEXT
+# 
+# 
+# EXIT:
+#   popl %esi # pop return code into esi
+#   NEXT
+
+  .set LINK, 0
+
+  .macro defcode name, namelen, flags=0, label
+  .section .rodata
+  .align 4
+  .globl name_\label
+name_\label :
+  .int link               # link to previous
+  .set link,name_\label   # update link to self
+  .int \flags             # flags for the word
+  .byte \namelen          # the length of the name
+  .ascii "\name"          # the ascii name itself
+  .align 4                # padding to next 4 byte boundary
+xt_\label :
+  .int \label // codeword
+  .endm
 
 ##############################
 # Main Entrypoint
