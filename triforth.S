@@ -98,6 +98,9 @@
 .equ ERR_PSTACK_UNDERFLOW,0x301
 .equ ERR_ASCII_BOUNDS,0x302
 
+.equ FALSE, 0
+.equ TRUE, -1
+
 
 ######################################################
 ### DATA SECTION
@@ -468,7 +471,7 @@ testing_overflow:
   dpush $4  # overflow
   call unreachable
 
-modDIV: # ( u:a u:b -- u u )
+DIVmod: # ( u:a u:b -- u u )
   # Forth MOD/, unsigned divide a by b
   # returns: quotient remainder
   dpop %ebx # divisor
@@ -483,7 +486,7 @@ modDIV: # ( u:a u:b -- u u )
 testModDIV:
   dpush $13
   dpush $5
-  call modDIV
+  call DIVmod
   dpop %ebx
   movl $3, %eax # remainder
   call assertEaxEbxEq
@@ -532,7 +535,7 @@ rot: # ( a b c -- b c a )
   dpush %eax
   ret
 
-rotr: # ( a b c -- c a b )
+rrot: # ( a b c -- c a b )
   # Forth -ROT, rotates right
   dpop %ecx
   dpop %ebx
@@ -553,7 +556,7 @@ depth: # ( -- u )
   subl %ebp, %eax
   dpush %eax
   dpush $4
-  call modDIV
+  call DIVmod
   call drop # drop remainder
   ret
 
@@ -603,7 +606,7 @@ testStackBasic:
   movl $0, %ebx
   call assertEaxEbxEq
 
-  call rotr # ( 2 0 1 )
+  call rrot # ( 2 0 1 )
 
   movl (%ebp), %eax
   movl $1, %ebx
@@ -733,11 +736,11 @@ DOTbase: # ( n u:base -- )
   # emit the number using the given base.
   # TODO: deal with negatives
   dpush $0 # count: characters in buffer
-  call rotr # ( count n base )
+  call rrot # ( count n base )
 1:
   call dup  # ( count n base base )
-  call rotr # ( count base n base )
-  call modDIV # ( count base quot rem )
+  call rrot # ( count base n base )
+  call DIVmod # ( count base quot rem )
   call uTOascii # ( count base quot c )
 
   # write characters right->left
@@ -1228,6 +1231,7 @@ testEXIT_cont:
 
   .set LINK, 0  # this will keep track of the "previous" link for us.
 
+# ( -- ) \ exit from word
 .section .rodata
 .align 4
 name_EXIT:
@@ -1240,6 +1244,7 @@ name_EXIT:
 xt_EXIT:
   .int word_EXIT # xt
 
+# ( a b -- a*b ) \ multiply
 name_MUL:
   .int link            # link to previous (in this case 0)
   .set link, name_MUL  # set link for next word to be defined
@@ -1279,11 +1284,15 @@ testDictSimple_cont:
   call typeTestPass
   ret
 
-
-  .macro defcode name, namelen, flags=0, label
-  .section .rodata
+# Now that we have the basic structure of the dictionary, we are going
+# to define several words using the below macro.
+#
+# To use the macro we simply call it and then write the assembly that should go
+# in the word. Some of these we have already defined, tested and used in
+# implementing other core words, in which case will simply call our
+# implementations.
+.macro def_asmword name, namelen, flags=0, label
   .align 4
-  .globl name_\label
 name_\label :
   .int link               # link to previous
   .set link,name_\label   # update link to self
@@ -1292,8 +1301,192 @@ name_\label :
   .ascii "\name"          # the ascii name itself
   .align 4                # padding to next 4 byte boundary
 xt_\label :
-  .int \label // codeword
-  .endm
+  .int word_\label
+word_\label :
+.endm
+
+# ( a b -- b a )
+#           ascii ,  len, flag, label
+def_asmword "SWAP" , 4 ,  0 ,   swap
+  call swap
+  NEXT
+
+# ( a -- a a )
+#           ascii , len, flag, label
+def_asmword "DUP" , 3 ,  0 ,   dup
+  call dup
+  NEXT
+
+# ( a b -- a b a b )
+#           ascii , len, flag, label
+def_asmword "2DUP" , 4 ,  0 ,   2dup
+  call _2dup
+  NEXT
+
+# ( a -- )
+#           ascii ,  len, flag, label
+def_asmword "DROP" , 4 ,  0 ,   drop
+  call drop
+  NEXT
+
+# ( a b -- )
+#           ascii ,  len, flag, label
+def_asmword "2DROP" , 5 ,  0 ,   2drop
+  call _2drop
+  NEXT
+
+# ( a b c -- b c a ) \ rotates left
+#           ascii ,  len, flag, label
+def_asmword "ROT" , 3 ,  0 ,   rot
+  call rot
+  NEXT
+
+# ( a b c -- c a b ) \ rotates right
+#           ascii  , len, flag, label
+def_asmword "-ROT" , 4 ,  0 ,   rrot
+  call rrot
+  NEXT
+
+# ( a b -- a b a )
+#           ascii  , len, flag, label
+def_asmword "OVER" , 4 ,  0 ,   over
+  call over
+  NEXT
+
+# ( -- u ) \ depth of the stack
+#           ascii   , len, flag, label
+def_asmword "DEPTH" , 5 ,  0 ,   depth
+  call depth
+  NEXT
+
+# ( a b -- b ) \ drops item below top of stack
+#           ascii , len, flag, label
+def_asmword "NIP" , 3 ,  0 ,   nip
+  dpop %ebx
+  dpop %eax
+  dpush %ebx
+  NEXT
+
+# ( a b -- b a b ) \ copy the top stack item below the second stack item
+#           ascii  , len, flag, label
+def_asmword "TUCK" , 4 ,  0 ,   tuck
+  dpop %ebx
+  dpop %eax
+  dpush %ebx
+  dpush %eax
+  dpush %ebx
+  NEXT
+
+# ( a -- a a? ) \ duplicate top of stack if non-zero
+#           ascii  , len, flag, label
+def_asmword "?DUP" , 4 ,  0 ,   QDUP
+  cmp $0, (%ebp)
+  je 1f
+  call dup
+1:
+  NEXT
+
+# ( a b -- a+b ) \ add values
+#           ascii  , len, flag, label
+def_asmword "+"    , 1  ,  0 ,  ADD
+  dpop %eax
+  addl %eax, (%ebp)
+  NEXT
+
+# ( a b -- a-b ) \ subtract values
+#           ascii  , len, flag, label
+def_asmword "-"    , 1  ,  0 ,  SUB
+  dpop %eax
+  subl %eax, (%ebp)
+  NEXT
+
+# ( u:a u:b -- u u ) \ divide a/b -> quotient remainder
+#           ascii  , len, flag, label
+def_asmword "/MOD" , 4  ,  0 ,  DIVmod
+  call DIVmod
+  NEXT
+
+# ( u u -- u ) \ bitwise AND
+#          ascii  , len, flag, label
+def_asmword "AND" ,  3 ,   0 , and
+  dpop %eax
+  andl %eax, (%ebp)
+  NEXT
+
+# ( u u -- u ) \ bitwise OR
+#          ascii , len, flag, label
+def_asmword "OR" ,  2 ,   0 , or
+  dpop %eax
+  orl %eax, (%ebp)
+  NEXT
+
+# ( u u -- u ) \ bitwise XOR (exclusive OR)
+#          ascii , len, flag, label
+def_asmword "XOR" ,  3 ,   0 , xor
+  dpop %eax
+  xorl %eax, (%ebp)
+  NEXT
+
+# ( u -- u ) \ bitwise INVERT (switch all bits)
+#          ascii     , len, flag, label
+def_asmword "INVERT" ,  6 ,   0 , invert
+  notl (%ebp)
+  NEXT
+
+# ( u -- flag ) \ equal to 0?
+#          ascii , len, flag, label
+def_asmword "=0"  , 2 ,   0 , EQ0
+  dpop %eax
+  cmp $0, %eax
+  je 1f
+  dpush $FALSE  # false
+  NEXT
+1:
+  dpush $TRUE # true
+  NEXT
+
+# Macro for defining comparisons, which are identical except their jmp
+# conditions.
+.macro def_asmcmp name, namelen, flags, label, jumpcondition
+  def_asmword "\name" , \namelen , \flags , \label
+  dpop %eax
+  dpop %ebx
+  cmp %ebx, %eax
+  \jumpcondition 1f
+  dpush $FALSE  # false
+  NEXT
+1:
+  dpush $TRUE # true
+  NEXT
+.endm
+
+# ( u u -- flag ) \ equal
+#          ascii , len, flag, label, jumpcondition
+def_asmcmp "="   , 1  ,   0 , EQ   , je
+
+# ( u u -- flag ) \ not equal
+#          ascii , len, flag, label, jumpcondition
+def_asmcmp "<>"   , 2 ,   0 , NEQ  , jne
+
+# ( u u -- flag ) \ less than
+#          ascii , len, flag, label, jumpcondition
+def_asmcmp "<"   , 1 ,   0 , LT  , jl
+
+# ( u u -- flag ) \ less than or equal
+#          ascii , len, flag, label, jumpcondition
+def_asmcmp "<="  , 2 ,   0 , LTE , jle
+
+# ( u u -- flag ) \ greater than
+#          ascii , len, flag, label, jumpcondition
+def_asmcmp ">"   , 1 ,   0 , GT  , jg
+
+# ( u u -- flag ) \ greater than or equal
+#          ascii , len, flag, label, jumpcondition
+def_asmcmp ">="  , 2 ,   0 , GTE , jge
+
+
+
+
 
 ##############################
 # Main Entrypoint
