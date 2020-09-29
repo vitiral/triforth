@@ -148,6 +148,8 @@ testIoBufferStr: .ascii "testIoBuffer\0"
 testDOTStr: .ascii "testDOT\0"
 testDOTsStr: .ascii "testDOTs\0"
 testDumpInfoStr: .ascii "testDumpInfo\0"
+testNEXTStr: .ascii "testNEXT\0"
+testEXITStr: .ascii "testEXIT\0"
 
 .align 8
 
@@ -177,9 +179,14 @@ testSuite: # ( -- )
   call testIoBuffer
   call testDOT
   call testDOTs
+  call testMUL
   call testCmove
-  call assertCleanState
   call testDumpInfo
+  call assertCleanState
+
+  # call testNEXT
+  call testEXIT
+
   call assertCleanState
   ret
 
@@ -792,6 +799,15 @@ MUL: # ( a b -- u )
   dpush %eax
   ret
 
+testMUL:
+  dpush $8
+  dpush $2
+  call MUL
+  dpop %eax
+  movl $16, %ebx
+  call assertEaxEbxEq
+  ret
+
 DOTs: # ( -- )
   # Forth .S, prints the current stack
   dpush $stackStr
@@ -879,8 +895,7 @@ testCmove:
 # anywhere in our program. They will also give us more helpful error messages
 # when things fail.
 
-dumpInfo:
-  # Registers
+snapshotRegisters:
   movl %eax, registerSnapshot
   movl $registerSnapshot, %eax
   movl %ebx, 4(%eax)
@@ -888,6 +903,22 @@ dumpInfo:
   movl %edx, 12(%eax)
   movl %edi, 16(%eax)
   movl %esi, 20(%eax)
+  ret
+
+restoreRegisters:
+  movl $registerSnapshot, %eax
+  movl 4(%eax), %ebx
+  movl 8(%eax), %ecx
+  movl 12(%eax), %edx
+  movl 16(%eax), %edi
+  movl 20(%eax), %esi
+  movl registerSnapshot, %eax
+  ret
+
+dumpInfo:
+  call snapshotRegisters
+
+  # Registers
   dpush $registersAdStr
   call countnt
   call type
@@ -945,6 +976,8 @@ dumpInfo:
   call type
   dpush $'\n'
   call emit
+
+  call restoreRegisters
   ret
 
 testDumpInfo:
@@ -970,6 +1003,7 @@ testDumpInfo:
   call dumpInfo
 
   call _2drop
+  movl $0, ioBufferLen
   dpush $testDumpInfoStr
   call countnt
   call typeTestPass
@@ -1002,7 +1036,135 @@ defaultPanic: # ( -- )
 
 
 ##############################
-# Forth Dictionary
+# Forth Interpreter
+# Almost the entire forth "interpreter" is a NEXT macro in a loop. The NEXT macro
+# is literally two lines of assembly. What does it do?
+#
+# All the forth interpreter does is execute a string of xt's (execution
+# tokens). The xt to be executed will be stored in %esi, with return xt's
+# stored on the normal return stack with pushl and popl. xt's are nothing more
+# than pointers to assembly instructions to execute, with one caveat:
+# Those assembly instructions must end in NEXT instead of ret. NEXT means
+# that the assembly will run the next instruction in the list, which will
+# run the next, etc. Assembly code that calls forth code then puts it's own
+# continuation location on the xt stack to return execution to itself.
+#
+# testNEXT demonsrates the basic principle of executing words written in
+# assembly, but doesn't get to the interesting part -- how are forth words
+# defined in terms of other forth words? To do that we need DOCOL and EXIT. All
+# DOCOL ("do colon") is the xt of every "standard" forth word, all it does
+# is store the current xt on the return stack and call NEXT on it's own
+# xt's. All forth words then end in EXIT, which simply pops the value on
+# the rstack into %esi and calls NEXT.
+#
+# See how they work together in testEXIT.
+
+.macro NEXT
+  movl %esi, %eax
+  addl $4, %esi
+  jmp *(%eax)
+.endm
+
+word_MUL: # ( u u -- u )
+  # Multiply two numbers on the stack. Note: this is our first "true" forth
+  # word. All forth words will be prefixed with `word_` and must end with NEXT
+  # instead of `ret`.
+  call MUL
+  NEXT
+
+testNEXT:
+  # In this test we will store our fake "xt's" in the ioBuffer, since we know
+  # it isn't being used.
+  movl $ioBuffer, %esi
+  # Forth: 7 3 2 * * <testNEXT_cont>
+  dpush $7
+  dpush $3
+  dpush $2
+  movl $word_MUL, (%esi)
+  movl $word_MUL, 4(%esi)
+  movl $testNEXT_cont, 8(%esi)
+  NEXT
+testNEXT_cont:
+  dpop %eax
+  movl $42, %ebx
+  call assertEaxEbxEq
+  dpush $testNEXTStr
+  call countnt
+  call typeTestPass
+  ret
+
+DOCOL:
+  pushl %esi      # push esi (xt) onto the return stack
+  addl $4, %eax   # %eax points to xt (from NEXT)
+  movl %eax, %esi # so make esi point to the first word to execute
+  NEXT
+
+word_EXIT:
+  popl %esi # pop return xt into esi
+  NEXT      # jmp to it and increment esi
+
+word_pushI2:
+  dpush $2
+  NEXT
+
+testEXIT:
+  # We are going to define two "fake words" DBL and QUAD,
+  # both within the ioBuffer.
+  # : DBL ( u -- u ) 2 * ;  \ multiply by 2
+  # : QUAD ( u -- u ) DBL DBL ; \ multiply by 4
+  movl $ioBuffer, %esi
+
+  # DBL
+  movl $DOCOL, (%esi)
+  movl $word_pushI2, 4(%esi)
+  movl $word_MUL, 8(%esi)
+  movl $word_EXIT, 12(%esi)
+
+  # QUAD
+  movl $DOCOL, 16(%esi)
+  movl $ioBuffer, 20(%esi)  # DBL
+  movl $ioBuffer, 24(%esi)  # DBL
+  movl $word_EXIT, 28(%esi)
+
+  dpush $8  # put 8 on the stack
+
+  # Prime DOCOL
+  movl $testEXIT_value, %esi
+  movl $ioBuffer+16, %eax  # QUAD
+  jmp *(%eax)
+  # DOCOL will push %esi onto the return stack and
+  # increment %eax to point to the xt's to execute,
+  # each of which will call NEXT on their own until
+  # EXIT returns to the value on the return stack.
+testEXIT_value:
+  .int testEXIT_cont  # indirect address to jmp *(...) to
+  .align
+testEXIT_cont:
+  dpop %eax
+  movl $48, %ebx
+  call assertEaxEbxEq
+
+  dpush $testEXITStr
+  call countnt
+  call typeTestPass
+  ret
+
+
+
+
+# Just like assembly, before we execute a new xt, we need to store our return address
+# so that the interpreter can continue executing the rest of our words. The operations
+# to modify the return stack are simply `pushl` and `popl`, so we will use those directly.
+
+# DOCOL:
+#   pushl %esi  # push esi onto the return stack
+#   addl $4, %eax # %eax points to our own xt (from NEXT), increment it to point into code
+#   movl %eax, %esi # and set esi to point to it instead.
+#   NEXT
+# 
+# 
+
+
 # The forth dictionary is our most important datatype. Fundamentally it is singly-linked
 # list. This is a fundamentally simple datatype where each "item" within the list contains
 # a link to the previous item, like this:
