@@ -188,7 +188,7 @@ testSuite: # ( -- )
   call assertCleanState
 
   call testNEXT
-  # call testEXIT
+  call testEXIT
 
   call assertCleanState
   ret
@@ -1085,12 +1085,13 @@ defaultPanic: # ( -- )
 
 .macro NEXT
   # Note that lodsl is the same as below:
-  movl (%esi), %eax 
+  movl (%esi), %eax
   addl $4, %esi
   # lodsl 
   jmp *(%eax)
 .endm
 
+.align 4
 DOCOL:
   pushl %esi      # push esi (xt) onto the return stack
   addl $4, %eax   # %eax points to xt (from NEXT)
@@ -1102,11 +1103,7 @@ word_EXIT:
   NEXT      # jmp to it and increment esi
 xt_EXIT:    # the address that appears at the end of all xt lists.
   .int word_EXIT
-  .align
-# TODO: segfault when I add this???
-# code_EXIT:
-#   .int word_EXIT
-#   .align
+  .align 4
 
 word_MUL: # ( u u -- u )
   # Multiply two numbers on the stack. Note: this is our first "true" forth
@@ -1116,10 +1113,9 @@ word_MUL: # ( u u -- u )
   NEXT
 xt_MUL:
   .int word_MUL
-  .align
+  .align 4
 
 testNEXT:
-  # TODO: fix this
   # In this test we will store our fake "xt's" in the ioBuffer, since we know
   # it isn't being used.
   movl $ioBuffer, %esi
@@ -1134,13 +1130,10 @@ testNEXT:
   # the xt's to execute, each of which will call NEXT on their own until EXIT
   # returns to the value on the return stack.
   NEXT
-  # Note the double indirection that is inherent to everyting on the xt stack.
-testNEXT_xt :# this "mimicks" a forth word execution token.
-  .int testNEXT_code
-  .align
-testNEXT_code: # this address contains the code location to run
+  # Note the indirection that is inherent to everyting on the xt stack.
+testNEXT_xt : # this "mimicks" a forth word execution token.
   .int testNEXT_cont
-  .align
+  .align 4
 testNEXT_cont:
   dpop %eax
   movl $42, %ebx
@@ -1155,7 +1148,7 @@ word_pushI2:
   NEXT
 xt_pushI2:
   .int word_pushI2
-  .align
+  .align 4
 
 testEXIT:
   movl $ioBuffer, %ebx
@@ -1175,16 +1168,18 @@ testEXIT:
   dpush $8  # put 8 on the stack
 
   # Prime DOCOL
-  movl $testEXIT_xt, %esi
+  movl $testEXIT_exit, %esi
   movl $ioBuffer, %eax
   addl $16, %eax  # QUAD
   jmp *(%eax)  # execute DOCOL of QUAD
+# The value that is put on the return stack. Think of this as a NEXT into
+# testEXIT_xt
+testEXIT_exit:
+  .int testEXIT_xt
+  .align 4
 testEXIT_xt:
-  .int testEXIT_code
-  .align
-testEXIT_code:
   .int testEXIT_cont
-  .align
+  .align 4
 testEXIT_cont:
   dpop %eax
   movl $32, %ebx
