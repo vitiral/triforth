@@ -116,6 +116,9 @@ dstackMax:
 ioBuffer: .space 128
 ioBufferLen: .int 0  # number of chars in ioBuffer
 
+runtimeFlags: .int 0
+.equ RTFLAG_DUMP_INFO,0x01
+
 # Address that should be called when panicing, can be redirected when testing.
 panic: .int defaultPanic
 # Specefic error code encountered when panicing.
@@ -917,6 +920,11 @@ restoreRegisters:
 
 dumpInfo:
   call snapshotRegisters
+  # movl runtimeFlags, %eax
+  # andl $RTFLAG_DUMP_INFO, %eax
+  # cmp $0, %eax
+  # je dumpInfo_norecursion
+  # orl $RTFLAG_DUMP_INFO, runtimeFlags # set the flag
 
   # Registers
   dpush $registersAdStr
@@ -977,6 +985,14 @@ dumpInfo:
   dpush $'\n'
   call emit
 
+  # # clear the flag
+  # movl $RTFLAG_DUMP_INFO, %eax
+  # notl %eax
+  # andl %eax, runtimeFlags
+  call restoreRegisters
+  ret
+dumpInfo_norecursion:
+  # RTFLAG_DUMP_INFO prevents recursion of this function.
   call restoreRegisters
   ret
 
@@ -1060,17 +1076,44 @@ defaultPanic: # ( -- )
 # See how they work together in testEXIT.
 
 .macro NEXT
-  movl %esi, %eax
+  movl (%esi), %eax
   addl $4, %esi
+  movl $1, %edx  # TODO: remove
+  call dumpInfo
   jmp *(%eax)
 .endm
+
+# push testEXIT_value onto stack
+# add 4 to QUAD xt and store in esi
+# move esi to eax, add 4 to esi, jmp *(eax)
+DOCOL:
+  pushl %esi      # push esi (xt) onto the return stack
+  addl $4, %eax   # %eax points to xt (from NEXT)
+  movl %eax, %esi # so make esi point to the first word to execute
+  movl $2, %edx  # TODO: remove
+  call dumpInfo
+  NEXT
+
+word_EXIT:
+  popl %esi # pop return xt into esi
+  movl $3, %edx  # TODO: remove
+  call dumpInfo
+  NEXT      # jmp to it and increment esi
+xt_EXIT:
+  .int word_EXIT
+  .align
 
 word_MUL: # ( u u -- u )
   # Multiply two numbers on the stack. Note: this is our first "true" forth
   # word. All forth words will be prefixed with `word_` and must end with NEXT
   # instead of `ret`.
   call MUL
+  movl $4, %edx  # TODO: remove
+  call dumpInfo
   NEXT
+xt_MUL:
+  .int word_MUL
+  .align
 
 testNEXT:
   # In this test we will store our fake "xt's" in the ioBuffer, since we know
@@ -1093,53 +1136,76 @@ testNEXT_cont:
   call typeTestPass
   ret
 
-DOCOL:
-  call dumpInfo
-  pushl %esi      # push esi (xt) onto the return stack
-  addl $4, %eax   # %eax points to xt (from NEXT)
-  movl %eax, %esi # so make esi point to the first word to execute
-  NEXT
-
-word_EXIT:
-  call dumpInfo
-  popl %esi # pop return xt into esi
-  NEXT      # jmp to it and increment esi
-
 word_pushI2:
-  call dumpInfo
   dpush $2
+  call dumpInfo
   NEXT
+xt_pushI2:
+  .int word_pushI2
+  .align
 
 testEXIT:
+  movl $0, %edx
+
   # We are going to define two "fake words" DBL and QUAD,
   # both within the ioBuffer.
   # : DBL ( u -- u ) 2 * ;  \ multiply by 2
   # : QUAD ( u -- u ) DBL DBL ; \ multiply by 4
-  movl $ioBuffer, %esi
+  dpush $'='
+  call emit
+  dpush $DOCOL
+  dpush $16
+  call DOTbase
+  dpush $'\n'
+  call emit
+
+  dpush $'='
+  call emit
+  dpush $ioBuffer
+  dpush $16
+  call DOTbase
+  dpush $'\n'
+  call emit
+
+  dpush $'='
+  call emit
+  movl $ioBuffer, %eax
+  addl $16, %eax
+  dpush %eax
+  dpush $16
+  call DOTbase
+  dpush $'\n'
+  call emit
+
+  movl $ioBuffer, %ebx
 
   # DBL
-  movl $DOCOL, (%esi)
-  movl $word_pushI2, 4(%esi)
-  movl $word_MUL, 8(%esi)
-  movl $word_EXIT, 12(%esi)
+  movl $DOCOL, (%ebx)
+  movl $xt_pushI2, 4(%ebx)
+  movl $xt_MUL, 8(%ebx)
+  movl $xt_EXIT, 12(%ebx)
 
   # QUAD
-  movl $DOCOL, 16(%esi)
-  movl $ioBuffer, 20(%esi)  # DBL
-  movl $ioBuffer, 24(%esi)  # DBL
-  movl $word_EXIT, 28(%esi)
+  movl $DOCOL, 16(%ebx)
+  movl %ebx, 20(%ebx)  # DBL
+  movl %ebx, 24(%ebx)  # DBL
+  movl $xt_EXIT, 28(%ebx)
 
   dpush $8  # put 8 on the stack
 
   # Prime DOCOL
   movl $testEXIT_value, %esi
-  movl $ioBuffer+16, %eax  # QUAD
-  jmp *(%eax)
+  movl $ioBuffer, %eax
+  addl $16, %eax  # QUAD
+  jmp *(%eax)  # execute DOCOL of QUAD
   # DOCOL will push %esi onto the return stack and
   # increment %eax to point to the xt's to execute,
   # each of which will call NEXT on their own until
   # EXIT returns to the value on the return stack.
 testEXIT_value:
+  .int testEXIT_value_value  # indirect address to jmp *(...) to
+  .align
+testEXIT_value_value:
   .int testEXIT_cont  # indirect address to jmp *(...) to
   .align
 testEXIT_cont:
