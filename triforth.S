@@ -1094,16 +1094,19 @@ testNEXT_cont:
   ret
 
 DOCOL:
+  call dumpInfo
   pushl %esi      # push esi (xt) onto the return stack
   addl $4, %eax   # %eax points to xt (from NEXT)
   movl %eax, %esi # so make esi point to the first word to execute
   NEXT
 
 word_EXIT:
+  call dumpInfo
   popl %esi # pop return xt into esi
   NEXT      # jmp to it and increment esi
 
 word_pushI2:
+  call dumpInfo
   dpush $2
   NEXT
 
