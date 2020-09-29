@@ -1076,10 +1076,7 @@ defaultPanic: # ( -- )
 # See how they work together in testEXIT.
 
 .macro NEXT
-  movl (%esi), %eax
-  addl $4, %esi
-  movl $1, %edx  # TODO: remove
-  call dumpInfo
+  lodsl # same as:  movl (%esi), %eax ;  addl $4, %esi
   jmp *(%eax)
 .endm
 
@@ -1090,14 +1087,10 @@ DOCOL:
   pushl %esi      # push esi (xt) onto the return stack
   addl $4, %eax   # %eax points to xt (from NEXT)
   movl %eax, %esi # so make esi point to the first word to execute
-  movl $2, %edx  # TODO: remove
-  call dumpInfo
   NEXT
 
 word_EXIT:
   popl %esi # pop return xt into esi
-  movl $3, %edx  # TODO: remove
-  call dumpInfo
   NEXT      # jmp to it and increment esi
 xt_EXIT:
   .int word_EXIT
@@ -1108,8 +1101,6 @@ word_MUL: # ( u u -- u )
   # word. All forth words will be prefixed with `word_` and must end with NEXT
   # instead of `ret`.
   call MUL
-  movl $4, %edx  # TODO: remove
-  call dumpInfo
   NEXT
 xt_MUL:
   .int word_MUL
@@ -1138,45 +1129,12 @@ testNEXT_cont:
 
 word_pushI2:
   dpush $2
-  call dumpInfo
   NEXT
 xt_pushI2:
   .int word_pushI2
   .align
 
 testEXIT:
-  movl $0, %edx
-
-  # We are going to define two "fake words" DBL and QUAD,
-  # both within the ioBuffer.
-  # : DBL ( u -- u ) 2 * ;  \ multiply by 2
-  # : QUAD ( u -- u ) DBL DBL ; \ multiply by 4
-  dpush $'='
-  call emit
-  dpush $DOCOL
-  dpush $16
-  call DOTbase
-  dpush $'\n'
-  call emit
-
-  dpush $'='
-  call emit
-  dpush $ioBuffer
-  dpush $16
-  call DOTbase
-  dpush $'\n'
-  call emit
-
-  dpush $'='
-  call emit
-  movl $ioBuffer, %eax
-  addl $16, %eax
-  dpush %eax
-  dpush $16
-  call DOTbase
-  dpush $'\n'
-  call emit
-
   movl $ioBuffer, %ebx
 
   # DBL
@@ -1194,7 +1152,7 @@ testEXIT:
   dpush $8  # put 8 on the stack
 
   # Prime DOCOL
-  movl $testEXIT_value, %esi
+  movl $testEXIT_xt, %esi
   movl $ioBuffer, %eax
   addl $16, %eax  # QUAD
   jmp *(%eax)  # execute DOCOL of QUAD
@@ -1202,15 +1160,15 @@ testEXIT:
   # increment %eax to point to the xt's to execute,
   # each of which will call NEXT on their own until
   # EXIT returns to the value on the return stack.
-testEXIT_value:
-  .int testEXIT_value_value  # indirect address to jmp *(...) to
+testEXIT_xt:
+  .int testEXIT_word  # indirect address to jmp *(...) to
   .align
-testEXIT_value_value:
+testEXIT_word:
   .int testEXIT_cont  # indirect address to jmp *(...) to
   .align
 testEXIT_cont:
   dpop %eax
-  movl $48, %ebx
+  movl $32, %ebx
   call assertEaxEbxEq
 
   dpush $testEXITStr
@@ -1221,22 +1179,12 @@ testEXIT_cont:
 
 
 
-# Just like assembly, before we execute a new xt, we need to store our return address
-# so that the interpreter can continue executing the rest of our words. The operations
-# to modify the return stack are simply `pushl` and `popl`, so we will use those directly.
 
-# DOCOL:
-#   pushl %esi  # push esi onto the return stack
-#   addl $4, %eax # %eax points to our own xt (from NEXT), increment it to point into code
-#   movl %eax, %esi # and set esi to point to it instead.
-#   NEXT
-# 
-# 
-
-
-# The forth dictionary is our most important datatype. Fundamentally it is singly-linked
-# list. This is a fundamentally simple datatype where each "item" within the list contains
-# a link to the previous item, like this:
+##############################
+# Forth Dictionary
+# The forth dictionary is our most important datatype. Fundamentally it is
+# singly-linked list. This is a fundamentally simple datatype where each "item"
+# within the list contains a link to the previous item, like this:
 #
 #     ...
 #     link | ... data ...
