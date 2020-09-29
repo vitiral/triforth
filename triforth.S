@@ -153,6 +153,7 @@ testDOTsStr: .ascii "testDOTs\0"
 testDumpInfoStr: .ascii "testDumpInfo\0"
 testNEXTStr: .ascii "testNEXT\0"
 testEXITStr: .ascii "testEXIT\0"
+testDictSimpleStr: .ascii "testDictSimple\0"
 
 .align 8
 
@@ -189,6 +190,7 @@ testSuite: # ( -- )
 
   call testNEXT
   call testEXIT
+  call testDictSimple
 
   call assertCleanState
   ret
@@ -1101,7 +1103,7 @@ DOCOL:
 word_EXIT:
   popl %esi # pop return xt into esi
   NEXT      # jmp to it and increment esi
-xt_EXIT:    # the address that appears at the end of all xt lists.
+fake_xt_EXIT: # here for testing/demo. The real xt will be in the dict
   .int word_EXIT
   .align 4
 
@@ -1111,7 +1113,7 @@ word_MUL: # ( u u -- u )
   # instead of `ret`.
   call MUL
   NEXT
-xt_MUL:
+fake_xt_MUL: # here for testing/demo. The real xt will be in the dict
   .int word_MUL
   .align 4
 
@@ -1123,8 +1125,8 @@ testNEXT:
   dpush $7
   dpush $3
   dpush $2
-  movl $xt_MUL, (%esi)
-  movl $xt_MUL, 4(%esi)
+  movl $fake_xt_MUL, (%esi)
+  movl $fake_xt_MUL, 4(%esi)
   movl $testNEXT_xt, 8(%esi)
   # DOCOL will push %esi onto the return stack and increment %eax to point to
   # the xt's to execute, each of which will call NEXT on their own until EXIT
@@ -1156,18 +1158,18 @@ testEXIT:
   # DBL
   movl $DOCOL, (%ebx)
   movl $xt_pushI2, 4(%ebx)
-  movl $xt_MUL, 8(%ebx)
-  movl $xt_EXIT, 12(%ebx)
+  movl $fake_xt_MUL, 8(%ebx)
+  movl $fake_xt_EXIT, 12(%ebx)
 
   # QUAD
   movl $DOCOL, 16(%ebx)
   movl %ebx, 20(%ebx)  # DBL
   movl %ebx, 24(%ebx)  # DBL
-  movl $xt_EXIT, 28(%ebx)
+  movl $fake_xt_EXIT, 28(%ebx)
 
   dpush $8  # put 8 on the stack
 
-  # Prime DOCOL
+  # Prime and execute DOCOL
   movl $testEXIT_exit, %esi
   movl $ioBuffer, %eax
   addl $16, %eax  # QUAD
@@ -1206,30 +1208,77 @@ testEXIT_cont:
 # The dictionary in our forth (and most forths) is a linked list, and the data is
 # arrayed like this:
 #
-#     link | info | name | xt | code/etc ...
+#      ...
+#     link | name | info | xt | code/etc ...
+#      ...
 # 
 # The various fields above are;
 # - link: this is the link to the previous entry in the LL, or 0 if this is the end.
-# - info: N bytes of information containing:
-#   - TODO: fill this out
 # - name: a ctstr (counted str) with the count as the first byte and the string as the rest.
 #    we pad this string so it aligns with 4 bytes.
-# - xt: the EXECUTION TOKEN, a core datatype in forth we will get to.
+# - info: N bytes of information containing:
+#   - prescedence bit: whether this word should be executed at compile time.
+#   - TODO: flush this out
+# - xt: the "execution token", see previous section. Points to the code to execute in order
+#   to run this code.
 # - code/etc: the code and data that follows the xt will depend on the word. We will get into
 #   more detail later.
 #
-# The basic execution model of forth is that the "interpreter" will simply execute the
-# xt's in the "code" section of words. Those xt's tokens may in turn execute a
-# list of their own xt's, etc.  Unlike languages like C, no variables have to
-# be passed between the xt-calls, because every xt will simply pop/push from
-# the data stack.
-#
-# Unlike assembly, the xt we are executing will be stored in %esi, which is helpful
-# because it allows us to use instructions normally reserved for strings to quickly
-# increment/decrement it.
-#
+# We have already nearly defined a few words, so let's start the dictionary!
 
-  .set LINK, 0
+  .set LINK, 0  # this will keep track of the "previous" link for us.
+
+.section .rodata
+.align 4
+name_EXIT:
+  .int link             # link to previous (in this case 0)
+  .set link, name_EXIT  # set link for next word to be defined
+  .byte 4       # name length
+  .ascii "EXIT" # the word name
+  .align 4
+  .int 0  # flags
+xt_EXIT:
+  .int word_EXIT # xt
+
+name_MUL:
+  .int link            # link to previous (in this case 0)
+  .set link, name_MUL  # set link for next word to be defined
+  .byte 3       # name length
+  .ascii "MUL"  # the word name
+  .align 4
+  .int 0  # flags
+xt_MUL:
+  .int word_MUL # xt
+
+testDictSimple:
+  dpush $7  # put 8 on the stack
+  dpush $3  # put 8 on the stack
+  dpush $2  # put 8 on the stack
+  # Forth= : * * ;
+  movl $ioBuffer, %ebx
+  movl $DOCOL, (%ebx)
+  movl $xt_MUL, 4(%ebx)
+  movl $xt_MUL, 8(%ebx)
+  movl $xt_EXIT, 12(%ebx)
+  # Prime and execute DOCOL
+  movl $testDictSimple_exit, %esi
+  movl $ioBuffer, %eax
+  jmp *(%eax)  # execute DOCOL of QUAD
+testDictSimple_exit:
+  .int testDictSimple_xt
+  .align 4
+testDictSimple_xt:
+  .int testDictSimple_cont
+  .align 4
+testDictSimple_cont:
+  dpop %eax
+  movl $42, %ebx
+  call assertEaxEbxEq
+  dpush $testDictSimpleStr
+  call countnt
+  call typeTestPass
+  ret
+
 
   .macro defcode name, namelen, flags=0, label
   .section .rodata
