@@ -1305,59 +1305,90 @@ xt_\label :
 word_\label :
 .endm
 
+# Since we have already written so many of the funcitons we need, we will write
+# a second macro. All it does is call the function we have already written.
+
+.macro def_callword name, namelen, flags=0, label
+def_asmword \name , \namelen , \flags , \label
+  call \label
+  NEXT
+.endm
+
 # ( a b -- b a )
 #           ascii ,  len, flag, label
-def_asmword "SWAP" , 4 ,  0 ,   swap
-  call swap
-  NEXT
+def_callword "SWAP" , 4 ,  0 ,   swap
 
 # ( a -- a a )
 #           ascii , len, flag, label
-def_asmword "DUP" , 3 ,  0 ,   dup
-  call dup
-  NEXT
+def_callword "DUP" , 3 ,  0 ,   dup
 
 # ( a b -- a b a b )
 #           ascii , len, flag, label
-def_asmword "2DUP" , 4 ,  0 ,   2dup
-  call _2dup
-  NEXT
+def_callword "2DUP" , 4 ,  0 ,   _2dup
 
 # ( a -- )
 #           ascii ,  len, flag, label
-def_asmword "DROP" , 4 ,  0 ,   drop
-  call drop
-  NEXT
+def_callword "DROP" , 4 ,  0 ,   drop
 
 # ( a b -- )
 #           ascii ,  len, flag, label
-def_asmword "2DROP" , 5 ,  0 ,   2drop
-  call _2drop
-  NEXT
+def_callword "2DROP" , 5 ,  0 ,   _2drop
 
 # ( a b c -- b c a ) \ rotates left
 #           ascii ,  len, flag, label
-def_asmword "ROT" , 3 ,  0 ,   rot
-  call rot
-  NEXT
+def_callword "ROT" , 3 ,  0 ,   rot
 
 # ( a b c -- c a b ) \ rotates right
 #           ascii  , len, flag, label
-def_asmword "-ROT" , 4 ,  0 ,   rrot
-  call rrot
-  NEXT
+def_callword "-ROT" , 4 ,  0 ,   rrot
 
 # ( a b -- a b a )
 #           ascii  , len, flag, label
-def_asmword "OVER" , 4 ,  0 ,   over
-  call over
-  NEXT
+def_callword "OVER" , 4 ,  0 ,   over
 
 # ( -- u ) \ depth of the stack
 #           ascii   , len, flag, label
-def_asmword "DEPTH" , 5 ,  0 ,   depth
-  call depth
-  NEXT
+def_callword "DEPTH" , 5 ,  0 ,   depth
+
+# ( c -- ) \ emit a character
+#           ascii   , len, flag, label
+def_callword "EMIT" , 4  ,   0 , emit
+
+# ( addr -- addr count ) \ counts a null-terminated (c-style) string.
+#           ascii      , len, flag, label
+def_callword "COUNTNT" ,  7 ,  0 ,  countnt
+
+# ( addr count -- ) \ types a string to emitFd
+#           ascii   , len, flag, label
+def_callword "TYPE" ,  4 ,  0 ,  type
+
+# ( c addr -- ) \ stores a character
+#           ascii , len, flag, label
+def_callword "C!" ,  2 ,  0 ,  cSTORE
+
+# ( n -- ) \ prints a number to emitFd
+#           ascii, len, flag, label
+def_callword "." ,  1 ,  0 ,  DOT
+
+# ( n u -- ) \ prints a number with the given base to emitFd
+#           ascii      , len, flag, label
+def_callword ".BASE" ,  5 ,  0 ,  DOTbase
+
+# ( -- ) \ prints the current stack
+#           ascii , len, flag, label
+def_callword ".S" ,  2 ,  0 ,  DOTs
+
+# ( src dst count -- ) \ Moves characters from src to dst
+#           ascii    , len, flag, label
+def_callword "CMOVE" ,  2 ,  0 ,  cmove
+
+# ( -- ) \ prints current stack/register/etc info
+#           ascii       , len, flag, label
+def_callword "DUMPINFO" ,  8 ,  0 ,  dumpInfo
+
+# ( -- ) \ exits immediately, printing info
+#            ascii     , len, flag, label
+def_callword "DBGEXIT" ,  7 ,  0 ,  dbgexit
 
 # ( a b -- b ) \ drops item below top of stack
 #           ascii , len, flag, label
