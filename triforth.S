@@ -188,7 +188,7 @@ testSuite: # ( -- )
   call assertCleanState
 
   call testNEXT
-  call testEXIT
+  # call testEXIT
 
   call assertCleanState
   ret
@@ -403,6 +403,10 @@ assertCleanState:
 
   movl panic, %eax
   movl $defaultPanic, %ebx
+  call assertEaxEbxEq
+
+  movl panicErr, %eax
+  movl $0, %ebx
   call assertEaxEbxEq
 
   movl rstackCheckpoint, %eax
@@ -1080,7 +1084,10 @@ defaultPanic: # ( -- )
 # own executible code, most can simply point to DOCOL.
 
 .macro NEXT
-  lodsl # same as:  movl (%esi), %eax ;  addl $4, %esi
+  # Note that lodsl is the same as below:
+  movl (%esi), %eax 
+  addl $4, %esi
+  # lodsl 
   jmp *(%eax)
 .endm
 
@@ -1096,6 +1103,10 @@ word_EXIT:
 xt_EXIT:    # the address that appears at the end of all xt lists.
   .int word_EXIT
   .align
+# TODO: segfault when I add this???
+# code_EXIT:
+#   .int word_EXIT
+#   .align
 
 word_MUL: # ( u u -- u )
   # Multiply two numbers on the stack. Note: this is our first "true" forth
