@@ -187,7 +187,7 @@ testSuite: # ( -- )
   call testDumpInfo
   call assertCleanState
 
-  # call testNEXT
+  call testNEXT
   call testEXIT
 
   call assertCleanState
@@ -1059,30 +1059,31 @@ defaultPanic: # ( -- )
 # All the forth interpreter does is execute a string of xt's (execution
 # tokens). The xt to be executed will be stored in %esi, with return xt's
 # stored on the normal return stack with pushl and popl. xt's are nothing more
-# than pointers to assembly instructions to execute, with one caveat:
-# Those assembly instructions must end in NEXT instead of ret. NEXT means
-# that the assembly will run the next instruction in the list, which will
-# run the next, etc. Assembly code that calls forth code then puts it's own
+# than double pointers to assembly instructions to execute, with one caveat:
+# Those assembly instructions must end in NEXT instead of ret. NEXT means that
+# the assembly will run the next instruction in the xt-list, which will run the
+# next, etc. Assembly code that calls forth code then puts it's own
 # continuation location on the xt stack to return execution to itself.
 #
 # testNEXT demonsrates the basic principle of executing words written in
 # assembly, but doesn't get to the interesting part -- how are forth words
-# defined in terms of other forth words? To do that we need DOCOL and EXIT. All
-# DOCOL ("do colon") is the xt of every "standard" forth word, all it does
-# is store the current xt on the return stack and call NEXT on it's own
-# xt's. All forth words then end in EXIT, which simply pops the value on
-# the rstack into %esi and calls NEXT.
+# defined in terms of other forth words? To do that we need DOCOL and EXIT.
+# DOCOL ("do colon") is what every "standard" forth word's xt points to. All it
+# does is store the current xt on the return stack and call NEXT on it's own
+# xt's. All forth words then end in EXIT, which simply pops the value on the
+# rstack into %esi and calls NEXT.
 #
-# See how they work together in testEXIT.
+# See how they all work together in testEXIT. Keep in mind that xt's are themselves
+# pointers to code, meaning that a list of xt's is a list of double pointers.
+# Each item in the list points to an xt which ITSELF points to the code to execute.
+# This can be confusing, but it allows forth words to not have to define their
+# own executible code, most can simply point to DOCOL.
 
 .macro NEXT
   lodsl # same as:  movl (%esi), %eax ;  addl $4, %esi
   jmp *(%eax)
 .endm
 
-# push testEXIT_value onto stack
-# add 4 to QUAD xt and store in esi
-# move esi to eax, add 4 to esi, jmp *(eax)
 DOCOL:
   pushl %esi      # push esi (xt) onto the return stack
   addl $4, %eax   # %eax points to xt (from NEXT)
@@ -1092,7 +1093,7 @@ DOCOL:
 word_EXIT:
   popl %esi # pop return xt into esi
   NEXT      # jmp to it and increment esi
-xt_EXIT:
+xt_EXIT:    # the address that appears at the end of all xt lists.
   .int word_EXIT
   .align
 
@@ -1107,17 +1108,28 @@ xt_MUL:
   .align
 
 testNEXT:
+  # TODO: fix this
   # In this test we will store our fake "xt's" in the ioBuffer, since we know
   # it isn't being used.
   movl $ioBuffer, %esi
-  # Forth: 7 3 2 * * <testNEXT_cont>
+  # Forth: 7 3 2 * * testNEXT_xt
   dpush $7
   dpush $3
   dpush $2
-  movl $word_MUL, (%esi)
-  movl $word_MUL, 4(%esi)
-  movl $testNEXT_cont, 8(%esi)
+  movl $xt_MUL, (%esi)
+  movl $xt_MUL, 4(%esi)
+  movl $testNEXT_xt, 8(%esi)
+  # DOCOL will push %esi onto the return stack and increment %eax to point to
+  # the xt's to execute, each of which will call NEXT on their own until EXIT
+  # returns to the value on the return stack.
   NEXT
+  # Note the double indirection that is inherent to everyting on the xt stack.
+testNEXT_xt :# this "mimicks" a forth word execution token.
+  .int testNEXT_code
+  .align
+testNEXT_code: # this address contains the code location to run
+  .int testNEXT_cont
+  .align
 testNEXT_cont:
   dpop %eax
   movl $42, %ebx
@@ -1156,15 +1168,11 @@ testEXIT:
   movl $ioBuffer, %eax
   addl $16, %eax  # QUAD
   jmp *(%eax)  # execute DOCOL of QUAD
-  # DOCOL will push %esi onto the return stack and
-  # increment %eax to point to the xt's to execute,
-  # each of which will call NEXT on their own until
-  # EXIT returns to the value on the return stack.
 testEXIT_xt:
-  .int testEXIT_word  # indirect address to jmp *(...) to
+  .int testEXIT_code
   .align
-testEXIT_word:
-  .int testEXIT_cont  # indirect address to jmp *(...) to
+testEXIT_code:
+  .int testEXIT_cont
   .align
 testEXIT_cont:
   dpop %eax
@@ -1175,9 +1183,6 @@ testEXIT_cont:
   call countnt
   call typeTestPass
   ret
-
-
-
 
 
 ##############################
@@ -1192,10 +1197,10 @@ testEXIT_cont:
 #      |
 #     link | ... data ...
 #
-# The dictionary in our forth (and most forths) is such a list, and the data is
+# The dictionary in our forth (and most forths) is a linked list, and the data is
 # arrayed like this:
 #
-#     link | info | name | xt | code/data ...
+#     link | info | name | xt | code/etc ...
 # 
 # The various fields above are;
 # - link: this is the link to the previous entry in the LL, or 0 if this is the end.
@@ -1204,7 +1209,7 @@ testEXIT_cont:
 # - name: a ctstr (counted str) with the count as the first byte and the string as the rest.
 #    we pad this string so it aligns with 4 bytes.
 # - xt: the EXECUTION TOKEN, a core datatype in forth we will get to.
-# - code/data: the code and data that follows the xt will depend on the word. We will get into
+# - code/etc: the code and data that follows the xt will depend on the word. We will get into
 #   more detail later.
 #
 # The basic execution model of forth is that the "interpreter" will simply execute the
@@ -1217,30 +1222,6 @@ testEXIT_cont:
 # because it allows us to use instructions normally reserved for strings to quickly
 # increment/decrement it.
 #
-
-  # .macro NEXT
-  # # The NEXT macro increments the xt we are executing and the executes it.
-  # # Every forth primitive has to be ended by NEXT. It's kind of like incrementing
-  # # the %eix when instructions are run.
-  # lodsl %eax // %eax=%esi; %esi+=4
-  # jmp *(%eax) // indirect jump
-  # .endm
-
-
-# Just like assembly, before we execute a new xt, we need to store our return address
-# so that the interpreter can continue executing the rest of our words. The operations
-# to modify the return stack are simply `pushl` and `popl`, so we will use those directly.
-
-# DOCOL:
-#   pushl %esi  # push esi onto the return stack
-#   addl $4, %eax # %eax points to our own xt (from NEXT), increment it to point into code
-#   movl %eax, %esi # and set esi to point to it instead.
-#   NEXT
-# 
-# 
-# EXIT:
-#   popl %esi # pop return code into esi
-#   NEXT
 
   .set LINK, 0
 
