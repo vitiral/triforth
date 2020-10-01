@@ -1098,10 +1098,14 @@ DOCOL:
   pushl %esi      # push esi (xt) onto the return stack
   addl $4, %eax   # %eax points to xt (from NEXT)
   movl %eax, %esi # so make esi point to the first word to execute
+  movl $1, %edx  # TODO: remove
+  call dumpInfo
   NEXT
 
 word_EXIT:
   popl %esi # pop return xt into esi
+  movl $5, %edx  # TODO: remove
+  call dumpInfo
   NEXT      # jmp to it and increment esi
 fake_xt_EXIT: # here for testing/demo. The real xt will be in the dict
   .int word_EXIT
@@ -1154,17 +1158,18 @@ xt_pushI2:
 
 callXt: # ( * xt -- * )
   # Executes an xt, returning control when complete.
-  dpop %eax
-
-  # Prime and execute DOCOL
-  pushl $callXt_exit
-  jmp *(%eax)  # execute the xt. Control returns at callXt_cont
+  # This can be used to execute forth words from within asm.
+  pushl %esi  # store current esi so it can be restored
+  movl $callXt_exit, %esi # set the "currently executing" to own control flow
+  dpop %eax  # Execute the xt. Control returns at callXt_cont
+  jmp *(%eax)
 .align 4
-# The value that is put on rstack. Kind of like NEXT into callXt_xt
-callXt_exit: .int callXt_xt
+# The double indirection is there because of how DOCOL and EXIT work together.
+callXt_exit: .int callXt_xt # kind of a "fake exit"
 .align 4
-callXt_xt: .int callXt_cont
+callXt_xt: .int callXt_cont # kind of a "fake xt"
 callXt_cont:
+  popl %esi # restore esi
   ret
 
 testEXIT:
@@ -1266,16 +1271,10 @@ testDictSimple:
   movl $xt_MUL, 4(%ebx)
   movl $xt_MUL, 8(%ebx)
   movl $xt_EXIT, 12(%ebx)
-  movl $testDictSimple_exit, %esi
-  movl $ioBuffer, %eax
-  jmp *(%eax)  # execute DOCOL of QUAD
-testDictSimple_exit:
-  .int testDictSimple_xt
-  .align 4
-testDictSimple_xt:
-  .int testDictSimple_cont
-  .align 4
-testDictSimple_cont:
+
+  dpush $ioBuffer
+  call callXt
+
   dpop %eax
   movl $42, %ebx
   call assertEaxEbxEq
