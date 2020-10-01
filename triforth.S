@@ -1152,6 +1152,21 @@ xt_pushI2:
   .int word_pushI2
   .align 4
 
+callXt: # ( * xt -- * )
+  # Executes an xt, returning control when complete.
+  dpop %eax
+
+  # Prime and execute DOCOL
+  pushl $callXt_exit
+  jmp *(%eax)  # execute the xt. Control returns at callXt_cont
+.align 4
+# The value that is put on rstack. Kind of like NEXT into callXt_xt
+callXt_exit: .int callXt_xt
+.align 4
+callXt_xt: .int callXt_cont
+callXt_cont:
+  ret
+
 testEXIT:
   movl $ioBuffer, %ebx
 
@@ -1169,20 +1184,9 @@ testEXIT:
 
   dpush $8  # put 8 on the stack
 
-  # Prime and execute DOCOL
-  movl $testEXIT_exit, %esi
-  movl $ioBuffer, %eax
-  addl $16, %eax  # QUAD
-  jmp *(%eax)  # execute DOCOL of QUAD
-# The value that is put on the return stack. Think of this as a NEXT into
-# testEXIT_xt
-testEXIT_exit:
-  .int testEXIT_xt
-  .align 4
-testEXIT_xt:
-  .int testEXIT_cont
-  .align 4
-testEXIT_cont:
+  dpush $ioBuffer+16  # QUAD xt
+  call callXt
+
   dpop %eax
   movl $32, %ebx
   call assertEaxEbxEq
@@ -1262,7 +1266,6 @@ testDictSimple:
   movl $xt_MUL, 4(%ebx)
   movl $xt_MUL, 8(%ebx)
   movl $xt_EXIT, 12(%ebx)
-  # Prime and execute DOCOL
   movl $testDictSimple_exit, %esi
   movl $ioBuffer, %eax
   jmp *(%eax)  # execute DOCOL of QUAD
