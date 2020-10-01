@@ -78,7 +78,9 @@
 .equ SYS_EXIT, 1
 
 # File open options
-.equ O_RDONLY, 0
+.equ O_RDONLY, 0x0000  # open for reading only
+.equ O_WRONLY, 0x0001  # open for writing only
+.equ O_RDWR,   0x0002  # open for reading and writing
 
 # Standard file descriptors
 .equ STDIN, 0
@@ -97,9 +99,14 @@
 .equ ERR_PSTACK_OVERFLOW,0x300
 .equ ERR_PSTACK_UNDERFLOW,0x301
 .equ ERR_ASCII_BOUNDS,0x302
+.equ ERR_MAX_WORD_LEN,0x303
 
 .equ FALSE, 0
 .equ TRUE, -1
+
+.equ F_LENMASK,0x0000001F  # word's length (up to 32)
+.equ F_HIDDEN, 0x00000020  # word is hidden
+.equ F_IMMED,  0x00000040  # word is immediate
 
 
 ######################################################
@@ -118,9 +125,12 @@ dstackMax:
 .equ IO_BUFFER_SIZE, 128
 ioBuffer: .space 128
 ioBufferLen: .int 0  # number of chars in ioBuffer
+stateFlags: .int 0
+.equ FLAG_STATE_MODE, 0x01  # 0=compile 1=run
 
-runtimeFlags: .int 0
-.equ RTFLAG_DUMP_INFO,0x01
+# Word info
+.equ FLAG_WORD_IMMEDIATE, 0x01 # whether the word is immediate or not
+
 
 # Address that should be called when panicing, can be redirected when testing.
 panic: .int defaultPanic
@@ -136,7 +146,9 @@ emitFd: .int STDERR # where to EMIT and TYPE to
 .equ EMIT_BUFFER_SIZE,16
 emitBuffer: .space EMIT_BUFFER_SIZE # scratch space for emit and DOT
 emitBufferMax:
-BASE: .int 10   # base for default number conversions
+keyFd: .int STDIN   # where KEY/etc gets input from
+keyBuffer: .int 0
+base: .int 10  # used for number conversions
 
 ##############################
 # Text Strings: unaligned strings for printing messages
@@ -148,6 +160,7 @@ registersAdStr: .ascii "Registers e(a-d)x: \0"
 registersDsStr: .ascii "e[ds]i: \0"
 ioBufferStr: .ascii "ioBuffer: \0"
 stackStr: .ascii "Stack< \0"
+maxWordLenErrorStr: .ascii "Maximum word length exceeded\0"
 
 # Test Names
 testIoBufferStr: .ascii "testIoBuffer\0"
@@ -157,6 +170,9 @@ testDumpInfoStr: .ascii "testDumpInfo\0"
 testNEXTStr: .ascii "testNEXT\0"
 testEXITStr: .ascii "testEXIT\0"
 testDictSimpleStr: .ascii "testDictSimple\0"
+
+# Test Files
+testFourtyTwoFile: .ascii "test/fourtyTwo.fs\0"
 
 .align 8
 
@@ -187,7 +203,6 @@ testSuite: # ( -- )
   call testDOT
   call testDOTs
   call testMUL
-  call testCmove
   call testDumpInfo
   call assertCleanState
 
@@ -643,8 +658,8 @@ syswrite: # %ebx:fd %ecx:&buff %edx:bytesToWrite ( -- )
   # Direct call to SYS_WRITE syscall with error checking.
   movl $SYS_WRITE, %eax
   int $0x80
-	cmp $0, %eax
-	jl 1f
+  cmp $0, %eax
+  jl 1f
   ret
 1:
   movl %eax, panicErr
@@ -725,7 +740,7 @@ cSTORE: # ( c addr -- )
 
 DOT: # ( n -- )
   # forth '.', emit the value on the stack.
-  movl BASE, %eax
+  movl base, %eax  # note: will be defined later
   dpush %eax
   call DOTbase
   dpush $' '
@@ -896,11 +911,6 @@ cmove: # ( addr1 addr2 count -- )
   ret
 
 
-testCmove:
-  # TODO
-  ret
-
-
 ##############################
 # Debug Helpers
 # These will help us as we develop to view the state of the stack and registers
@@ -929,11 +939,6 @@ restoreRegisters:
 
 dumpInfo:
   call snapshotRegisters
-  # movl runtimeFlags, %eax
-  # andl $RTFLAG_DUMP_INFO, %eax
-  # cmp $0, %eax
-  # je dumpInfo_norecursion
-  # orl $RTFLAG_DUMP_INFO, runtimeFlags # set the flag
 
   # Registers
   dpush $registersAdStr
@@ -994,14 +999,6 @@ dumpInfo:
   dpush $'\n'
   call emit
 
-  # # clear the flag
-  # movl $RTFLAG_DUMP_INFO, %eax
-  # notl %eax
-  # andl %eax, runtimeFlags
-  call restoreRegisters
-  ret
-dumpInfo_norecursion:
-  # RTFLAG_DUMP_INFO prevents recursion of this function.
   call restoreRegisters
   ret
 
@@ -1090,9 +1087,9 @@ defaultPanic: # ( -- )
 
 .macro NEXT
   # Note that lodsl is the same as below:
-  movl (%esi), %eax
-  addl $4, %esi
-  # lodsl 
+  # movl (%esi), %eax
+  # addl $4, %esi
+  lodsl 
   jmp *(%eax)
 .endm
 
@@ -1284,6 +1281,8 @@ testDictSimple_cont:
   call typeTestPass
   ret
 
+##############################
+# Builtin Words
 # Now that we have the basic structure of the dictionary, we are going
 # to define several words using the below macro.
 #
@@ -1346,50 +1345,6 @@ def_callword "-ROT" , 4 ,  0 ,   rrot
 #           ascii  , len, flag, label
 def_callword "OVER" , 4 ,  0 ,   over
 
-# ( -- u ) \ depth of the stack
-#           ascii   , len, flag, label
-def_callword "DEPTH" , 5 ,  0 ,   depth
-
-# ( c -- ) \ emit a character
-#           ascii   , len, flag, label
-def_callword "EMIT" , 4  ,   0 , emit
-
-# ( addr -- addr count ) \ counts a null-terminated (c-style) string.
-#           ascii      , len, flag, label
-def_callword "COUNTNT" ,  7 ,  0 ,  countnt
-
-# ( addr count -- ) \ types a string to emitFd
-#           ascii   , len, flag, label
-def_callword "TYPE" ,  4 ,  0 ,  type
-
-# ( c addr -- ) \ stores a character
-#           ascii , len, flag, label
-def_callword "C!" ,  2 ,  0 ,  cSTORE
-
-# ( n -- ) \ prints a number to emitFd
-#           ascii, len, flag, label
-def_callword "." ,  1 ,  0 ,  DOT
-
-# ( n u -- ) \ prints a number with the given base to emitFd
-#           ascii      , len, flag, label
-def_callword ".BASE" ,  5 ,  0 ,  DOTbase
-
-# ( -- ) \ prints the current stack
-#           ascii , len, flag, label
-def_callword ".S" ,  2 ,  0 ,  DOTs
-
-# ( src dst count -- ) \ Moves characters from src to dst
-#           ascii    , len, flag, label
-def_callword "CMOVE" ,  2 ,  0 ,  cmove
-
-# ( -- ) \ prints current stack/register/etc info
-#           ascii       , len, flag, label
-def_callword "DUMPINFO" ,  8 ,  0 ,  dumpInfo
-
-# ( -- ) \ exits immediately, printing info
-#            ascii     , len, flag, label
-def_callword "DBGEXIT" ,  7 ,  0 ,  dbgexit
-
 # ( a b -- b ) \ drops item below top of stack
 #           ascii , len, flag, label
 def_asmword "NIP" , 3 ,  0 ,   nip
@@ -1416,6 +1371,132 @@ def_asmword "?DUP" , 4 ,  0 ,   QDUP
   call dup
 1:
   NEXT
+
+# ( u -- ) \ put a value onto the return stack
+#         ascii , len, flag, label
+def_asmword ">R",   2,    0,  rpush
+  dpop %eax
+  pushl %eax
+  NEXT
+
+# ( -- u ) \ pop a value from the return stack
+#         ascii , len, flag, label
+def_asmword "R>",   2,    0,  rpop
+  popl %eax
+  dpush %eax
+  NEXT
+
+# ( -- addr ) \ get the return stack pointer
+#         ascii   , len, flag, label
+def_asmword "RSP@",   4,    0,  rstackFETCH
+  dpush %esp
+  NEXT
+
+# ( addr -- ) \ set the return stack pointer
+#         ascii   , len, flag, label
+def_asmword "RSP!",   4,    0,  rstackSTORE
+  dpop %esp
+  NEXT
+
+# ( -- addr ) \ get the data stack pointer
+#         ascii   , len, flag, label
+def_asmword "DSP@",   4,    0, dstackFETCH
+  dpush %ebp
+  RET
+
+# ( addr -- * ) \ set the data stack pointer
+#         ascii   , len, flag, label
+def_asmword "DSP!",   4,    0, dstackSTORE
+  movl (%ebp), %ebp
+  RET
+
+# ( -- u ) \ depth of the stack
+#           ascii   , len, flag, label
+def_callword "DEPTH" , 5 ,  0 ,   depth
+
+# ( u addr -- ) \ stores the value at address
+#         ascii , len, flag, label
+def_asmword "!" ,  1 ,  0 ,  STORE
+  dpop %eax # addr
+  dpop %ebx # u
+  movl %ebx, (%eax)
+  NEXT
+
+# ( addr -- u ) \ fetches the value at address
+#         ascii , len, flag, label
+def_asmword "@" ,  1 ,  0 ,  FETCH
+  movl (%ebp), %eax
+  movl (%eax), %eax
+  movl %eax, (%ebp)
+  NEXT
+
+# ( addr -- ) \ increments the value at address
+#           ascii , len, flag, label
+def_asmword "+!" ,  2 ,  0 ,  ADDSTORE
+  dpop %eax
+  addl $1, (%eax)
+  NEXT
+
+# ( addr -- ) \ decrements the value at address
+#           ascii , len, flag, label
+def_asmword "-!" ,  2 ,  0 ,  SUBSTORE
+  dpop %eax
+  subl $1, (%eax)
+  NEXT
+
+# ( c addr -- ) \ stores a character at address
+#           ascii , len, flag, label
+def_callword "C!" ,  2 ,  0 ,  cSTORE
+
+# ( c addr -- ) \ fetches a character at address
+#           ascii , len, flag, label
+def_asmword "C@" ,  2 ,  0 ,  cFETCH
+  dpop %eax # addr
+  dpop %ebx # c
+  movb %dl, (%eax)
+  NEXT
+
+# ( n -- ) \ prints a number to emitFd
+#           ascii, len, flag, label
+def_callword "." ,  1 ,  0 ,  DOT
+
+assertTrue: # ( flag -- )
+  dpop %eax
+  cmp $0, %eax
+  je 1f
+  ret
+1:
+  call testFailed
+  call unreachable
+
+assertFalse: # ( flag -- )
+  dpop %eax
+  cmp $0, %eax
+  jne 1f
+  ret
+1:
+  call testFailed
+  call unreachable
+
+# ( flag -- ) \ true or fail test
+#           ascii,        len, flag, label
+def_callword "ASSERTTRUE",  10,    0, assertTrue
+
+# ( n u -- ) \ prints a number with the given base to emitFd
+#           ascii      , len, flag, label
+def_callword ".BASE" ,  5 ,  0 ,  DOTbase
+
+# ( -- ) \ prints the current stack
+#           ascii , len, flag, label
+def_callword ".S" ,  2 ,  0 ,  DOTs
+
+# ( -- ) \ prints current stack/register/etc info
+#           ascii       , len, flag, label
+def_callword "DUMPINFO" ,  8 ,  0 ,  dumpInfo
+
+# ( -- ) \ exits immediately, printing info
+#            ascii     , len, flag, label
+def_callword "DBGEXIT" ,  7 ,  0 ,  dbgexit
 
 # ( a b -- a+b ) \ add values
 #           ascii  , len, flag, label
@@ -1516,13 +1597,221 @@ def_asmcmp ">"   , 1 ,   0 , GT  , jg
 def_asmcmp ">="  , 2 ,   0 , GTE , jge
 
 
+# ( -- u ) \ used to compile literal values. Simply returns the value in the next
+# "instruction", skipping its execution.
+#           ascii , len, flag, label
+def_asmword "LIT",    3,   0,    lit
+  lodsl # see NEXT for what this does.
+  dpush %eax
+  NEXT
 
+##############################
+# Strings and Input / Output
+# Some of these we have already defined, but we 
+
+# ( src dst count -- ) \ Moves characters from src to dst
+#           ascii    , len, flag, label
+def_callword "CMOVE" ,  5 ,  0 ,  cmove
+
+# ( c -- ) \ emit a character
+#           ascii   , len, flag, label
+def_callword "EMIT" , 4  ,   0 , emit
+
+# ( addr -- addr count ) \ counts a null-terminated (c-style) string.
+#           ascii      , len, flag, label
+def_callword "COUNTNT" ,  7 ,  0 ,  countnt
+
+# ( addr count -- ) \ types a string to emitFd
+#           ascii   , len, flag, label
+def_callword "TYPE" ,  4 ,  0 ,  type
+
+sysread: # %ebx:fd %ecx:&buff %edx:maxLength ( -- ) %eax:numRead
+  # Read from a filedescriptor. This does NOT panic on failure, the caller must
+  # check %eax for errors.
+  movl $SYS_READ, %eax
+  int $0x80
+  ret
+
+key_bl: # ( -- ) %eax \ returns a single keypress/input character in %bl
+  movl keyFd, %ebx
+  movl $keyBuffer, %ecx
+  movl $1, %edx
+  call sysread
+  cmp $0, %eax
+  jl 1f
+  movb keyBuffer, %bl  # move read byte
+  ret
+1:
+  movl %eax, panicErr
+  call *(panic)
+  jmp unreachable
+
+#           ascii , len, flag, label
+def_asmword "KEY" ,   3,    0, key
+  call key_bl
+  and $0xFF, %ebx  # zero bytes that are not %bl
+  dpush %ebx
+  NEXT
+.equ KEY_EOF, 256
+
+sysopen: # %ebx:&fnameNt %ecx:intention %edx:permissions ( -- ) %eax:fd
+  # Open the nt filename.
+  # check %eax for errors and panic if they exist.
+  movl $SYS_OPEN, %eax
+  int $0x80
+  cmp $0, %eax
+  jl 1f
+  ret
+1:
+  movl %eax, panicErr
+  call *(panic)
+  jmp unreachable
+
+sysclose: # %ebx:fd ( -- ) 
+  # Close the filedescriptor
+  movl $SYS_CLOSE, %eax
+  int $0x80
+  cmp $0, %eax
+  jl 1f
+  ret
+1:
+  movl %eax, panicErr
+  call *(panic)
+  jmp unreachable
+
+
+testKey:
+  movl $testFourtyTwoFile, %ebx
+  movl $O_RDONLY, %ecx
+  movl $0666, %edx  # permissions
+  call sysopen
+  movl %eax, keyFd
+
+  movl keyFd, %ebx
+  call sysclose
+  movl $STDIN, keyFd
+  ret
+
+bl_toupper: # %al:c ( -- ) %al:c
+  # toupper: Convert character from lower->upper case.
+  # input: %bl character to convert
+  # return: %bl return value
+  #
+  # Notes: 'A'=0x41 or 65 'Z'=0x5A or 90
+  #        'a'=0x61 or 97 'z'=0x7A or 122
+  # If the byte is not within ['a', 'z'] then don't change
+  cmpb $'a', %al
+  jl 1f
+  cmpb $'z', %al
+  jg 1f
+  # else subtract 0x20 to convert to upper case.
+  subb $0x20, %al
+1:
+  ret
+
+.align
+.equ MAX_WORD_LEN,32
+word_buffer: .space MAX_WORD_LEN
+word: # ( -- addr count )
+  dpush $0        # index
+word_loop:
+  cmpl $MAX_WORD_LEN, (%ebp)
+  jg word_err
+  call key_bl     # get the key in %bl
+  call bl_toupper # convert %bl to upper case
+
+  cmpb $'\\', %al  # comment?
+  jne 2f
+word_comment_loop:
+  # if comment, read till \n
+  # then return with word if there is one,
+  # else continue
+  call key_bl
+  cmpb $'\n', %al
+  jmp word_ret_maybe
+2:
+  # check for whitespace: all characters > space are not whitespace. This means
+  # utf8 is supported out of the box, since all non-ascii utf8 bytes are > 127
+  cmpb $' ', %al 
+  jle word_ret_maybe
+  movl (%ebp), %ebx
+  addl $word_buffer, %ebx
+  movb %al, (%ebx) # move character
+  addl $1, (%ebp)  # increment index
+  jmp word_loop
+
+word_ret_maybe:
+  cmp $0, (%ebp)  # is there a word in the buffer?
+  je word_loop    # word not yet encountered, keep looping
+  dpush $word_buffer
+  call swap
+  ret
+word_err:
+  dpush $maxWordLenErrorStr
+  call countnt
+  dpush $ioBuffer
+  call swap
+  call cmove
+  movl $ERR_MAX_WORD_LEN, panicErr
+  call *(panic)
+
+
+##############################
+# Builtin Variables
+# All of these simply return the memory location of the variables so values can be
+# fetched and stored.
+#
+# The built-in variables are:
+# BASE     The current base for printing and reading numbers.
+# STATE    Is the interpreter executing code (0) or compiling a word (non-zero)?
+# LATEST   Points to the latest (most recently defined) word in the dictionary.
+# HERE     Points to the next free byte of memory.  When compiling, compiled words go here.
+# S0       Stores the address of the top of the parameter stack.
+
+# ( -- addr ) \ the "base" used in str<->int conversions
+#      ascii      , len, flag,  label, initial
+def_asmword "BASE",   4,    0,  base
+  push $base
+  NEXT
+
+.macro def_var name, namelen, flags, label, initial
+  def_asmword \name , \namelen , \flags , \label
+  push $var_\name
+  NEXT
+  .data
+  .align 4
+var_\name :
+  .int \initial
+.endm
+
+#      ascii      , len, flag,  label, initial
+def_var "STATE"   ,   5,    0, state , 0
+def_var "HERE"    ,   4,    0, here  , 0
+def_var "LATEST"  ,   6,    0, latest, 0 # initialized in _start
+def_var "S0"      ,   2,    0, s0    , 0 # initialized in _start
+
+##############################
+# Builtin Constants
+# These simply return a constant value when run
+.macro def_const name, namelen, flags, label
+  def_asmword \name , \namelen , \flags , \label
+  push $\label
+  NEXT
+.endm
+
+#         ascii  ,   len, flag,  label
+def_const "RMAX" ,     4,    0,  rstackMax
+def_const "DOCOL",     5,    0,  DOCOL
+def_const "F_LENMASK", 9,    0,  F_LENMASK
+def_const "F_HIDDEN",  8,    0,  F_HIDDEN
+def_const "F_IMMED",   7,    0,  F_IMMED
 
 
 ##############################
 # Main Entrypoint
 .globl _start
 _start:
+  # TODO: initialze LATEST, S0 and HERE
   movl $rstackMax, %esp
   movl $dstackMax, %ebp
   call testSuite
