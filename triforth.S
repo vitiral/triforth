@@ -238,6 +238,7 @@ sysexit: # %ebx:rc ( -- )
   int  $LINUX_SYSCALL
 
 testFailed: # The test failed
+  call dumpInfo
   movl $RC_TFAIL, %ebx
   jmp sysexit
 
@@ -1156,12 +1157,11 @@ xt_pushI2:
   .int word_pushI2
   .align 4
 
-callXt: # ( * xt -- * )
+callXt: # %eax:xt ( * -- * )
   # Executes an xt, returning control when complete.
   # This can be used to execute forth words from within asm.
   pushl %esi  # store current esi so it can be restored
   movl $callXt_exit, %esi # set the "currently executing" to own control flow
-  dpop %eax  # Execute the xt. Control returns at callXt_cont
   jmp *(%eax)
 .align 4
 # The double indirection is there because of how DOCOL and EXIT work together.
@@ -1189,7 +1189,7 @@ testEXIT:
 
   dpush $8  # put 8 on the stack
 
-  dpush $ioBuffer+16  # QUAD xt
+  movl $ioBuffer+16, %eax  # QUAD xt
   call callXt
 
   dpop %eax
@@ -1272,7 +1272,7 @@ testDictSimple:
   movl $xt_MUL, 8(%ebx)
   movl $xt_EXIT, 12(%ebx)
 
-  dpush $ioBuffer
+  movl $ioBuffer, %eax
   call callXt
 
   dpop %eax
@@ -1462,27 +1462,36 @@ def_asmword "C@" ,  2 ,  0 ,  cFETCH
 #           ascii, len, flag, label
 def_callword "." ,  1 ,  0 ,  DOT
 
-assertTrue: # ( flag -- )
-  dpop %eax
-  cmp $0, %eax
-  je 1f
-  ret
-1:
-  call testFailed
-  call unreachable
-
-assertFalse: # ( flag -- )
-  dpop %eax
-  cmp $0, %eax
-  jne 1f
-  ret
-1:
-  call testFailed
-  call unreachable
 
 # ( flag -- ) \ true or fail test
 #           ascii,        len, flag, label
-def_callword "ASSERTTRUE",  10,    0, assertTrue
+def_asmword "ASSERTTRUE",  10,    0, assertTrue
+  dpop %eax
+  cmp $0, %eax
+  je 1f
+  NEXT
+1:
+  call testFailed
+  call unreachable
+
+# ( flag -- ) \ false or fail test
+#           ascii,         len, flag, label
+def_asmword "ASSERTFALSE",  11,    0, assertFalse
+  dpop %eax
+  cmp $0, %eax
+  jne 1f
+  NEXT
+1:
+  call testFailed
+  call unreachable
+
+# ( u u -- ) \ equal or fail test
+#           ascii,     len, flag, label
+def_asmword "ASSERTEQ",  8,    0, assertEq
+  dpop %eax
+  dpop %ebx
+  call assertEaxEbxEq
+  NEXT
 
 # ( n u -- ) \ prints a number with the given base to emitFd
 #           ascii      , len, flag, label
