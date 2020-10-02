@@ -125,6 +125,8 @@ dstackMax:
 .equ IO_BUFFER_SIZE, 128
 ioBuffer: .space 128
 ioBufferLen: .int 0  # number of chars in ioBuffer
+.equ MAX_WORD_LEN,32
+wordBuffer: .space MAX_WORD_LEN
 stateFlags: .int 0
 .equ FLAG_STATE_MODE, 0x01  # 0=compile 1=run
 
@@ -171,11 +173,13 @@ testNEXTStr: .ascii "testNEXT\0"
 testEXITStr: .ascii "testEXIT\0"
 testDictSimpleStr: .ascii "testDictSimple\0"
 testDictBuiltinStr: .ascii "testDictBuiltin\0"
+testKeyStr: .ascii "testKeyStr\0"
+testWordStr: .ascii "testWordStr\0"
 
 # Test Files
-testFourtyTwoFile: .ascii "test/fourtyTwo.fs\0"
+testSimpleMathFile: .ascii "tests/simplemath.fs\0"
 
-.align 8
+.align 4
 
 ######################################################
 ### CODE SECTION
@@ -214,6 +218,8 @@ testSuite: # ( -- )
 
   call testDictBuiltin
   call testKey
+  call testWord
+  call assertCleanState
   ret
 
 testMemLocations:
@@ -230,6 +236,11 @@ testMemLocations:
 1:
   call testFailed
 
+testFailed: # The test failed
+  call dumpInfo
+  movl $RC_TFAIL, %ebx
+  jmp sysexit
+
 
 ##############################
 # Exiting functions
@@ -239,11 +250,6 @@ sysexit: # %ebx:rc ( -- )
   # Directly call SYS_EXIT
   movl $SYS_EXIT, %eax
   int  $LINUX_SYSCALL
-
-testFailed: # The test failed
-  call dumpInfo
-  movl $RC_TFAIL, %ebx
-  jmp sysexit
 
 unreachable: # ( -- )
   # We call this frequently to practice defensive programming.
@@ -358,7 +364,6 @@ testing_willPanic:
 testing_panics:
   call *(panic)
   jmp unreachable
-
 
 ##############################
 # Stack Operations
@@ -1454,12 +1459,13 @@ def_asmword "-!" ,  2 ,  0 ,  SUBSTORE
 #           ascii , len, flag, label
 def_callword "C!" ,  2 ,  0 ,  cSTORE
 
-# ( c addr -- ) \ fetches a character at address
+# ( addr -- c ) \ fetches a character at address
 #           ascii , len, flag, label
 def_asmword "C@" ,  2 ,  0 ,  cFETCH
   dpop %eax # addr
-  dpop %ebx # c
-  movb %dl, (%eax)
+  movl $0, %ebx
+  movb (%eax), %bl
+  dpush %ebx
   NEXT
 
 # ( n -- ) \ prints a number to emitFd
@@ -1681,27 +1687,25 @@ sysread: # %ebx:fd %ecx:&buff %edx:maxLength ( -- ) %eax:numRead
   int $0x80
   ret
 
-key_bl: # ( -- ) %eax \ returns a single keypress/input character in %bl
+readKey: # ( -- ) \ reads a character into keyBuffer
   movl keyFd, %ebx
   movl $keyBuffer, %ecx
   movl $1, %edx
   call sysread
   cmp $0, %eax
-  jl 1f
-  movb keyBuffer, %bl  # move read byte
+  jl readKeyErr
   ret
-1:
+readKeyErr:
   movl %eax, panicErr
   call *(panic)
   jmp unreachable
 
 #           ascii , len, flag, label
 def_asmword "KEY" ,   3,    0, key
-  call key_bl
-  and $0xFF, %ebx  # zero bytes that are not %bl
-  dpush %ebx
+  call readKey
+  movl keyBuffer, %eax
+  dpush %eax
   NEXT
-.equ KEY_EOF, 256
 
 sysopen: # %ebx:&fnameNt %ecx:intention %edx:permissions ( -- ) %eax:fd
   # Open the nt filename.
@@ -1729,19 +1733,30 @@ sysclose: # %ebx:fd ( -- )
   jmp unreachable
 
 testKey:
-  ret  # TODO: complete this
-  movl $testFourtyTwoFile, %ebx
+  movl $testSimpleMathFile, %ebx
   movl $O_RDONLY, %ecx
   movl $0666, %edx  # permissions
   call sysopen
   movl %eax, keyFd
 
+  callXt $xt_key
+  dpush $'1'
+  callXt $xt_assertEq
+
+  callXt $xt_key
+  dpush $'2'
+  callXt $xt_assertEq
+
   movl keyFd, %ebx
   call sysclose
   movl $STDIN, keyFd
+
+  dpush $testKeyStr
+  call countnt
+  call typeTestPass
   ret
 
-bl_toupper: # %al:c ( -- ) %al:c
+al_toupper: # %al:c ( -- ) %al:c
   # toupper: Convert character from lower->upper case.
   # input: %bl character to convert
   # return: %bl return value
@@ -1758,43 +1773,53 @@ bl_toupper: # %al:c ( -- ) %al:c
 1:
   ret
 
-.align
-.equ MAX_WORD_LEN,32
-word_buffer: .space MAX_WORD_LEN
-word: # ( -- addr count )
-  dpush $0        # index
+# ( -- addr count ) \ get the next WORD on the input stream
+#            ascii ,  len, flag, label
+def_asmword "WORD",    4,    0, word
+  dpush $0        # count
 word_loop:
   cmpl $MAX_WORD_LEN, (%ebp)
   jg word_err
-  call key_bl     # get the key in %bl
-  call bl_toupper # convert %bl to upper case
-
+  call readKey
+  cmp $0, %eax # check for EOF
+  je word_eof
+  movb keyBuffer, %al
+  # call dumpInfo # TODO: remove
   cmpb $'\\', %al  # comment?
-  jne 2f
+  jne word_not_comment_line
 word_comment_loop:
   # if comment, read till \n
   # then return with word if there is one,
   # else continue
-  call key_bl
-  cmpb $'\n', %al
-  jmp word_ret_maybe
-2:
+  call readKey
+  cmpb $'\n', keyBuffer
+  je word_ret_maybe
+  jmp word_comment_loop
+word_not_comment_line:
   # check for whitespace: all characters > space are not whitespace. This means
   # utf8 is supported out of the box, since all non-ascii utf8 bytes are > 127
   cmpb $' ', %al 
   jle word_ret_maybe
-  movl (%ebp), %ebx
-  addl $word_buffer, %ebx
-  movb %al, (%ebx) # move character
+  # move character uppercased into buffer
+  call al_toupper
+  movl $wordBuffer, %edx  # TODO: remove
+  movl (%ebp), %ebx  # count
+  addl $wordBuffer, %ebx
+  # movb %al, wordBuffer(,%ebx,1) # indexed addressing mode
+  movb %al, (%ebx)
   addl $1, (%ebp)  # increment index
   jmp word_loop
-
-word_ret_maybe:
-  cmp $0, (%ebp)  # is there a word in the buffer?
+word_ret_maybe:   # possibly return a word... or keep looping if count=0
+  cmp $0, (%ebp)  # are there any characters in the buffer?
   je word_loop    # word not yet encountered, keep looping
-  dpush $word_buffer
+  dpush $wordBuffer # ( count addr )
   call swap
-  ret
+  NEXT
+word_eof:
+  # EOF reached, push count even if it is 0.
+  dpush $wordBuffer # ( count addr )
+  call swap
+  NEXT
 word_err:
   dpush $maxWordLenErrorStr
   call countnt
@@ -1803,6 +1828,44 @@ word_err:
   call cmove
   movl $ERR_MAX_WORD_LEN, panicErr
   call *(panic)
+
+
+testWord:
+  movl $testSimpleMathFile, %ebx
+  movl $O_RDONLY, %ecx
+  movl $0666, %edx  # permissions
+  call sysopen
+  movl %eax, keyFd
+
+  callXt $xt_word
+  dpush $2
+  callXt $xt_assertEq # len
+  callXt $xt_dup
+  callXt $xt_cFETCH
+  dpush $'1'
+  callXt $xt_assertEq # 1
+
+  addl $1, (%ebp) # add 1 to addr since count=2
+  callXt $xt_cFETCH
+  dpush $'2'
+  callXt $xt_assertEq # 2
+
+  callXt $xt_word
+  dpush $1
+  callXt $xt_assertEq # len
+  callXt $xt_cFETCH
+  dpush $'3'
+  callXt $xt_assertEq # len
+
+  movl keyFd, %ebx
+  call sysclose
+  movl $STDIN, keyFd
+
+  dpush $testWordStr
+  call countnt
+  call typeTestPass
+  ret
+
 
 
 ##############################
