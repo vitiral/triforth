@@ -170,6 +170,7 @@ testDumpInfoStr: .ascii "testDumpInfo\0"
 testNEXTStr: .ascii "testNEXT\0"
 testEXITStr: .ascii "testEXIT\0"
 testDictSimpleStr: .ascii "testDictSimple\0"
+testDictBuiltinStr: .ascii "testDictBuiltin\0"
 
 # Test Files
 testFourtyTwoFile: .ascii "test/fourtyTwo.fs\0"
@@ -209,8 +210,10 @@ testSuite: # ( -- )
   call testNEXT
   call testEXIT
   call testDictSimple
-
   call assertCleanState
+
+  call testDictBuiltin
+  call testKey
   ret
 
 testMemLocations:
@@ -1099,14 +1102,10 @@ DOCOL:
   pushl %esi      # push esi (xt) onto the return stack
   addl $4, %eax   # %eax points to xt (from NEXT)
   movl %eax, %esi # so make esi point to the first word to execute
-  movl $1, %edx  # TODO: remove
-  call dumpInfo
   NEXT
 
 word_EXIT:
   popl %esi # pop return xt into esi
-  movl $5, %edx  # TODO: remove
-  call dumpInfo
   NEXT      # jmp to it and increment esi
 fake_xt_EXIT: # here for testing/demo. The real xt will be in the dict
   .int word_EXIT
@@ -1157,7 +1156,7 @@ xt_pushI2:
   .int word_pushI2
   .align 4
 
-callXt: # %eax:xt ( * -- * )
+_callXt: # %eax:xt ( * -- * )
   # Executes an xt, returning control when complete.
   # This can be used to execute forth words from within asm.
   pushl %esi  # store current esi so it can be restored
@@ -1171,6 +1170,11 @@ callXt_xt: .int callXt_cont # kind of a "fake xt"
 callXt_cont:
   popl %esi # restore esi
   ret
+
+.macro callXt value
+  movl \value , %eax
+  call _callXt
+.endm
 
 testEXIT:
   movl $ioBuffer, %ebx
@@ -1189,8 +1193,8 @@ testEXIT:
 
   dpush $8  # put 8 on the stack
 
-  movl $ioBuffer+16, %eax  # QUAD xt
-  call callXt
+  # movl $ioBuffer+16, %eax  # QUAD xt
+  callXt $ioBuffer+16
 
   dpop %eax
   movl $32, %ebx
@@ -1272,8 +1276,8 @@ testDictSimple:
   movl $xt_MUL, 8(%ebx)
   movl $xt_EXIT, 12(%ebx)
 
-  movl $ioBuffer, %eax
-  call callXt
+  # movl $ioBuffer, %eax
+  callXt $ioBuffer
 
   dpop %eax
   movl $42, %ebx
@@ -1285,8 +1289,8 @@ testDictSimple:
 
 ##############################
 # Builtin Words
-# Now that we have the basic structure of the dictionary, we are going
-# to define several words using the below macro.
+# Now that we have the basic structure of the dictionary, we are going to
+# define several words using the below macro.
 #
 # To use the macro we simply call it and then write the assembly that should go
 # in the word. Some of these we have already defined, tested and used in
@@ -1494,6 +1498,10 @@ def_asmword "ASSERTEQ",  8,    0, assertEq
   NEXT
 
 # ( n u -- ) \ prints a number with the given base to emitFd
+#            ascii          , len, flag, label
+def_callword "typeTestPass" ,  12 ,  0 ,  typeTestPass
+
+# ( n u -- ) \ prints a number with the given base to emitFd
 #           ascii      , len, flag, label
 def_callword ".BASE" ,  5 ,  0 ,  DOTbase
 
@@ -1636,6 +1644,36 @@ def_callword "COUNTNT" ,  7 ,  0 ,  countnt
 #           ascii   , len, flag, label
 def_callword "TYPE" ,  4 ,  0 ,  type
 
+####
+# Builtin Test
+# Wow, that was a lot of words! We aren't going to test them all here (we will
+# do full tests in forth), but it's worth making sure some core ones work. We
+# are going to write these tests "forth-style" and execute them with callXt.
+#
+# As you can see, these are already easier to read and write than previous
+# assembly. It's almost forth-like already!
+
+.align
+testDictBuiltinLit:
+  # : <annon> 42 ;
+  .int DOCOL, xt_lit, 42, xt_EXIT
+testDictBuiltinAdd:
+  # : <annon> 32 10 + 42 assertEq ;
+  .int DOCOL, xt_lit, 32, xt_lit, 10, xt_ADD, xt_lit, 42, xt_assertEq, xt_EXIT
+testDictBuiltinType:
+  # : <annon> 32 10 + 42 assertEq ;
+  .int DOCOL, xt_lit, testDictBuiltinStr, xt_countnt, xt_typeTestPass, xt_EXIT
+testDictBuiltin:
+  # The bare minimum to make sure we are actually calling "real" code.
+  callXt $testDictBuiltinLit
+  dpop %eax
+  movl $42, %ebx
+  call assertEaxEbxEq
+
+  callXt $testDictBuiltinAdd
+  callXt $testDictBuiltinType
+  ret
+
 sysread: # %ebx:fd %ecx:&buff %edx:maxLength ( -- ) %eax:numRead
   # Read from a filedescriptor. This does NOT panic on failure, the caller must
   # check %eax for errors.
@@ -1690,8 +1728,8 @@ sysclose: # %ebx:fd ( -- )
   call *(panic)
   jmp unreachable
 
-
 testKey:
+  ret  # TODO: complete this
   movl $testFourtyTwoFile, %ebx
   movl $O_RDONLY, %ecx
   movl $0666, %edx  # permissions
