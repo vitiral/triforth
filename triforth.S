@@ -175,6 +175,7 @@ testDictSimpleStr: .ascii "testDictSimple\0"
 testDictBuiltinStr: .ascii "testDictBuiltin\0"
 testKeyStr: .ascii "testKeyStr\0"
 testWordStr: .ascii "testWordStr\0"
+testNumberStr: .ascii "testNumberStr\0"
 
 # Test Files
 testSimpleMathFile: .ascii "tests/simplemath.fs\0"
@@ -220,6 +221,8 @@ testSuite: # ( -- )
   call testKey
   call testWord
   call assertCleanState
+
+  call testNumber
   ret
 
 testMemLocations:
@@ -541,15 +544,14 @@ _2dup: # ( a b -- a b a b )
   ret
 
 drop: # ( a -- )
-  dpop %eax
+  addl $4, %ebp
   ret
 
 _2drop: # ( a b -- )
-  dpop %eax
-  dpop %eax
+  addl $8, %ebp
   ret
 
-rot: # ( a b c -- b c a )
+lrot: # ( a b c -- b c a )
   # Forth ROT, rotates left
   dpop %ecx
   dpop %ebx
@@ -618,7 +620,7 @@ testStackBasic:
   movl $0, %ebx
   call assertEaxEbxEq
 
-  call rot # ( 0 1 2 )
+  call lrot # ( 0 1 2 )
 
   movl (%ebp), %eax
   movl $2, %ebx
@@ -1346,7 +1348,7 @@ def_callword "2DROP" , 5 ,  0 ,   _2drop
 
 # ( a b c -- b c a ) \ rotates left
 #           ascii ,  len, flag, label
-def_callword "ROT" , 3 ,  0 ,   rot
+def_callword "ROT" , 3 ,  0 ,   lrot
 
 # ( a b c -- c a b ) \ rotates right
 #           ascii  , len, flag, label
@@ -1732,13 +1734,22 @@ sysclose: # %ebx:fd ( -- )
   call *(panic)
   jmp unreachable
 
-testKey:
+openSimpleMathFile:
   movl $testSimpleMathFile, %ebx
   movl $O_RDONLY, %ecx
   movl $0666, %edx  # permissions
   call sysopen
   movl %eax, keyFd
+  ret
 
+closeKeyFd:
+  movl keyFd, %ebx
+  call sysclose
+  movl $STDIN, keyFd
+  ret
+
+testKey:
+  call openSimpleMathFile
   callXt $xt_key
   dpush $'1'
   callXt $xt_assertEq
@@ -1747,10 +1758,7 @@ testKey:
   dpush $'2'
   callXt $xt_assertEq
 
-  movl keyFd, %ebx
-  call sysclose
-  movl $STDIN, keyFd
-
+  call closeKeyFd
   dpush $testKeyStr
   call countnt
   call typeTestPass
@@ -1773,7 +1781,7 @@ al_toupper: # %al:c ( -- ) %al:c
 1:
   ret
 
-# ( -- addr count ) \ get the next WORD on the input stream
+# ( -- addr count ) \ Get the next WORD on the input stream
 #            ascii ,  len, flag, label
 def_asmword "WORD",    4,    0, word
   dpush $0        # count
@@ -1784,7 +1792,6 @@ word_loop:
   cmp $0, %eax # check for EOF
   je word_eof
   movb keyBuffer, %al
-  # call dumpInfo # TODO: remove
   cmpb $'\\', %al  # comment?
   jne word_not_comment_line
 word_comment_loop:
@@ -1802,10 +1809,9 @@ word_not_comment_line:
   jle word_ret_maybe
   # move character uppercased into buffer
   call al_toupper
-  movl $wordBuffer, %edx  # TODO: remove
   movl (%ebp), %ebx  # count
-  addl $wordBuffer, %ebx
   # movb %al, wordBuffer(,%ebx,1) # indexed addressing mode
+  addl $wordBuffer, %ebx
   movb %al, (%ebx)
   addl $1, (%ebp)  # increment index
   jmp word_loop
@@ -1829,14 +1835,8 @@ word_err:
   movl $ERR_MAX_WORD_LEN, panicErr
   call *(panic)
 
-
 testWord:
-  movl $testSimpleMathFile, %ebx
-  movl $O_RDONLY, %ecx
-  movl $0666, %edx  # permissions
-  call sysopen
-  movl %eax, keyFd
-
+  call openSimpleMathFile
   callXt $xt_word
   dpush $2
   callXt $xt_assertEq # len
@@ -1857,16 +1857,97 @@ testWord:
   dpush $'3'
   callXt $xt_assertEq # len
 
-  movl keyFd, %ebx
-  call sysclose
-  movl $STDIN, keyFd
-
+  call closeKeyFd
   dpush $testWordStr
   call countnt
   call typeTestPass
   ret
 
 
+al_toint: # %eax ( -- ) %eax \ convert from a character to an integer
+  cmpb $'0', %al # Check if < 0 (invalid)
+  jl al_toint_err
+  cmpb $'9', %al # Check if <= 9 (valid 0-9)
+  jle al_0to9
+  call al_toupper
+  cmpb $'A', %al # Check if ['A', 'Z']
+  jl al_toint_err
+  cmpb $'Z', %al
+  jg al_toint_err
+  subb $'A', %al
+  ret
+al_0to9:
+  subb $'0', %al
+  ret
+al_toint_err:
+  addl $1, %eax
+  neg %eax
+  ret
+
+
+# ( addr count -- n u ) \ Convert the string into a number and the remaining characters
+#           ascii   ,  len, flag, label
+def_asmword "NUMBER",    6,    0, number
+  cmpb $0, (%ebp)
+  jne 1f # count is zero, we will just push 0 in this case
+  call drop
+  call drop
+  dpush $0
+  dpush $0
+1:
+  dpush $0
+  call rrot           # 8(%ebp)=isNegative=false
+  movl $0, %edi       # index
+  movl 4(%ebp), %ebx  # address
+  movl $0, 4(%ebp)    # zero address, use as return number
+  cmpb $'-', (%ebx)
+  jne 1f
+  movl $1, 8(%ebp)    # is negative=true
+  inc %edi
+1:
+  movl $0, %eax
+number_loop:
+  cmp %edi, (%ebp)
+  je number_done
+  movb (%ebx,%edi,1), %al  # get next character
+  call al_toint
+  cmpl $0, %eax # check for negative values
+  jle number_done 
+  movl %eax, %ecx    # store number we just read in ecx
+  movl 4(%ebp), %eax # get cumulative
+  mull base          # %eax=%eax*base: multiple cumulative by base
+  addl %ecx, %eax    # add number we read to cumulative
+  movl %eax, 4(%ebp) # store new cumulative
+  inc %edi           # increment index
+  jmp number_loop
+number_done:
+  # Note: n already stored in 4(%ebp)
+  subl %edi, (%ebp)  # subtract index from count
+  call lrot
+  dpop %ebx # isNegative
+  cmpl $0, %ebx
+  jne number_isNegative # isNegative
+  NEXT
+number_isNegative:
+  negl 4(%ebp)
+  NEXT
+
+.align 4
+xt_testNumber:
+.int DOCOL, xt_word, xt_number, xt_lit, 0, xt_assertEq  # count
+.int xt_lit, 12, xt_assertEq  # number
+.int xt_word, xt_number, xt_lit, 0, xt_assertEq, xt_lit, 3, xt_assertEq
+.int xt_EXIT
+testNumber:
+  call openSimpleMathFile
+  callXt $xt_testNumber
+
+  call closeKeyFd
+  dpush $testNumberStr
+  call countnt
+  call typeTestPass
+  ret
+  ret
 
 ##############################
 # Builtin Variables
