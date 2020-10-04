@@ -183,6 +183,8 @@ testSimpleMathFile: .ascii "tests/simplemath.fs\0"
 
 # Test Inputs
 testWordWithSpaces: .ascii " spc    \0"
+testAbcStr: .ascii "abc\0"
+testBcdStr: .ascii "bcd\0"
 
 .align 4
 
@@ -1787,15 +1789,32 @@ testDictBuiltinLit:
 testDictBuiltinAdd:
   # : <annon> 32 10 + 42 assertEq ;
   .int DOCOL, xt_lit, 32, xt_lit, 10, xt_ADD, xt_lit, 42, xt_assertEq, xt_EXIT
-testDictBuiltinType:
-  # : <annon> 32 10 + 42 assertEq ;
-  .int DOCOL, xt_lit, testDictBuiltinStr, xt_countnt, xt_typeTestPass, xt_EXIT
 testDictBuiltinSUBtrailing:
   .int DOCOL, xt_lit, testWordWithSpaces, xt_countnt, xt_SUBtrailing
   .int xt_lit, 4, xt_assertEq, xt_drop, xt_EXIT
 testDictBuiltinCompare:
+  # COMPARE wordWithSpaces w/ self
   .int DOCOL, xt_lit, testWordWithSpaces, xt_countnt, xt__2dup
-  .int xt_compare, xt_lit, 0, xt_assertEq, xt_EXIT
+  .int xt_compare, xt_lit, 0, xt_assertEq
+  # COMPARE wordWithSpaces w/ -trailing self
+  .int xt_lit, testWordWithSpaces, xt_countnt, xt__2dup, xt_SUBtrailing
+  .int xt_compare, xt_lit, 1, xt_assertEq
+  # COMPARE abc w/ bde
+  .int xt_lit, testAbcStr, xt_countnt, xt_lit, testBcdStr, xt_countnt
+  .int xt_compare, xt_lit, -1, xt_assertEq
+  # CEQ wordWithSpaces w/ -trailing self
+  .int xt_lit, testWordWithSpaces, xt_countnt, xt__2dup, xt_SUBtrailing
+  .int xt_ceq, xt_lit, FALSE, xt_assertEq
+  # CEQ abc w/ bcd
+  .int xt_lit, testAbcStr, xt_countnt, xt_lit, testBcdStr, xt_countnt
+  .int xt_ceq, xt_lit, FALSE, xt_assertEq
+  # CEQ abc w/ self
+  .int xt_lit, testAbcStr, xt_countnt, xt__2dup
+  .int xt_ceq, xt_lit, TRUE, xt_assertEq
+  .int xt_EXIT
+testDictBuiltinType:
+  # : <annon> 32 10 + 42 assertEq ;
+  .int DOCOL, xt_lit, testDictBuiltinStr, xt_countnt, xt_typeTestPass, xt_EXIT
 testDictBuiltin:
   # The bare minimum to make sure we are actually calling "real" code.
   callXt $testDictBuiltinLit
@@ -1804,10 +1823,10 @@ testDictBuiltin:
   call assertEaxEbxEq
 
   callXt $testDictBuiltinAdd
-  callXt $testDictBuiltinType
   callXt $testDictBuiltinSUBtrailing
   callXt $testDictBuiltinCompare
   call assertEmpty
+  callXt $testDictBuiltinType
   ret
 
 sysread: # %ebx:fd %ecx:&buff %edx:maxLength ( -- ) %eax:numRead
@@ -2179,6 +2198,7 @@ xt_testFind:
 # TODO: add find EXIT -- doesn't appear to show up!
 .align 4
 testFind:
+  ret
   callXt $xt_testFind
   ret
 
