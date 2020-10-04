@@ -54,7 +54,6 @@
 # bob in %eax. In actual fact, most functions either take/put values on the stack
 # or take/put registers.
 #
-#
 # REGISTERS: The below is a helpful register reference.
 # general 32bit:    %eax   %ebx   %ecx   %edx  %edi  %esi
 # from above 16bit:  ax     bx     cx     dx   none  none
@@ -65,6 +64,11 @@
 #           %eflags: we won't deal with this
 #
 # TODO: add addressing modes and critical instructions
+#
+# Token Types: these are the token types. See "Forth Dictionary" for more details
+# nt: name token, the POINTER to the first item in the dictionary (link)
+# xt: execution token, the POINTER to the item in a dictionary which itself
+#     points to the code to run
 
 ##############################
 # Constants
@@ -104,9 +108,37 @@
 .equ FALSE, 0
 .equ TRUE, -1
 
-.equ F_LENMASK,0x0000001F  # word's length (up to 32)
-.equ F_HIDDEN, 0x00000020  # word is hidden
-.equ F_IMMED,  0x00000040  # word is immediate
+####
+# Flags
+# We will get into these details when we are constructing the type system.
+# The only flags you have to pay attention to for now are:
+# NAMECOUNT: allows backreference from xt->nt
+# TIME_MASK and related: specifies when the xt should be run, and whether it
+#   has both IMM and RUN components (i.e. : word IMMEDIATE ... DOES> ... EXIT)
+# HIDDEN: whether the word is hidden
+
+.equ F_NAMECOUNT_MASK,    0x0000001F  # 5b: name's length (up to 32)
+.equ F_TYPE_MASK,         0x000000E0  # 3b: the type (8 types)
+.equ F_TYPE_UNTYPED,      0x00000000  # 0b: untyped word
+.equ F_TYPE_TYWORD,       0x00000020  # 0b: typed word
+.equ F_TYPE_STRUCT,       0x00000040  # 0b: struct (data structure)
+.equ F_TYPE_METHOD,       0x00000060  # 0b: method (attached typed word_
+.equ F_TYPE_INTERFACE,    0x00000080  # 0b: interface (collection of methods)
+.equ F_TYPE_RES0,         0x000000A0  # 0b: type reserved
+.equ F_TYPE_RES1,         0x000000C0  # 0b: type reserved
+.equ F_TYPE_RES2,         0x000000E0  # 0b: type reserved
+
+.equ F_INP_MASK,          0x00000700  # 3b:input size mask
+.equ F_OUT_MASK,          0x00003800  # 3b: input size mask
+.equ F_TIME_MASK,         0x0000C000  # 2b: time mask (run/compile/etc)
+.equ F_TIME_RUN,          0x00000000  # 0b: runtime only word
+.equ F_TIME_IMM,          0x00004000  # 0b: immediate only word
+.equ F_TIME_IMM_RUN,      0x00008000  # 0b: immediate+run word
+.equ F_TIME_RES,          0x0000C000  # 0b: time reserved
+
+.equ F_IMM_SIZE,          0x00FF0000  # 8b: immediate code size
+.equ F_RES,               0x7F000000  # 7b: reserved
+.equ F_HIDDEN,            0x80000000  # 1b: hidden flag
 
 
 ######################################################
@@ -173,10 +205,10 @@ testNEXTStr: .ascii "testNEXT\0"
 testEXITStr: .ascii "testEXIT\0"
 testDictSimpleStr: .ascii "testDictSimple\0"
 testDictBuiltinStr: .ascii "testDictBuiltin\0"
-testKeyStr: .ascii "testKeyStr\0"
-testWordStr: .ascii "testWordStr\0"
-testNumberStr: .ascii "testNumberStr\0"
-testFindStr: .ascii "testFindStr\0"
+testKeyStr: .ascii "testKey\0"
+testWordStr: .ascii "testWord\0"
+testNumberStr: .ascii "testNumber\0"
+testFindStr: .ascii "testFind\0"
 
 # Test Files
 testSimpleMathFile: .ascii "tests/simplemath.fs\0"
@@ -1245,12 +1277,14 @@ testEXIT:
 # The dictionary in our forth (and most forths) is a linked list, and the data is
 # arrayed like this:
 #
-#      ...
-#     link | name | info | xt | code/etc ...
-#      ...
+#         ...
+#        link | name | info | xt | code/etc ...
+#         ...
 # 
 # The various fields above are;
-# - link: this is the link to the previous entry in the LL, or 0 if this is the end.
+# - link: this is the link to the previous entry in the LL, or 0 if this is the end. A pointer
+#   to this is called the nt (name token) because it's easy to find the name from it. This is
+#   what FIND returns.
 # - name: a ctstr (counted str) with the count as the first byte and the string as the rest.
 #    we pad this string so it aligns with 4 bytes.
 # - info: N bytes of information containing:
@@ -2134,19 +2168,20 @@ def_var "S0"      ,   2,    0, s0     , 0 # initialized in _start
 # These simply return a constant value when run
 .macro def_const name, namelen, flags, label
   def_asmword \name , \namelen , \flags , \label
-  push $\label
+  dpush $\label
   NEXT
 .endm
 
-#         ascii  ,   len, flag,  label
-def_const "RMAX" ,     4,    0,  rstackMax
-def_const "DOCOL",     5,    0,  DOCOL
-def_const "F_LENMASK", 9,    0,  F_LENMASK
-def_const "F_HIDDEN",  8,    0,  F_HIDDEN
-def_const "F_IMMED",   7,    0,  F_IMMED
+#         ascii  ,     len, flag,  label
+def_const "RMAX" ,       4,    0,  rstackMax
+def_const "DOCOL",       5,    0,  DOCOL
+def_const "F_NAMECOUNT", 11,   0,  F_NAMECOUNT_MASK
+def_const "F_HIDDEN",    8,    0,  F_HIDDEN
+def_const "F_TIME_MASK", 11,   0,  F_TIME_MASK
 
 ##############################
 # Compiler/Interpreter Internals
+# TODO: add more descriptions
 
 # ( nt -- addr count ) \ given the nt return the name string
 #                      \ or 0 if not found
@@ -2154,6 +2189,26 @@ def_const "F_IMMED",   7,    0,  F_IMMED
 def_asmword "NT>STR",   6,    0, ntTOstr
   addl $4, (%ebp)      # address of name as cstr
   callXt $xt_count     # convert to ( addr count )
+  NEXT
+
+# ( nt -- flags ) \ given the nt return the address of flags
+#               ascii  , len, flag, label
+def_asmword "NT>&FLAGS",   9,    0, ntTOflags
+  dpop %eax           # address of nt
+  addl $4, %eax       # start of cstr
+  addl (%eax), %eax   # add count+1
+  addl $1, %eax
+  movl %eax, %ebx     # ebx = eax%4
+  andl $3, %ebx
+  addl %ebx, %eax     # align by adding modulo
+  dpush %eax
+  NEXT
+
+# ( nt -- flags ) \ given the nt return the xt
+#               ascii  , len, flag, label
+def_asmword "NT>XT",   9,    0, ntTOxt
+  callXt xt_ntTOflags
+  addl $4, (%ebx) # xt is directly after &flags
   NEXT
 
 # ( addr count -- nt ) \ finds the string in the dictionary, returning it's nt (name token)
@@ -2168,21 +2223,25 @@ find_loop:
   movl 16(%ebp), %ebx  # nt
   dpush %ebx # ( nt addrf countf addrf countf nt )
   callXt $xt_ntTOstr   # ( nt -- addr count )
-  movl $cstr_swap, %edx # TODO: remove
-  call dumpInfo         # TODO: remove
-  call _2dup
-  callXt $xt_typeln
   callXt $xt_ceq       # find if strings are equal
   dpop %eax           # if equal, return nt
   cmp $FALSE, %eax    # stack: ( nt addrf countf )
   jne find_found
   movl 8(%ebp), %ebx  # see if next link is 0, exit if is
-  movl (%ebx), %eax   # point link to next item
-  cmp $0, (%eax)
+  movl (%ebx), %eax   # %eax contains next nt
+  cmp $0, %eax
   je find_not_found
-  movl %eax, 8(%ebp)
+  movl %eax, 8(%ebp)  # point link to next item
   jmp find_loop
 find_found:
+  # Before returning it, check if it's F_HIDDEN
+  # TODO: fix
+  # movl 8(%ebp), %eax
+  # dpush %eax
+  # callXt $xt_ntTOflags
+  # dpop %eax
+  # andl $F_HIDDEN, (%eax)  # if hidden, repeat loop
+  # jnz find_loop
   call _2drop # drop ( addr count ) leaving nt
   NEXT
 find_not_found:
@@ -2190,15 +2249,19 @@ find_not_found:
   dpush $0
   NEXT
 
-
 .align 4
 xt_testFind:
-.int DOCOL, xt_lit, cstr_swap, xt_count, xt_find, xt_lit, xt_swap, xt_assertEq
-.int xt_lit, testFindStr, xt_countnt, xt_typeTestPass, xt_EXIT
-# TODO: add find EXIT -- doesn't appear to show up!
+.int DOCOL
+# Find DNE
+.int xt_lit, testAbcStr, xt_countnt, xt_find, xt_lit, 0, xt_assertEq
+# Find SWAP
+.int xt_lit, cstr_swap, xt_count, xt_find, xt_lit, nt_swap, xt_assertEq
+# Find EXIT
+.int xt_lit, cstr_EXIT, xt_count, xt_find, xt_lit, nt_EXIT, xt_assertEq
+.int xt_lit, testFindStr, xt_countnt, xt_typeTestPass
+.int xt_EXIT
 .align 4
 testFind:
-  ret
   callXt $xt_testFind
   ret
 
