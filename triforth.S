@@ -176,6 +176,7 @@ testDictBuiltinStr: .ascii "testDictBuiltin\0"
 testKeyStr: .ascii "testKeyStr\0"
 testWordStr: .ascii "testWordStr\0"
 testNumberStr: .ascii "testNumberStr\0"
+testFindStr: .ascii "testFindStr\0"
 
 # Test Files
 testSimpleMathFile: .ascii "tests/simplemath.fs\0"
@@ -223,6 +224,9 @@ testSuite: # ( -- )
   call assertCleanState
 
   call testNumber
+  call assertCleanState
+  call testFind
+  call assertCleanState
   ret
 
 testMemLocations:
@@ -549,6 +553,14 @@ drop: # ( a -- )
 
 _2drop: # ( a b -- )
   addl $8, %ebp
+  ret
+
+_3drop: # ( a b c -- )
+  addl $12, %ebp
+  ret
+
+_4drop: # ( a b c d -- )
+  addl $16, %ebp
   ret
 
 lrot: # ( a b c -- b c a )
@@ -1251,9 +1263,10 @@ testEXIT:
 # ( -- ) \ exit from word
 .section .rodata
 .align 4
-name_EXIT:
+nt_EXIT:
   .int link             # link to previous (in this case 0)
-  .set link, name_EXIT  # set link for next word to be defined
+  .set link, nt_EXIT  # set link for next word to be defined
+cstr_EXIT:
   .byte 4       # name length
   .ascii "EXIT" # the word name
   .align 4
@@ -1262,9 +1275,10 @@ xt_EXIT:
   .int word_EXIT # xt
 
 # ( a b -- a*b ) \ multiply
-name_MUL:
+nt_MUL:
   .int link            # link to previous (in this case 0)
-  .set link, name_MUL  # set link for next word to be defined
+  .set link, nt_MUL  # set link for next word to be defined
+cstr_MUL:
   .byte 3       # name length
   .ascii "MUL"  # the word name
   .align 4
@@ -1305,10 +1319,11 @@ testDictSimple:
 # implementations.
 .macro def_asmword name, namelen, flags=0, label
   .align 4
-name_\label :
+nt_\label :
   .int link               # link to previous
-  .set link,name_\label   # update link to self
+  .set link,nt_\label   # update link to self
   .int \flags             # flags for the word
+cstr_\label :
   .byte \namelen          # the length of the name
   .ascii "\name"          # the ascii name itself
   .align 4                # padding to next 4 byte boundary
@@ -1360,7 +1375,7 @@ def_callword "OVER" , 4 ,  0 ,   over
 
 # ( a b -- b ) \ drops item below top of stack
 #           ascii , len, flag, label
-def_asmword "NIP" , 3 ,  0 ,   nip
+def_asmword "NIP" , 3 ,  0   , nip
   dpop %ebx
   dpop %eax
   dpush %ebx
@@ -1572,9 +1587,7 @@ def_asmword "INVERT" ,  6 ,   0 , invert
   notl (%ebp)
   NEXT
 
-# ( u -- flag ) \ equal to 0?
-#          ascii , len, flag, label
-def_asmword "=0"  , 2 ,   0 , EQ0
+not:
   dpop %eax
   cmp $0, %eax
   je 1f
@@ -1582,6 +1595,16 @@ def_asmword "=0"  , 2 ,   0 , EQ0
   NEXT
 1:
   dpush $TRUE # true
+  NEXT
+
+# ( u -- flag ) \ equal to 0?
+#          ascii   , len, flag, label
+def_callword "NOT" , 3 ,   0 , not
+
+# ( u -- flag ) \ equal to 0?
+#          ascii , len, flag, label
+def_asmword "=0",  2 ,   0 , EQ0
+  call not
   NEXT
 
 # Macro for defining comparisons, which are identical except their jmp
@@ -1640,13 +1663,75 @@ def_asmword "LIT",    3,   0,    lit
 #           ascii    , len, flag, label
 def_callword "CMOVE" ,  5 ,  0 ,  cmove
 
-# ( c -- ) \ emit a character
-#           ascii   , len, flag, label
-def_callword "EMIT" , 4  ,   0 , emit
-
 # ( addr -- addr count ) \ counts a null-terminated (c-style) string.
 #           ascii      , len, flag, label
 def_callword "COUNTNT" ,  7 ,  0 ,  countnt
+
+# ( addr -- addr count ) \ convert cstr (counted str) to addr count
+#           ascii  , len, flag, label
+def_asmword "COUNT",   5,   0 , count
+  dpop %eax        # addr
+  movl $0, %ebx
+  movb (%eax), %bl # count
+  inc %eax
+  dpush %eax
+  dpush %ebx
+  NEXT
+
+# \ forth COMPARE, returns -1 if str1<str2, 0 iff ==, 1 otherwise
+# ( addr1 count1 addr2 count2 -- i ) 
+#           ascii    , len, flag, label
+def_asmword "COMPARE",   7,   0 , compare
+  movl 12(%ebp), %eax  # addr1
+  movl 4(%ebp), %ebx  # addr2
+  movl $0, %edi  # index
+compare_loop:
+  cmpl %edi, (%ebp)
+  je compare_exhausted
+  cmpl %edi, 8(%ebp)
+  je compare_exhausted
+  movb (%eax,%edi,1), %cl  # addr1+index
+  cmpb (%ebx,%edi,1), %cl  # addr2+index
+  jl compare_lt
+  jg compare_gt
+  jmp compare_loop # equal, loop again
+compare_exhausted: # count ran out
+  movl (%ebp), %eax  # count2
+  cmpl %eax, 8(%ebp)
+  jl compare_lt
+  jg compare_gt
+  jmp compare_eq
+compare_eq:
+  movl $0, %eax
+  jmp compare_done
+compare_lt:
+  movl $-1, %eax
+  jmp compare_done
+compare_gt:
+  movl $1, %eax
+  jmp compare_done
+compare_done:
+  addl $16, %ebp  # _4drop
+  dpush %eax
+  NEXT
+
+# ( addr1 count1 addr2 count2 -- flag ) \ return whether bytes1==bytes2
+#         ascii  , len, flag, label
+def_asmword "CEQ",   3,   0 , ceq
+  movl (%ebp), %eax
+  cmp %eax, 8(%ebp)  # cmp count1 to count2
+  jne ceq_ne_count
+  callXt $xt_compare
+  call not
+  NEXT
+ceq_ne_count:
+  call _4drop
+  dpush $FALSE
+  NEXT
+
+# ( c -- ) \ emit a character
+#           ascii   , len, flag, label
+def_callword "EMIT" , 4  ,   0 , emit
 
 # ( addr count -- ) \ types a string to emitFd
 #           ascii   , len, flag, label
@@ -1947,7 +2032,6 @@ testNumber:
   call countnt
   call typeTestPass
   ret
-  ret
 
 ##############################
 # Builtin Variables
@@ -1969,19 +2053,19 @@ def_asmword "BASE",   4,    0,  base
 
 .macro def_var name, namelen, flags, label, initial
   def_asmword \name , \namelen , \flags , \label
-  push $var_\name
+  push $var_\label
   NEXT
   .data
   .align 4
-var_\name :
+var_\label :
   .int \initial
 .endm
 
-#      ascii      , len, flag,  label, initial
-def_var "STATE"   ,   5,    0, state , 0
-def_var "HERE"    ,   4,    0, here  , 0
-def_var "LATEST"  ,   6,    0, latest, 0 # initialized in _start
-def_var "S0"      ,   2,    0, s0    , 0 # initialized in _start
+#      ascii      , len, flag,  label , initial
+def_var "STATE"   ,   5,    0, state  , 0
+def_var "HERE"    ,   4,    0, here   , 0
+def_var "LATEST"  ,   6,    0, latest , 0 # initialized in _start
+def_var "S0"      ,   2,    0, s0     , 0 # initialized in _start
 
 ##############################
 # Builtin Constants
@@ -1999,12 +2083,65 @@ def_const "F_LENMASK", 9,    0,  F_LENMASK
 def_const "F_HIDDEN",  8,    0,  F_HIDDEN
 def_const "F_IMMED",   7,    0,  F_IMMED
 
+##############################
+# Compiler/Interpreter Internals
+
+# ( nt -- addr count ) \ given the nt return the name string
+#                      \ or 0 if not found
+#            ascii  , len, flag, label
+def_asmword "NT>STR",   6,    0, ntTOstr
+  addl $4, (%ebp)      # address of name as cstr
+  callXt $xt_count     # convert to ( addr count )
+  NEXT
+
+# ( addr count -- nt ) \ finds the string in the dictionary, returning it's nt (name token)
+#                      \ or 0 if not found
+#           ascii  , len, flag, label
+def_asmword "FIND" , 4 ,    0 , find
+  movl var_latest , %eax
+  dpush %eax    # points to the nt of word we are looking at
+  call rrot     # Stack: ( nt addr count )
+find_loop:
+  call dumpInfo
+  call _2dup # ( nt addrf countf addrf countf )
+  movl 16(%ebp), %ebx  # nt
+  dpush %ebx
+  callXt $xt_ntTOstr      # ( nt -- addr count )
+  callXt $xt_ceq       # find if strings are equal
+  dpop %eax           # if equal, return nt
+  cmp $FALSE, %eax
+  jne find_found
+  movl 8(%ebp), %ebx  # see if next link is 0, exit if is
+  cmp $0, (%ebx)
+  je find_not_found
+  movl (%ebx), %eax   # point link to next item
+  movl %eax, 8(%ebp)
+  jmp find_loop
+find_found:
+  call _2drop # drop ( addr count ) leaving nt
+  NEXT
+find_not_found:
+  call _3drop
+  dpush $0
+  NEXT
+
+
+.align 4
+xt_testFind:
+.int DOCOL, xt_lit, cstr_swap, xt_count, xt_find, xt_lit, xt_swap, xt_assertEq
+.int xt_lit, testFindStr, xt_countnt, xt_typeTestPass, xt_EXIT
+.align 4
+testFind:
+  callXt $xt_testFind
+  ret
+
 
 ##############################
 # Main Entrypoint
 .globl _start
 _start:
   # TODO: initialze LATEST, S0 and HERE
+  movl $nt_find, var_latest
   movl $rstackMax, %esp
   movl $dstackMax, %ebp
   call testSuite
