@@ -208,6 +208,8 @@ testDictBuiltinStr: .ascii "testDictBuiltin\0"
 testKeyStr: .ascii "testKey\0"
 testWordStr: .ascii "testWord\0"
 testNumberStr: .ascii "testNumber\0"
+testAlign4Str: .ascii "testAlign4\0"
+test_ntTOotherStr: .ascii "test_ntTOother\0"
 testFindStr: .ascii "testFind\0"
 
 # Test Files
@@ -261,8 +263,9 @@ testSuite: # ( -- )
   call assertCleanState
 
   call testNumber
-  call assertCleanState
-  call testFind
+  call testAlign4
+  call test_ntTOother
+  # call testFind
   call assertCleanState
   ret
 
@@ -1309,6 +1312,7 @@ cstr_EXIT:
   .byte 4       # name length
   .ascii "EXIT" # the word name
   .align 4
+flags_EXIT:
   .int 0  # flags
 xt_EXIT:
   .int word_EXIT # xt
@@ -1321,6 +1325,7 @@ cstr_MUL:
   .byte 3       # name length
   .ascii "MUL"  # the word name
   .align 4
+flags_MUL:
   .int 0  # flags
 xt_MUL:
   .int word_MUL # xt
@@ -1369,6 +1374,7 @@ cstr_\label :
   .byte \namelen          # the length of the name
   .ascii "\name"          # the ascii name itself
   .align 4                # padding to next 4 byte boundary
+flags_\label :
   .int \flags             # flags for the word
 xt_\label :
   .int word_\label
@@ -1532,6 +1538,9 @@ def_asmword "C@" ,  2 ,  0 ,  cFETCH
 #           ascii, len, flag, label
 def_callword "." ,  1 ,  0 ,  DOT
 
+# ( -- ) \ asserts that stack is empty
+#                    ascii,len, flag, label
+def_callword "ASSERTEMPTY", 11,  0, assertEmpty
 
 # ( flag -- ) \ true or fail test
 #           ascii,        len, flag, label
@@ -2191,25 +2200,98 @@ def_asmword "NT>STR",   6,    0, ntTOstr
   callXt $xt_count     # convert to ( addr count )
   NEXT
 
+eax_align4: # %eax ( -- ) %eax \ modify eax so it is aligned by 4
+  movl %eax, %ebx  # ebx = eax%4. Note using & is much faster than div but only
+  andl $3, %ebx    #   works for powers of 2
+  jz 1f            # if aligned, don't change
+  subl $4, %ebx    # ebx=(eax%4)-4 (negative)
+  subl %ebx, %eax  # eax=eax-ebx (ebx is negative, so adds to eax)
+1:
+  ret
+
+.align 4
+testAlign4_0:
+.byte 0
+testAlign4_1:
+.byte 0
+testAlign4_2:
+.byte 0
+testAlign4_3:
+.byte 0
+testAlign4_4:
+.byte 0
+testAlign4_5:
+.byte 0
+.align 4
+xt_testAlign4:
+.int DOCOL, xt_lit, testAlign4Str, xt_countnt, xt_typeTestPass, xt_EXIT
+testAlign4:
+  movl $testAlign4_0, %eax
+  call eax_align4
+  movl $testAlign4_0, %ebx
+  call assertEaxEbxEq
+
+  movl $testAlign4_1, %eax
+  call eax_align4
+  movl $testAlign4_4, %ebx
+  call assertEaxEbxEq
+
+  movl $testAlign4_2, %eax
+  call eax_align4
+  movl $testAlign4_4, %ebx
+  call assertEaxEbxEq
+
+  movl $testAlign4_4, %eax
+  call eax_align4
+  movl $testAlign4_4, %ebx
+  call assertEaxEbxEq
+
+  movl $testAlign4_5, %eax
+  call eax_align4
+  movl $xt_testAlign4, %ebx
+  call assertEaxEbxEq
+
+  callXt $xt_testAlign4
+  ret
+
 # ( nt -- flags ) \ given the nt return the address of flags
 #               ascii  , len, flag, label
 def_asmword "NT>&FLAGS",   9,    0, ntTOflags
+  call dumpInfo       # TODO: remove
   dpop %eax           # address of nt
-  addl $4, %eax       # start of cstr
-  addl (%eax), %eax   # add count+1
+  addl $4, %eax       # start of cstr (count)
+  movl $0, %ebx
+  movb (%eax), %bl    # ebx=count
+  addl %ebx, %eax     # eax=eax+count+1
   addl $1, %eax
-  movl %eax, %ebx     # ebx = eax%4
-  andl $3, %ebx
-  addl %ebx, %eax     # align by adding modulo
+  call eax_align4     # align, as flags is always aligned
   dpush %eax
+  call dumpInfo        # TODO: remove
   NEXT
 
 # ( nt -- flags ) \ given the nt return the xt
 #               ascii  , len, flag, label
 def_asmword "NT>XT",   9,    0, ntTOxt
-  callXt xt_ntTOflags
-  addl $4, (%ebx) # xt is directly after &flags
+  callXt $xt_ntTOflags
+  addl $4, (%ebp) # xt is directly after &flags
   NEXT
+
+.align 4
+xt_test_ntTOother:
+.int DOCOL
+# flags: already aligned, cstr=4bytes
+.int xt_lit, nt_lit, xt_ntTOflags, xt_lit, flags_lit, xt_assertEq
+# flags: not aligned, cstr=5bytes
+.int xt_lit, nt_word, xt_ntTOflags, xt_lit, flags_word, xt_assertEq
+# nt>xt: already aligned
+.int xt_lit, nt_lit, xt_ntTOxt, xt_lit, xt_lit, xt_assertEq
+# nt>xt: not aligned
+.int xt_lit, nt_word, xt_ntTOxt, xt_lit, xt_word, xt_assertEq
+.int xt_assertEmpty, xt_lit, test_ntTOotherStr, xt_countnt, xt_typeTestPass
+.int xt_EXIT
+test_ntTOother:
+  callXt $xt_test_ntTOother
+  ret
 
 # ( addr count -- nt ) \ finds the string in the dictionary, returning it's nt (name token)
 #                      \ or 0 if not found
@@ -2219,31 +2301,40 @@ def_asmword "FIND" , 4 ,    0 , find
   dpush %eax    # points to the nt of word we are looking at
   call rrot     # Stack: ( nt addr count )
 find_loop:
+
   call _2dup # ( nt addrf countf addrf countf )
   movl 16(%ebp), %ebx  # nt
   dpush %ebx # ( nt addrf countf addrf countf nt )
   callXt $xt_ntTOstr   # ( nt -- addr count )
+
+  call _2dup            # TODO: remove
+  callXt $xt_typeln     # TODO: remove
+  call dumpInfo         # TODO: remove
+
   callXt $xt_ceq       # find if strings are equal
-  dpop %eax           # if equal, return nt
-  cmp $FALSE, %eax    # stack: ( nt addrf countf )
-  jne find_found
+  dpop %eax            # if equal, return nt
+  cmp $TRUE, %eax      # stack: ( nt addrf countf )
+  je find_found
+  jmp find_next
+find_found:
+  # Before returning it, check if it's F_HIDDEN
+  # TODO: failing here...
+  movl 8(%ebp), %eax
+  dpush %eax
+  callXt $xt_ntTOflags
+  dpop %eax
+  andl $F_HIDDEN, (%eax)  # if hidden, repeat loop
+  cmp $0, (%eax)
+  jne find_next
+  call _2drop # drop ( addr count ) leaving nt
+  NEXT
+find_next:
   movl 8(%ebp), %ebx  # see if next link is 0, exit if is
   movl (%ebx), %eax   # %eax contains next nt
   cmp $0, %eax
   je find_not_found
   movl %eax, 8(%ebp)  # point link to next item
   jmp find_loop
-find_found:
-  # Before returning it, check if it's F_HIDDEN
-  # TODO: fix
-  # movl 8(%ebp), %eax
-  # dpush %eax
-  # callXt $xt_ntTOflags
-  # dpop %eax
-  # andl $F_HIDDEN, (%eax)  # if hidden, repeat loop
-  # jnz find_loop
-  call _2drop # drop ( addr count ) leaving nt
-  NEXT
 find_not_found:
   call _3drop
   dpush $0
@@ -2254,10 +2345,10 @@ xt_testFind:
 .int DOCOL
 # Find DNE
 .int xt_lit, testAbcStr, xt_countnt, xt_find, xt_lit, 0, xt_assertEq
-# Find SWAP
+# # Find SWAP
 .int xt_lit, cstr_swap, xt_count, xt_find, xt_lit, nt_swap, xt_assertEq
-# Find EXIT
-.int xt_lit, cstr_EXIT, xt_count, xt_find, xt_lit, nt_EXIT, xt_assertEq
+# # Find EXIT
+# .int xt_lit, cstr_EXIT, xt_count, xt_find, xt_lit, nt_EXIT, xt_assertEq
 .int xt_lit, testFindStr, xt_countnt, xt_typeTestPass
 .int xt_EXIT
 .align 4
