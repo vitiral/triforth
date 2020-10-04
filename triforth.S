@@ -265,7 +265,7 @@ testSuite: # ( -- )
   call testNumber
   call testAlign4
   call test_ntTOother
-  # call testFind
+  call testFind
   call assertCleanState
   ret
 
@@ -2257,7 +2257,6 @@ testAlign4:
 # ( nt -- flags ) \ given the nt return the address of flags
 #               ascii  , len, flag, label
 def_asmword "NT>&FLAGS",   9,    0, ntTOflags
-  call dumpInfo       # TODO: remove
   dpop %eax           # address of nt
   addl $4, %eax       # start of cstr (count)
   movl $0, %ebx
@@ -2266,7 +2265,6 @@ def_asmword "NT>&FLAGS",   9,    0, ntTOflags
   addl $1, %eax
   call eax_align4     # align, as flags is always aligned
   dpush %eax
-  call dumpInfo        # TODO: remove
   NEXT
 
 # ( nt -- flags ) \ given the nt return the xt
@@ -2319,13 +2317,13 @@ find_loop:
 find_found:
   # Before returning it, check if it's F_HIDDEN
   # TODO: failing here...
-  movl 8(%ebp), %eax
+  movl 8(%ebp), %eax  # eax=nt
   dpush %eax
   callXt $xt_ntTOflags
-  dpop %eax
-  andl $F_HIDDEN, (%eax)  # if hidden, repeat loop
-  cmp $0, (%eax)
-  jne find_next
+  dpop %eax           # eax=ptr to flags
+  movl (%eax), %eax
+  andl $F_HIDDEN, %eax  # if hidden, repeat loop
+  jnz find_next
   call _2drop # drop ( addr count ) leaving nt
   NEXT
 find_next:
@@ -2340,15 +2338,23 @@ find_not_found:
   dpush $0
   NEXT
 
+
+# ( nt -- flags ) \ given the nt return the xt
+#              ascii  , len,     flag, label
+def_asmword "ISHIDDEN",   8, F_HIDDEN, ishidden
+  NEXT
+
 .align 4
 xt_testFind:
 .int DOCOL
 # Find DNE
 .int xt_lit, testAbcStr, xt_countnt, xt_find, xt_lit, 0, xt_assertEq
-# # Find SWAP
+# Find SWAP
 .int xt_lit, cstr_swap, xt_count, xt_find, xt_lit, nt_swap, xt_assertEq
-# # Find EXIT
-# .int xt_lit, cstr_EXIT, xt_count, xt_find, xt_lit, nt_EXIT, xt_assertEq
+# Find EXIT
+.int xt_lit, cstr_EXIT, xt_count, xt_find, xt_lit, nt_EXIT, xt_assertEq
+# Find a hidden value
+.int xt_lit, cstr_ishidden, xt_count, xt_find, xt_lit, 0, xt_assertEq
 .int xt_lit, testFindStr, xt_countnt, xt_typeTestPass
 .int xt_EXIT
 .align 4
