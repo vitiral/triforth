@@ -2174,7 +2174,7 @@ find_not_found:
 
 .align 4
 xt_testFind:
-.int DOCOL, xt_lit, cstr_swap, xt_count, xt_find, xt_dbgexit, xt_lit, xt_swap, xt_assertEq
+.int DOCOL, xt_lit, cstr_swap, xt_count, xt_find, xt_lit, xt_swap, xt_assertEq
 .int xt_lit, testFindStr, xt_countnt, xt_typeTestPass, xt_EXIT
 # TODO: add find EXIT -- doesn't appear to show up!
 .align 4
