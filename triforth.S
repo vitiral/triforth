@@ -181,6 +181,9 @@ testFindStr: .ascii "testFindStr\0"
 # Test Files
 testSimpleMathFile: .ascii "tests/simplemath.fs\0"
 
+# Test Inputs
+testWordWithSpaces: .ascii " spc    \0"
+
 .align 4
 
 ######################################################
@@ -1698,6 +1701,7 @@ compare_loop:
   cmpb (%ebx,%edi,1), %cl  # addr2+index
   jl compare_lt
   jg compare_gt
+  inc %edi
   jmp compare_loop # equal, loop again
 compare_exhausted: # count ran out
   movl (%ebp), %eax  # count2
@@ -1731,6 +1735,24 @@ def_asmword "CEQ",   3,   0 , ceq
 ceq_ne:
   call _4drop
   dpush $FALSE
+  NEXT
+
+# ( addr count -- addr count ) \ remove trailing spaces
+#               ascii  , len, flag, label
+def_asmword "-TRAILING",   9,    0, SUBtrailing
+  movl 4(%ebp), %eax  # address
+  movl (%ebp), %ebx   # count
+  dec %ebx            # index (last index first)
+SUBtrailing_loop:
+  cmpl $0, %ebx       # if index<0 exit
+  jl SUBtrailing_done
+  cmpb $' ', (%eax,%ebx,1)  # if not equal to space, no more trailing
+  jne SUBtrailing_done
+  dec %ebx            # decrement index
+  jmp SUBtrailing_loop
+SUBtrailing_done:
+  inc %ebx            # index -> count
+  movl %ebx, (%ebp)   # update count
   NEXT
 
 # ( c -- ) \ emit a character
@@ -1768,6 +1790,12 @@ testDictBuiltinAdd:
 testDictBuiltinType:
   # : <annon> 32 10 + 42 assertEq ;
   .int DOCOL, xt_lit, testDictBuiltinStr, xt_countnt, xt_typeTestPass, xt_EXIT
+testDictBuiltinSUBtrailing:
+  .int DOCOL, xt_lit, testWordWithSpaces, xt_countnt, xt_SUBtrailing
+  .int xt_lit, 4, xt_assertEq, xt_drop, xt_EXIT
+testDictBuiltinCompare:
+  .int DOCOL, xt_lit, testWordWithSpaces, xt_countnt, xt__2dup
+  .int xt_compare, xt_lit, 0, xt_assertEq, xt_EXIT
 testDictBuiltin:
   # The bare minimum to make sure we are actually calling "real" code.
   callXt $testDictBuiltinLit
@@ -1777,6 +1805,9 @@ testDictBuiltin:
 
   callXt $testDictBuiltinAdd
   callXt $testDictBuiltinType
+  callXt $testDictBuiltinSUBtrailing
+  callXt $testDictBuiltinCompare
+  call assertEmpty
   ret
 
 sysread: # %ebx:fd %ecx:&buff %edx:maxLength ( -- ) %eax:numRead
