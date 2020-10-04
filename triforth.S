@@ -1258,14 +1258,14 @@ testEXIT:
 #
 # We have already nearly defined a few words, so let's start the dictionary!
 
-  .set LINK, 0  # this will keep track of the "previous" link for us.
+.set LINK, 0  # this will keep track of the "previous" link for us.
 
 # ( -- ) \ exit from word
 .section .rodata
 .align 4
 nt_EXIT:
-  .int link             # link to previous (in this case 0)
-  .set link, nt_EXIT  # set link for next word to be defined
+  .int LINK           # link to previous (in this case 0)
+  .set LINK, nt_EXIT  # set link for next word to be defined
 cstr_EXIT:
   .byte 4       # name length
   .ascii "EXIT" # the word name
@@ -1276,8 +1276,8 @@ xt_EXIT:
 
 # ( a b -- a*b ) \ multiply
 nt_MUL:
-  .int link            # link to previous (in this case 0)
-  .set link, nt_MUL  # set link for next word to be defined
+  .int LINK            # link to previous (in this case 0)
+  .set LINK, nt_MUL  # set link for next word to be defined
 cstr_MUL:
   .byte 3       # name length
   .ascii "MUL"  # the word name
@@ -1287,6 +1287,10 @@ xt_MUL:
   .int word_MUL # xt
 
 testDictSimple:
+  movl nt_EXIT, %eax
+  movl $0, %ebx
+  call assertEaxEbxEq
+
   dpush $7  # put 8 on the stack
   dpush $3  # put 8 on the stack
   dpush $2  # put 8 on the stack
@@ -1317,16 +1321,16 @@ testDictSimple:
 # in the word. Some of these we have already defined, tested and used in
 # implementing other core words, in which case will simply call our
 # implementations.
-.macro def_asmword name, namelen, flags=0, label
+.macro def_asmword name , namelen , flags=0 , label
   .align 4
 nt_\label :
-  .int link               # link to previous
-  .set link,nt_\label   # update link to self
-  .int \flags             # flags for the word
+  .int LINK               # link to previous
+  .set LINK,nt_\label   # update link to self
 cstr_\label :
   .byte \namelen          # the length of the name
   .ascii "\name"          # the ascii name itself
   .align 4                # padding to next 4 byte boundary
+  .int \flags             # flags for the word
 xt_\label :
   .int word_\label
 word_\label :
@@ -1592,10 +1596,10 @@ not:
   cmp $0, %eax
   je 1f
   dpush $FALSE  # false
-  NEXT
+  ret
 1:
   dpush $TRUE # true
-  NEXT
+  ret
 
 # ( u -- flag ) \ equal to 0?
 #          ascii   , len, flag, label
@@ -1720,11 +1724,11 @@ compare_done:
 def_asmword "CEQ",   3,   0 , ceq
   movl (%ebp), %eax
   cmp %eax, 8(%ebp)  # cmp count1 to count2
-  jne ceq_ne_count
+  jne ceq_ne
   callXt $xt_compare
   call not
   NEXT
-ceq_ne_count:
+ceq_ne:
   call _4drop
   dpush $FALSE
   NEXT
@@ -1736,6 +1740,14 @@ def_callword "EMIT" , 4  ,   0 , emit
 # ( addr count -- ) \ types a string to emitFd
 #           ascii   , len, flag, label
 def_callword "TYPE" ,  4 ,  0 ,  type
+
+# ( addr count -- ) \ types a string to emitFd with newline
+#            ascii   , len, flag, label
+def_asmword "TYPELN" ,  6 ,  0 ,  typeln
+  callXt $xt_type
+  dpush $'\n'
+  call emit
+  NEXT
 
 ####
 # Builtin Test
@@ -2098,23 +2110,26 @@ def_asmword "NT>STR",   6,    0, ntTOstr
 #                      \ or 0 if not found
 #           ascii  , len, flag, label
 def_asmword "FIND" , 4 ,    0 , find
-  movl var_latest , %eax
+  movl var_latest, %eax
   dpush %eax    # points to the nt of word we are looking at
   call rrot     # Stack: ( nt addr count )
 find_loop:
-  call dumpInfo
   call _2dup # ( nt addrf countf addrf countf )
   movl 16(%ebp), %ebx  # nt
-  dpush %ebx
-  callXt $xt_ntTOstr      # ( nt -- addr count )
+  dpush %ebx # ( nt addrf countf addrf countf nt )
+  callXt $xt_ntTOstr   # ( nt -- addr count )
+  movl $cstr_swap, %edx # TODO: remove
+  call dumpInfo         # TODO: remove
+  call _2dup
+  callXt $xt_typeln
   callXt $xt_ceq       # find if strings are equal
   dpop %eax           # if equal, return nt
-  cmp $FALSE, %eax
+  cmp $FALSE, %eax    # stack: ( nt addrf countf )
   jne find_found
   movl 8(%ebp), %ebx  # see if next link is 0, exit if is
-  cmp $0, (%ebx)
-  je find_not_found
   movl (%ebx), %eax   # point link to next item
+  cmp $0, (%eax)
+  je find_not_found
   movl %eax, 8(%ebp)
   jmp find_loop
 find_found:
@@ -2128,8 +2143,9 @@ find_not_found:
 
 .align 4
 xt_testFind:
-.int DOCOL, xt_lit, cstr_swap, xt_count, xt_find, xt_lit, xt_swap, xt_assertEq
+.int DOCOL, xt_lit, cstr_swap, xt_count, xt_find, xt_dbgexit, xt_lit, xt_swap, xt_assertEq
 .int xt_lit, testFindStr, xt_countnt, xt_typeTestPass, xt_EXIT
+# TODO: add find EXIT -- doesn't appear to show up!
 .align 4
 testFind:
   callXt $xt_testFind
