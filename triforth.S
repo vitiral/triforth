@@ -214,6 +214,7 @@ testNumberStr: .ascii "testNumber\0"
 testAlign4Str: .ascii "testAlign4\0"
 test_ntTOotherStr: .ascii "test_ntTOother\0"
 testFindStr: .ascii "testFind\0"
+testCreateStr: .ascii "testCreate\0"
 
 # Test Files
 testSimpleMathFile: .ascii "tests/simplemath.fs\0"
@@ -222,6 +223,8 @@ testSimpleMathFile: .ascii "tests/simplemath.fs\0"
 testWordWithSpaces: .ascii " spc    \0"
 testAbcStr: .ascii "abc\0"
 testBcdStr: .ascii "bcd\0"
+testCreatedWord: .ascii "createdword\0"
+testCreatedWordUpper: .ascii "CREATEDWORD\0"
 
 .align 4
 
@@ -269,6 +272,7 @@ testSuite: # ( -- )
   call testAlign4
   call test_ntTOother
   call testFind
+  call testCreate
   call assertCleanState
   ret
 
@@ -976,6 +980,22 @@ cmove: # ( addr1 addr2 count -- )
 2:
   ret
 
+cmoveUpper: # ( addr1 addr2 count -- )
+  # Move count chars from addr1 -> addr2 as uppercase
+  dpop %ecx # count
+  dpop %edx # addr2
+  dpop %ebx # addr1
+  movl $0, %edi  # index
+1:
+  cmp %edi, %ecx
+  je 2f
+  movb (%ebx,%edi,1), %al
+  call al_toupper
+  movb %al, (%edx,%edi,1)
+  inc %edi
+  jmp 1b
+2:
+  ret
 
 ##############################
 # Debug Helpers
@@ -1762,6 +1782,10 @@ def_asmword "LIT",    3,   0,    lit
 #           ascii    , len, flag, label
 def_callword "CMOVE" ,  5 ,  0 ,  cmove
 
+# ( src dst count -- ) \ Moves characters from src to dst
+#                ascii    , len, flag, label
+def_callword "CMOVEUPPER" , 10 ,    0, cmoveUpper
+
 # ( addr -- addr count ) \ counts a null-terminated (c-style) string.
 #           ascii      , len, flag, label
 def_callword "COUNTNT" ,  7 ,  0 ,  countnt
@@ -2018,6 +2042,23 @@ al_toupper: # %al:c ( -- ) %al:c
 1:
   ret
 
+# ( addr count -- addr count ) \ Convert to upper ASCII case
+#              ascii ,  len, flag, label
+def_asmword "TOUPPER",    7,    0, toupper
+  movl $0, %ebx
+  movl (%ebp), %ecx   # count
+  movl 4(%ebp), %edx  # addr
+  movl $0, %edi       # index
+1:
+  cmp %edi, %ecx
+  je 2f
+  movb (%edx,%edi,1), %al
+  call al_toupper
+  movb %al, (%edx,%edi,1)
+  jmp 1b
+2:
+  NEXT
+
 # ( -- addr count ) \ Get the next WORD on the input stream
 #            ascii ,  len, flag, label
 def_asmword "WORD",    4,    0, word
@@ -2200,12 +2241,12 @@ testNumber:
 # ( -- addr ) \ the "base" used in str<->int conversions
 #      ascii      , len, flag,  label, initial
 def_asmword "BASE",   4,    0,  base
-  push $var_base
+  dpush $var_base
   NEXT
 
 .macro def_var name, namelen, flags, label, initial
-  def_asmword \name , \namelen , \flags , \label
-  push $var_\label
+def_asmword \name , \namelen , \flags , \label
+  dpush $var_\label
   NEXT
   .data
   .align 4
@@ -2344,6 +2385,13 @@ def_asmword "NT>XT",   9,    0, ntTOxt
   addl $4, (%ebp) # xt is directly after &flags
   NEXT
 
+# ( nt -- addr count ) \ given the nt return the name
+#             ascii  , len, flag, label
+def_asmword "NT>NAME",   9,    0, ntTOname
+  addl $4, (%ebp) # name is directly after nt
+  callXt xt_count
+  NEXT
+
 # ( nt -- flags ) \ get "code field address" (xt) from nt
 #         ascii  , len, flag, label
 def_doword ">CFA",   4,    0, TOcfa
@@ -2433,7 +2481,7 @@ find_not_found:
 
 
 # A word that is hidden (for testing purposes)
-def_asmword "HIDDENWORD",   8, F_HIDDEN, hiddenword
+def_asmword "HIDDENWORD",  10, F_HIDDEN, hiddenword
   NEXT
 
 .align 4
@@ -2458,44 +2506,65 @@ testFind:
 
 
 # ( addr count -- nt ) \ create the next word on the input stream in the dictionary
-#                      \ it is marked as HIDDEN
 #             ascii  , len, flag, label
-def_asmword "CREATE" ,  5 ,    0 , create
+def_asmword "CREATE" ,  6 ,    0 , create
+  movl (%ebp), %ecx  # count
+  cmp $MAX_WORD_LEN, %ecx  # check if count > max
+  jg create_fail
   movl var_here, %edi
   movl var_latest, %eax
-  movl %eax, (%edi)    # dict: link to previous
-  addl $4, %edi # increment to next
-  movl (%ebp), %ecx  # count
-  cmp $MAX_WORD_LEN, %ecx
-  jg create_fail
-  movb %cl, (%edi) # dict: cstr count
+  movl %eax, (%edi)      # dict: link to previous
+  movl %edi, var_latest  # dict: update latest to this word
+  addl $4, %edi          # go to where cstr is stored
+  movb %cl, (%edi)       # dict: cstr count
   inc %edi
   call tuck # ( count addr count ) note: doesn't touch edi
   dpush %edi # addr2
-  movl %edi, var_here # store HERE, as cmove will destroy
-  call swap     # stack: ( count addr addr2 count )
-  call cmove    # dict: name string
-  dpop %ecx     # count
-  movl var_here, %eax
-  addl %ecx, %eax       # add count to var_here and align
+  movl %edi, var_here # store edi, as cmove will destroy
+  call swap           # stack: ( count addr addr2 count )
+  call cmoveUpper     # dict: name string
+  dpop %ecx           # count
+  movl var_here, %eax   # restore HERE into eax for eax_align4
+  addl %ecx, %eax       # add count to here and align
   call eax_align4
-  shl $F_NAMELEN_SHIFT, %ecx
+  shl $F_NAMELEN_SHIFT, %ecx  # set up flags
   movl %ecx, (%eax)     # dict: set flags
-  addl $4, %eax
-  movl %eax, var_here
+  addl $4, %eax         # increment eax to point to xt/data/etc
+  movl %eax, var_here   # dict: update here
   NEXT
 create_fail:
   movl $ERR_MAX_WORD_LEN, panicErr
   call *(panic)
 
+.align 4
+xt_testCreate:
+.int DOCOL
+.int xt_here, xt_FETCH
+.int xt_lit, testCreatedWord, xt_countnt, xt_create
+.int xt_here, xt_FETCH, xt_NEQ, xt_assertTrue  # HERE has changed
+.int xt_lit, testCreatedWordUpper, xt_countnt, xt_find
+# .int xt_dup
+.int xt_assertTrue # nt was found
+# .int xt_ntTOname, xt_ceq, xt_assertTrue # the found name has same... name
+.int xt_lit, testCreateStr, xt_countnt, xt_typeTestPass
+.int xt_EXIT
+.align 4
+testCreate:
+  callXt $xt_testCreate
+  ret
 
 ##############################
 # Main Entrypoint
 .globl _start
 _start:
   # TODO: initialze LATEST, S0 and HERE
-  movl $nt_find, var_latest
+  movl $hereInitial, var_here
+  movl $nt_create, var_latest
   movl $rstackMax, %esp
   movl $dstackMax, %ebp
   call testSuite
   jmp exit0
+
+.data
+.align 4
+hereInitial: .space 1048576  # 1 MiB
