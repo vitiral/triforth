@@ -2389,7 +2389,7 @@ def_asmword "NT>XT",   9,    0, ntTOxt
 #             ascii  , len, flag, label
 def_asmword "NT>NAME",   9,    0, ntTOname
   addl $4, (%ebp) # name is directly after nt
-  callXt xt_count
+  callXt $xt_count
   NEXT
 
 # ( nt -- flags ) \ get "code field address" (xt) from nt
@@ -2541,11 +2541,15 @@ xt_testCreate:
 .int DOCOL
 .int xt_here, xt_FETCH
 .int xt_lit, testCreatedWord, xt_countnt, xt_create
-.int xt_here, xt_FETCH, xt_NEQ, xt_assertTrue  # HERE has changed
+# HERE has changed
+.int xt_here, xt_FETCH, xt_NEQ, xt_assertTrue
+# Find the word
 .int xt_lit, testCreatedWordUpper, xt_countnt, xt_find
-# .int xt_dup
-.int xt_assertTrue # nt was found
-# .int xt_ntTOname, xt_ceq, xt_assertTrue # the found name has same... name
+# Flags are as expected (namelen)
+.int xt_dup, xt_ntTOflags, xt_FETCH, xt_lit, 11<<F_NAMELEN_SHIFT, xt_assertEq
+# Stored name is uppercased
+.int xt_ntTOname, xt_lit, testCreatedWordUpper, xt_countnt
+.int xt_ceq, xt_assertTrue
 .int xt_lit, testCreateStr, xt_countnt, xt_typeTestPass
 .int xt_EXIT
 .align 4
