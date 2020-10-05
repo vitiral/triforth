@@ -112,13 +112,28 @@
 # Flags
 # We will get into these details when we are constructing the type system.
 # The only flags you have to pay attention to for now are:
-# NAMECOUNT: allows backreference from xt->nt
+# NAMELEN: allows backreference from xt->nt
 # TIME_MASK and related: specifies when the xt should be run, and whether it
 #   has both IMM and RUN components (i.e. : word IMMEDIATE ... DOES> ... EXIT)
 # HIDDEN: whether the word is hidden
 
-.equ F_NAMECOUNT_MASK,    0x0000001F  # 5b: name's length (up to 32)
-.equ F_TYPE_MASK,         0x000000E0  # 3b: the type (8 types)
+# Byte 1
+.equ F_RES,               0x0000007F  # 7b: reserved
+.equ F_HIDDEN,            0x00000080  # 1b: hidden flag
+# Byte 2
+.equ F_INP_MASK,          0x00000700  # 3b: input size mask
+.equ F_OUT_MASK,          0x00003800  # 3b: output size mask
+.equ F_TIME_MASK,         0x0000C000  # 2b: time mask (run/compile/etc)
+.equ F_TIME_RUN,          0x00000000  # 0b: runtime only word
+.equ F_TIME_IMM,          0x00004000  # 0b: immediate only word
+.equ F_TIME_IMM_PART,     0x00008000  # 0b: immediate part of immediate+run
+.equ F_TIME_RUN_PART,     0x0000C000  # 0b: run part of immediate+run
+# Byte 3
+.equ F_IMM_SIZE,          0x00FF0000  # 8b: immediate code size
+# Byte 4 (left-most byte)
+.equ F_NAMELEN_MASK,      0x1F000000  # 5b: name's length (up to 32)
+.equ F_NAMELEN_SHIFT,     24          # 0b: number of bits to shift
+.equ F_TYPE_MASK,         0xE0000000  # 3b: the type (8 types)
 .equ F_TYPE_UNTYPED,      0x00000000  # 0b: untyped word
 .equ F_TYPE_TYWORD,       0x00000020  # 0b: typed word
 .equ F_TYPE_STRUCT,       0x00000040  # 0b: struct (data structure)
@@ -127,18 +142,6 @@
 .equ F_TYPE_RES0,         0x000000A0  # 0b: type reserved
 .equ F_TYPE_RES1,         0x000000C0  # 0b: type reserved
 .equ F_TYPE_RES2,         0x000000E0  # 0b: type reserved
-
-.equ F_INP_MASK,          0x00000700  # 3b:input size mask
-.equ F_OUT_MASK,          0x00003800  # 3b: input size mask
-.equ F_TIME_MASK,         0x0000C000  # 2b: time mask (run/compile/etc)
-.equ F_TIME_RUN,          0x00000000  # 0b: runtime only word
-.equ F_TIME_IMM,          0x00004000  # 0b: immediate only word
-.equ F_TIME_IMM_RUN,      0x00008000  # 0b: immediate+run word
-.equ F_TIME_RES,          0x0000C000  # 0b: time reserved
-
-.equ F_IMM_SIZE,          0x00FF0000  # 8b: immediate code size
-.equ F_RES,               0x7F000000  # 7b: reserved
-.equ F_HIDDEN,            0x80000000  # 1b: hidden flag
 
 
 ######################################################
@@ -160,7 +163,7 @@ ioBufferLen: .int 0  # number of chars in ioBuffer
 .equ MAX_WORD_LEN,32
 wordBuffer: .space MAX_WORD_LEN
 stateFlags: .int 0
-.equ FLAG_STATE_MODE, 0x01  # 0=compile 1=run
+.equ F_STATE_RUN, 0x01  # 0=compile 1=run
 
 # Word info
 .equ FLAG_WORD_IMMEDIATE, 0x01 # whether the word is immediate or not
@@ -182,7 +185,7 @@ emitBuffer: .space EMIT_BUFFER_SIZE # scratch space for emit and DOT
 emitBufferMax:
 keyFd: .int STDIN   # where KEY/etc gets input from
 keyBuffer: .int 0
-base: .int 10  # used for number conversions
+var_base: .int 10  # used for number conversions
 
 ##############################
 # Text Strings: unaligned strings for printing messages
@@ -803,7 +806,7 @@ cSTORE: # ( c addr -- )
 
 DOT: # ( n -- )
   # forth '.', emit the value on the stack.
-  movl base, %eax  # note: will be defined later
+  movl var_base, %eax  # note: will be defined later
   dpush %eax
   call DOTbase
   dpush $' '
@@ -1313,7 +1316,7 @@ cstr_EXIT:
   .ascii "EXIT" # the word name
   .align 4
 flags_EXIT:
-  .int 0  # flags
+  .int (4<<F_NAMELEN_SHIFT)  # flags (just the NAMELEN)
 xt_EXIT:
   .int word_EXIT # xt
 
@@ -1326,7 +1329,7 @@ cstr_MUL:
   .ascii "MUL"  # the word name
   .align 4
 flags_MUL:
-  .int 0  # flags
+  .int (3<<F_NAMELEN_SHIFT)  # flags (just the NAMELEN)
 xt_MUL:
   .int word_MUL # xt
 
@@ -1368,14 +1371,14 @@ testDictSimple:
 .macro def_asmword name , namelen , flags=0 , label
   .align 4
 nt_\label :
-  .int LINK               # link to previous
-  .set LINK,nt_\label   # update link to self
+  .int LINK            # link to previous
+  .set LINK,nt_\label  # update link to self
 cstr_\label :
-  .byte \namelen          # the length of the name
-  .ascii "\name"          # the ascii name itself
-  .align 4                # padding to next 4 byte boundary
+  .byte \namelen       # the length of the name
+  .ascii "\name"       # the ascii name itself
+  .align 4             # padding to next 4 byte boundary
 flags_\label :
-  .int \flags             # flags for the word
+  .int (\namelen<<F_NAMELEN_SHIFT) + \flags          # flags for the word
 xt_\label :
   .int word_\label
 word_\label :
@@ -1388,6 +1391,25 @@ word_\label :
 def_asmword \name , \namelen , \flags , \label
   call \label
   NEXT
+.endm
+
+# Finally, this macro allows for defining a word in terms of calling other
+# words.
+# TODO: write test to ensure these are equivalent
+.macro def_doword name , namelen , flags=0 , label
+  .align 4
+nt_\label :
+  .int LINK             # link to previous
+  .set LINK,nt_\label   # update link to self
+cstr_\label :
+  .byte \namelen        # the length of the name
+  .ascii "\name"        # the ascii name itself
+  .align 4              # padding to next 4 byte boundary
+flags_\label :
+  .int \flags           # flags for the word
+xt_\label :
+  .int DOCOL
+word_\label :           # follow with .int for xt's to call
 .endm
 
 # ( a b -- b a )
@@ -1430,15 +1452,17 @@ def_asmword "NIP" , 3 ,  0   , nip
   dpush %ebx
   NEXT
 
-# ( a b -- b a b ) \ copy the top stack item below the second stack item
-#           ascii  , len, flag, label
-def_asmword "TUCK" , 4 ,  0 ,   tuck
+tuck:
   dpop %ebx
   dpop %eax
   dpush %ebx
   dpush %eax
   dpush %ebx
-  NEXT
+  ret
+
+# ( a b -- b a b ) \ copy the top stack item below the second stack item
+#            ascii  , len, flag, label
+def_callword "TUCK" , 4 ,  0 ,   tuck
 
 # ( a -- a a? ) \ duplicate top of stack if non-zero
 #           ascii  , len, flag, label
@@ -1612,6 +1636,18 @@ def_asmword "/MOD" , 4  ,  0 ,  DIVmod
   call DIVmod
   NEXT
 
+# ( u -- u ) \ increment by 1
+#           ascii, len, flag, label
+def_asmword "INC",   3,    0, inc
+  addl $1, (%ebp)
+  NEXT
+
+# ( u -- u ) \ increment by 4
+#            ascii, len, flag, label
+def_asmword "INC4",   4,    0, inc4
+  addl $4, (%ebp)
+  NEXT
+
 # ( u u -- u ) \ bitwise AND
 #          ascii  , len, flag, label
 def_asmword "AND" ,  3 ,   0 , and
@@ -1658,6 +1694,17 @@ def_callword "NOT" , 3 ,   0 , not
 def_asmword "=0",  2 ,   0 , EQ0
   call not
   NEXT
+
+bool: # ( n -- flag )  \ convert integer to TRUE or FALSE
+  cmp $0, (%ebp)      # if FALSE just return
+  je 1f
+  movl $TRUE, (%ebp)  # else force TRUE
+1:
+  ret
+
+# ( u -- flag ) \ convert integer to TRUE or FALSE
+#          ascii  , len, flag, label
+def_callword "BOOL",   4,   0, bool
 
 # Macro for defining comparisons, which are identical except their jmp
 # conditions.
@@ -2105,7 +2152,7 @@ number_loop:
   jle number_done 
   movl %eax, %ecx    # store number we just read in ecx
   movl 4(%ebp), %eax # get cumulative
-  mull base          # %eax=%eax*base: multiple cumulative by base
+  mull var_base          # %eax=%eax*base: multiple cumulative by base
   addl %ecx, %eax    # add number we read to cumulative
   movl %eax, 4(%ebp) # store new cumulative
   inc %edi           # increment index
@@ -2153,7 +2200,7 @@ testNumber:
 # ( -- addr ) \ the "base" used in str<->int conversions
 #      ascii      , len, flag,  label, initial
 def_asmword "BASE",   4,    0,  base
-  push $base
+  push $var_base
   NEXT
 
 .macro def_var name, namelen, flags, label, initial
@@ -2184,13 +2231,28 @@ def_var "S0"      ,   2,    0, s0     , 0 # initialized in _start
 #         ascii  ,     len, flag,  label
 def_const "RMAX" ,       4,    0,  rstackMax
 def_const "DOCOL",       5,    0,  DOCOL
-def_const "F_NAMECOUNT", 11,   0,  F_NAMECOUNT_MASK
+def_const "F_NAMELEN", 11,   0,  F_NAMELEN_MASK
 def_const "F_HIDDEN",    8,    0,  F_HIDDEN
 def_const "F_TIME_MASK", 11,   0,  F_TIME_MASK
 
 ##############################
 # Compiler/Interpreter Internals
-# TODO: add more descriptions
+# A basic compiler:
+# 1. Gets words from the input stream using WORD
+# 2. Looks them up in the dictionary using FIND
+# 3. Gets their xt and inserts it into the current compiling word, updating
+#    HERE as it goes.
+#
+# The "currently compiling word" is defined using CREATE, which creates a new
+# dictionary entry for the next word in the input stream and sets LATEST and
+# HERE to point to the appropriate places. The word is F_HIDDEN until the code
+# updates it. Items are insert using the `,` or `C,` operators.
+#
+# How does code update the dictionary entry? Any word flagged as F_TIME_MASK ==
+# F_TIME_IMM or F_TIME_IMM_RUN gets executed immediately instead of being
+# stored in the data section. Alternatively, if F_STATE_RUN is set in the global
+# stateFlags then all words (immediate or not) will be executed instead of
+# compiled.
 
 # ( nt -- addr count ) \ given the nt return the name string
 #                      \ or 0 if not found
@@ -2254,6 +2316,14 @@ testAlign4:
   callXt $xt_testAlign4
   ret
 
+# ( addr -- addr ) \ align on 4 byte boundary
+#           ascii  , len, flag, label
+def_asmword "ALIGN4",  6,    0, align4
+  dpop %eax
+  call eax_align4
+  dpush %eax
+  NEXT
+
 # ( nt -- flags ) \ given the nt return the address of flags
 #               ascii  , len, flag, label
 def_asmword "NT>&FLAGS",   9,    0, ntTOflags
@@ -2272,6 +2342,30 @@ def_asmword "NT>&FLAGS",   9,    0, ntTOflags
 def_asmword "NT>XT",   9,    0, ntTOxt
   callXt $xt_ntTOflags
   addl $4, (%ebp) # xt is directly after &flags
+  NEXT
+
+# ( nt -- flags ) \ get "code field address" (xt) from nt
+#         ascii  , len, flag, label
+def_doword ">CFA",   4,    0, TOcfa
+  .int xt_ntTOxt
+  .int xt_EXIT
+
+# ( nt -- flags ) \ get "data field address" from nt
+#          ascii  , len, flag, label
+def_doword ">DFA",   4,    0, TOdfa
+  .int xt_ntTOxt
+  .int xt_inc4
+  .int xt_EXIT
+
+# ( nt -- flag ) \ given the nt return the xt
+#              ascii  , len, flag, label
+def_asmword "ISHIDDEN",   8,    0, ishidden
+  callXt $xt_ntTOflags
+  dpop %eax           # eax=ptr to flags
+  movl (%eax), %eax
+  andl $F_HIDDEN, %eax
+  dpush %eax
+  call bool
   NEXT
 
 .align 4
@@ -2319,11 +2413,10 @@ find_found:
   # TODO: failing here...
   movl 8(%ebp), %eax  # eax=nt
   dpush %eax
-  callXt $xt_ntTOflags
-  dpop %eax           # eax=ptr to flags
-  movl (%eax), %eax
-  andl $F_HIDDEN, %eax  # if hidden, repeat loop
-  jnz find_next
+  callXt $xt_ishidden
+  dpop %eax
+  cmp $0, %eax  # if hidden, start over
+  jne find_next
   call _2drop # drop ( addr count ) leaving nt
   NEXT
 find_next:
@@ -2339,9 +2432,8 @@ find_not_found:
   NEXT
 
 
-# ( nt -- flags ) \ given the nt return the xt
-#              ascii  , len,     flag, label
-def_asmword "ISHIDDEN",   8, F_HIDDEN, ishidden
+# A word that is hidden (for testing purposes)
+def_asmword "HIDDENWORD",   8, F_HIDDEN, hiddenword
   NEXT
 
 .align 4
@@ -2353,14 +2445,48 @@ xt_testFind:
 .int xt_lit, cstr_swap, xt_count, xt_find, xt_lit, nt_swap, xt_assertEq
 # Find EXIT
 .int xt_lit, cstr_EXIT, xt_count, xt_find, xt_lit, nt_EXIT, xt_assertEq
+# Make sure ishidden works
+.int xt_lit, nt_hiddenword, xt_ishidden, xt_lit, TRUE, xt_assertEq
 # Find a hidden value
-.int xt_lit, cstr_ishidden, xt_count, xt_find, xt_lit, 0, xt_assertEq
+.int xt_lit, cstr_hiddenword, xt_count, xt_find, xt_lit, 0, xt_assertEq
 .int xt_lit, testFindStr, xt_countnt, xt_typeTestPass
 .int xt_EXIT
 .align 4
 testFind:
   callXt $xt_testFind
   ret
+
+
+# ( addr count -- nt ) \ create the next word on the input stream in the dictionary
+#                      \ it is marked as HIDDEN
+#             ascii  , len, flag, label
+def_asmword "CREATE" ,  5 ,    0 , create
+  movl var_here, %edi
+  movl var_latest, %eax
+  movl %eax, (%edi)    # dict: link to previous
+  addl $4, %edi # increment to next
+  movl (%ebp), %ecx  # count
+  cmp $MAX_WORD_LEN, %ecx
+  jg create_fail
+  movb %cl, (%edi) # dict: cstr count
+  inc %edi
+  call tuck # ( count addr count ) note: doesn't touch edi
+  dpush %edi # addr2
+  movl %edi, var_here # store HERE, as cmove will destroy
+  call swap     # stack: ( count addr addr2 count )
+  call cmove    # dict: name string
+  dpop %ecx     # count
+  movl var_here, %eax
+  addl %ecx, %eax       # add count to var_here and align
+  call eax_align4
+  shl $F_NAMELEN_SHIFT, %ecx
+  movl %ecx, (%eax)     # dict: set flags
+  addl $4, %eax
+  movl %eax, var_here
+  NEXT
+create_fail:
+  movl $ERR_MAX_WORD_LEN, panicErr
+  call *(panic)
 
 
 ##############################
