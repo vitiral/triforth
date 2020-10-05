@@ -163,7 +163,8 @@ ioBufferLen: .int 0  # number of chars in ioBuffer
 .equ MAX_WORD_LEN,32
 wordBuffer: .space MAX_WORD_LEN
 stateFlags: .int 0
-.equ F_STATE_RUN, 0x01  # 0=compile 1=run
+.equ F_STATE_COMPILE, 0x01  # 0=run 1=compile
+.equ NOT_F_STATE_COMPILE, ~F_STATE_COMPILE
 
 # Word info
 .equ FLAG_WORD_IMMEDIATE, 0x01 # whether the word is immediate or not
@@ -175,9 +176,6 @@ panic: .int defaultPanic
 panicErr: .int 0
 # Used in `reset` to return from a panic in testing.
 rstackCheckpoint: .int 0
-# flags that panic uses
-panicFlags: .int 0
-  .equ PANIC_FLAG_PANICING,1  # TODO: use to avoid recursion during panicing
 
 emitFd: .int STDERR # where to EMIT and TYPE to
 .equ EMIT_BUFFER_SIZE,16
@@ -2291,7 +2289,7 @@ def_const "F_TIME_MASK", 11,   0,  F_TIME_MASK
 #
 # How does code update the dictionary entry? Any word flagged as F_TIME_MASK ==
 # F_TIME_IMM or F_TIME_IMM_RUN gets executed immediately instead of being
-# stored in the data section. Alternatively, if F_STATE_RUN is set in the global
+# stored in the data section. Alternatively, if F_STATE_COMPILE is set in the global
 # stateFlags then all words (immediate or not) will be executed instead of
 # compiled.
 
@@ -2304,12 +2302,9 @@ def_asmword "NT>STR",   6,    0, ntTOstr
   NEXT
 
 eax_align4: # %eax ( -- ) %eax \ modify eax so it is aligned by 4
-  movl %eax, %ebx  # ebx = eax%4. Note using & is much faster than div but only
-  andl $3, %ebx    #   works for powers of 2
-  jz 1f            # if aligned, don't change
-  subl $4, %ebx    # ebx=(eax%4)-4 (negative)
-  subl %ebx, %eax  # eax=eax-ebx (ebx is negative, so adds to eax)
-1:
+  addl $3, %eax   # Add 3 to the number, pushing it up to or over 4byte boundary
+                  # iff not aligned
+  andl $~3, %eax  # Same as %4 (but faster). Gets rid of two lowest bytes.
   ret
 
 .align 4
@@ -2447,10 +2442,6 @@ find_loop:
   dpush %ebx # ( nt addrf countf addrf countf nt )
   callXt $xt_ntTOstr   # ( nt -- addr count )
 
-  call _2dup            # TODO: remove
-  callXt $xt_typeln     # TODO: remove
-  call dumpInfo         # TODO: remove
-
   callXt $xt_ceq       # find if strings are equal
   dpop %eax            # if equal, return nt
   cmp $TRUE, %eax      # stack: ( nt addrf countf )
@@ -2458,7 +2449,6 @@ find_loop:
   jmp find_next
 find_found:
   # Before returning it, check if it's F_HIDDEN
-  # TODO: failing here...
   movl 8(%ebp), %eax  # eax=nt
   dpush %eax
   callXt $xt_ishidden
@@ -2556,6 +2546,35 @@ xt_testCreate:
 testCreate:
   callXt $xt_testCreate
   ret
+
+# ( u -- ) \ Store the value on the stack
+#      ascii  , len, flag, label
+def_asmword ",",  1,    0, COMMA
+  movl var_here, %ebx
+  dpop %eax
+  movl %eax, (%ebx)  # move value into *here
+  addl $4, var_here  # increment here for next value
+  NEXT
+
+# ( -- ) \ clear F_STATE_COMPILE in stateFlags (start run mode in interpreter)
+#        ascii  , len,       flag, label
+def_asmword "[" ,  1 , F_TIME_IMM, staterun
+  andl $NOT_F_STATE_COMPILE, stateFlags
+  NEXT
+
+# ( -- ) \ set F_STATE_COMPILE in stateFlags (start compile mode in interpreter)
+#        ascii  , len, flag, label
+def_asmword "]" ,  1 ,    0, statecompile
+  andl $F_STATE_COMPILE, stateFlags
+  NEXT
+
+
+# ( -- ) \ 
+#      ascii  , len, flag, label
+def_doword ":",   1,    0, COLON
+  .int xt_word
+  # TODO: finish
+
 
 ##############################
 # Main Entrypoint
