@@ -18,20 +18,23 @@ What is this magic? It all works in my head, lets see if it works on paper.
       USE.
     - linenum: 16 bit linenumber, with moduleId allows looking up the word with
       SEE.
+    - localsize: the size in cells needed for the local stack.
   - the codeword/xt and immediate code of length immediatelen
   - inplen number of input xt's
   - outlen number of output xt's
-  - localsize: the size needed for the local stack.
+  - the run-part flags and xt are then appened, if they exist.
 
 Datatypes like structs and enums don't have code they run, so the number of
-types they support is inplen&outlen=6bits=64 and interfacelen is the size of
-their interfaces (a list of xt's). After their interfaces, they have a vtable with
-enough spaces for all the virtual methods (interfaces) they implement. Interfaces
-are kind of like Java or Go interfaces or Rust traits.
+types they support is flags inplen&outlen=6bits=64 and immediatelen is actually
+the number of interfaces they support (a list of xt's). After their interfaces,
+they have a vtable with enough spaces for all the virtual methods (interfaces)
+they implement. Interfaces are kind of like Java or Go interfaces or Rust
+traits, more on them soon.
 
 When a typed-word is compiled into a word (i.e. `: foo myTypedWord ;`, it
-inserts a command before and after it: reserveStack unreserveStack. These use
-`localsize` to increase the local stack accordingly.
+inserts a command before and after its own xt: reserveStack unreserveStack.
+These use `localsize` to increase the local stack of the next/previous xt
+accordingly.
 
 When declaring a word you can specify the type inside of `{ ... }`, which
 can also specify local variables. Note that `{ ... }` is (mostly)
@@ -48,40 +51,47 @@ for writing internals in a simple forth as well as faster compatibility with
 other forth code and optimizing code when necessary.
 
 Types are specified in a few forms:
-  - `: myFun { flag u:index &MyArray:arr | u:i -- d }` this is a fairly
-    standard usage. This function accepts an unsigned cell (index), a MyArray
-    _pointer_ (&) and a flag. It also has a local unsigned int named `i`.  Only
-    the first two inputs and the local variable are named, they can be accessed
-    by name within the function. The flag is left on the stack but is still
-    part of the word signature. Note: "&" prefix specifies a reference.
-  - `: myVFun { u:index &{ Vec+Debug }:v -- d }` this accepts the vref
-    (virtual reference) `v` which must contain the `Vec` and `Debug`
-    interfaces in it's vtable. All vrefs are represented as `( vt ref )` on the
-    stack, with the vt being the address of the vtable and ref being a
-    reference (pointer) to the data.
-  - `: tswap { generic }`: the input and output are generic. The documentation
-    for tswap is `( Ta Tb -- Tb Ta )`. It achieves this by programatically
-    inspecting the typestack for the size of the top two types and writes this
-    code into the function being compiled. It then alters the typestack
-    appropriately as well. In typeforth, generics are a Simple Matter of
-    Programming type manipulation. With it you can create generic map/filter/etc
-    constructs, generic datatypes and many more things.
-  - `: main { clear -- }`: `clear` means the function expects an empty stack.
-  - `: clear { * -- }`: '*' is reserved for consuming the ENTIRE stack. Words of
-    this type can only be used at the highest level or in functions that expect
-    an empty stack (i.e. `{ clear -- ... }` or other functions that clear the
-    stack.
-  - `: myOptimizedFunction { nocheck: u -- u }`: the function is not
-    type-checked, allowing for doing crazy things in LOOP/IF and using R> etc.
-    You cannot use local variables in nocheck functions.
-- When a word is compiled into the dictionary it encounters the `{ ... }`
-  signature. It encodes the type indexes found into the tstack (type-stack, a
-  separate stack or an arena-allocated memory area) and creates a checkpoint.
-- While compiling a word, it keeps track of the type-stack by comparing and
-  popping the xts of the inputs and pushing the xts of the outputs. It ensures
-  that the values are kept consistent throughout.
-  - Conceptually, when an xt is "compiled" into a word the compiler will also pop/push
-    the _types_ onto the typestack -- throwing an error if things don't match.
+- `: myFun { flag u:index &MyArray:arr | u:i -- d }` this is a fairly
+  standard usage. This function accepts an unsigned cell (index), a MyArray
+  _pointer_ (&) and a flag. It also has a local unsigned int named `i`.  Only
+  the first two inputs and the local variable are named, they can be accessed
+  by name within the function. The flag is left on the stack but is still
+  part of the word signature. Note: "&" prefix specifies a reference.
+- `: myVFun { u:index &vt{ Vec+Debug }:v -- d }` this accepts the vref
+  (virtual reference) `v` which must contain the `Vec` and `Debug`
+  interfaces in it's vtable. All vrefs are represented as `( vt ref )` on the
+  stack, with the vt being the address of the vtable and ref being a
+  reference (pointer) to the data.
+- `: tswap { generic }`: the input and output are generic. The documentation
+  for tswap is `( A B -- B A )`. It achieves this by programatically
+  inspecting the typestack for the size of the top two types and writes this
+  code into the function being compiled. It then alters the typestack
+  appropriately as well. In typeforth, generics are a Simple Matter of
+  Programming type manipulation. With it you can create generic map/filter/etc
+  constructs, generic datatypes and many more things.
+- `: mapu { &u:addr u:count '{ u -- u }:f }` this accepts the xt `f` which will
+  presumably be executed over `count` values in `addr`
+- `: main { clear -- }`: `clear` means the function expects an empty stack.
+- `: clear { * -- }`: '*' is reserved for consuming the ENTIRE stack. Words of
+  this type can only be used at the highest level or in functions that expect
+  an empty stack (i.e. `{ clear -- ... }` or other functions that clear the
+  stack.
+- `: myOptimizedFunction { nocheck: u -- u }`: the function is not
+  type-checked, allowing for doing crazy things in LOOP/IF and using R> etc.
+  You cannot use local variables in nocheck functions.
+
+When a word is compiled into the dictionary it encounters the `{ ... }`
+signature. It encodes the type indexes found into the tstack (type-stack, a
+separate stack or an arena-allocated memory area) and creates a checkpoint.
+
+While compiling a word, it keeps track of the type-stack by comparing and
+popping the xts of the inputs and pushing the xts of the outputs. It ensures
+that the values are kept consistent throughout.
+
+When an xt is "compiled" into a word the compile-time code for that xt will
+also pop/push the _types_ onto the typestack -- throwing an error if things
+don't match.
+
 - IF+ELSE+THEN or SWITCH statements are regarded as "block" and are handled thusly:
   - BLOCKSTART pushes the BLOCKSTART xt onto the block stack followed by a snapshot (copy)
     of the current type-stack.
