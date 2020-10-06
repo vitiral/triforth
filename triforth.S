@@ -115,11 +115,10 @@
 # NAMELEN: allows backreference from xt->nt
 # TIME_MASK and related: specifies when the xt should be run, and whether it
 #   has both IMM and RUN components (i.e. : word IMMEDIATE ... DOES> ... EXIT)
-# HIDDEN: whether the word is hidden
 
-# Byte 1
-.equ F_RES,               0x0000007F  # 7b: reserved
-.equ F_HIDDEN,            0x00000080  # 1b: hidden flag
+## Flag 0 (left-most flag)
+# Byte 1 (least-significant right-most byte)
+.equ F_RES,               0x000000FF  # 8b: reserved
 # Byte 2
 .equ F_INP_MASK,          0x00000700  # 3b: input size mask
 .equ F_OUT_MASK,          0x00003800  # 3b: output size mask
@@ -130,18 +129,23 @@
 .equ F_TIME_RUN_PART,     0x0000C000  # 0b: run part of immediate+run
 # Byte 3
 .equ F_IMM_SIZE,          0x00FF0000  # 8b: immediate code size
-# Byte 4 (left-most byte)
+# Byte 4 (most-significant left-most byte)
 .equ F_NAMELEN_MASK,      0x1F000000  # 5b: name's length (up to 32)
 .equ F_NAMELEN_SHIFT,     24          # 0b: number of bits to shift
 .equ F_TYPE_MASK,         0xE0000000  # 3b: the type (8 types)
 .equ F_TYPE_UNTYPED,      0x00000000  # 0b: untyped word
-.equ F_TYPE_TYWORD,       0x00000020  # 0b: typed word
-.equ F_TYPE_STRUCT,       0x00000040  # 0b: struct (data structure)
-.equ F_TYPE_METHOD,       0x00000060  # 0b: method (attached typed word_
-.equ F_TYPE_INTERFACE,    0x00000080  # 0b: interface (collection of methods)
-.equ F_TYPE_RES0,         0x000000A0  # 0b: type reserved
-.equ F_TYPE_RES1,         0x000000C0  # 0b: type reserved
-.equ F_TYPE_RES2,         0x000000E0  # 0b: type reserved
+.equ F_TYPE_TYWORD,       0x20000000  # 0b: typed word
+.equ F_TYPE_STRUCT,       0x40000000  # 0b: struct (data structure)
+.equ F_TYPE_METHOD,       0x60000000  # 0b: method (attached typed word_
+.equ F_TYPE_INTERFACE,    0x80000000  # 0b: interface (collection of methods)
+.equ F_TYPE_MODULE,       0xA0000000  # 0b: module (module-name and file-path)
+.equ F_TYPE_RES1,         0xC0000000  # 0b: type reserved
+.equ F_TYPE_RES2,         0xE0000000  # 0b: type reserved
+
+## Flag1  TODO: implement this for module system
+.equ F1_MODULE_ID,        0x000000FF  # 8b: module id this word is from
+.equ F1_RES,              0x0000FF00  # 8b: reserved
+.equ F1_LINENO,           0xFFFF0000  # 16b: line number
 
 
 ######################################################
@@ -2271,7 +2275,6 @@ def_var "S0"      ,   2,    0, s0     , 0 # initialized in _start
 def_const "RMAX" ,       4,    0,  rstackMax
 def_const "DOCOL",       5,    0,  DOCOL
 def_const "F_NAMELEN", 11,   0,  F_NAMELEN_MASK
-def_const "F_HIDDEN",    8,    0,  F_HIDDEN
 def_const "F_TIME_MASK", 11,   0,  F_TIME_MASK
 
 ##############################
@@ -2284,8 +2287,8 @@ def_const "F_TIME_MASK", 11,   0,  F_TIME_MASK
 #
 # The "currently compiling word" is defined using CREATE, which creates a new
 # dictionary entry for the next word in the input stream and sets LATEST and
-# HERE to point to the appropriate places. The word is F_HIDDEN until the code
-# updates it. Items are insert using the `,` or `C,` operators.
+# HERE to point to the appropriate places. Items are insert using the `,` or
+# `C,` operators.
 #
 # How does code update the dictionary entry? Any word flagged as F_TIME_MASK ==
 # F_TIME_IMM or F_TIME_IMM_RUN gets executed immediately instead of being
@@ -2400,17 +2403,6 @@ def_doword ">DFA",   4,    0, TOdfa
   .int xt_inc4
   .int xt_EXIT
 
-# ( nt -- flag ) \ given the nt return the xt
-#              ascii  , len, flag, label
-def_asmword "ISHIDDEN",   8,    0, ishidden
-  callXt $xt_ntTOflags
-  dpop %eax           # eax=ptr to flags
-  movl (%eax), %eax
-  andl $F_HIDDEN, %eax
-  dpush %eax
-  call bool
-  NEXT
-
 .align 4
 xt_test_ntTOother:
 .int DOCOL
@@ -2448,13 +2440,6 @@ find_loop:
   je find_found
   jmp find_next
 find_found:
-  # Before returning it, check if it's F_HIDDEN
-  movl 8(%ebp), %eax  # eax=nt
-  dpush %eax
-  callXt $xt_ishidden
-  dpop %eax
-  cmp $0, %eax  # if hidden, start over
-  jne find_next
   call _2drop # drop ( addr count ) leaving nt
   NEXT
 find_next:
@@ -2470,10 +2455,6 @@ find_not_found:
   NEXT
 
 
-# A word that is hidden (for testing purposes)
-def_asmword "HIDDENWORD",  10, F_HIDDEN, hiddenword
-  NEXT
-
 .align 4
 xt_testFind:
 .int DOCOL
@@ -2483,10 +2464,6 @@ xt_testFind:
 .int xt_lit, cstr_swap, xt_count, xt_find, xt_lit, nt_swap, xt_assertEq
 # Find EXIT
 .int xt_lit, cstr_EXIT, xt_count, xt_find, xt_lit, nt_EXIT, xt_assertEq
-# Make sure ishidden works
-.int xt_lit, nt_hiddenword, xt_ishidden, xt_lit, TRUE, xt_assertEq
-# Find a hidden value
-.int xt_lit, cstr_hiddenword, xt_count, xt_find, xt_lit, 0, xt_assertEq
 .int xt_lit, testFindStr, xt_countnt, xt_typeTestPass
 .int xt_EXIT
 .align 4
@@ -2494,6 +2471,12 @@ testFind:
   callXt $xt_testFind
   ret
 
+DOCREATE: # ( -- xt-body ) \ the (default) execution word for CREATE. Simply
+      # returns the >BODY (where HERE pointed to after CREATE) of the xt being
+      # executed. This allows it to be used for defining variables.
+  addl $4, %eax  # eax holds current xt (from NEXT)
+  dpush %eax     # push the body
+  NEXT
 
 # ( addr count -- nt ) \ create the next word on the input stream in the dictionary
 #             ascii  , len, flag, label
@@ -2518,9 +2501,10 @@ def_asmword "CREATE" ,  6 ,    0 , create
   addl %ecx, %eax       # add count to here and align
   call eax_align4
   shl $F_NAMELEN_SHIFT, %ecx  # set up flags
-  movl %ecx, (%eax)     # dict: set flags
-  addl $4, %eax         # increment eax to point to xt/data/etc
-  movl %eax, var_here   # dict: update here
+  movl %ecx, (%eax)       # dict: set flags
+  addl $4, %eax           # increment eax to point to xt/data/etc
+  movl $DOCREATE, (%eax)  # dict: xt for CREATE-ed word
+  movl %eax, var_here     # dict: update HERE
   NEXT
 create_fail:
   movl $ERR_MAX_WORD_LEN, panicErr
@@ -2572,8 +2556,9 @@ def_asmword "]" ,  1 ,    0, statecompile
 # ( -- ) \ 
 #      ascii  , len, flag, label
 def_doword ":",   1,    0, COLON
-  .int xt_word
-  # TODO: finish
+  .int xt_word    # ( addr count )
+  .int xt_create, xt_drop # drop the nt
+  .int xt_lit, DOCOL, xt_COMMA # append DOCOL to data
 
 
 ##############################
