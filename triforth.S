@@ -118,31 +118,31 @@
 
 ## Flag 0 (left-most flag)
 # Byte 1 (least-significant right-most byte)
-.equ F_RES,               0x000000FF  # 8b: reserved
+.equ F0_RES,               0x000000FF  # 8b: reserved
 # Byte 2
-.equ F_INP_MASK,          0x00000700  # 3b: input size mask
-.equ F_OUT_MASK,          0x00003800  # 3b: output size mask
-.equ F_TIME_MASK,         0x0000C000  # 2b: time mask (run/compile/etc)
-.equ F_TIME_RUN,          0x00000000  # 0b: runtime only word
-.equ F_TIME_IMM,          0x00004000  # 0b: immediate only word
-.equ F_TIME_IMM_PART,     0x00008000  # 0b: immediate part of immediate+run
-.equ F_TIME_RUN_PART,     0x0000C000  # 0b: run part of immediate+run
+.equ F0_INP_MASK,          0x00000700  # 3b: input size mask
+.equ F0_OUT_MASK,          0x00003800  # 3b: output size mask
+.equ F0_TIME_MASK,         0x0000C000  # 2b: time mask (run/compile/etc)
+.equ F0_TIME_RUN,          0x00000000  # 0b: runtime only word
+.equ F0_TIME_IMM,          0x00004000  # 0b: immediate only word
+.equ F0_TIME_IMM_PART,     0x00008000  # 0b: immediate part of immediate+run
+.equ F0_TIME_RUN_PART,     0x0000C000  # 0b: run part of immediate+run
 # Byte 3
-.equ F_IMM_SIZE,          0x00FF0000  # 8b: immediate code size
+.equ F0_IMM_SIZE,          0x00FF0000  # 8b: immediate code size
 # Byte 4 (most-significant left-most byte)
-.equ F_NAMELEN_MASK,      0x1F000000  # 5b: name's length (up to 32)
-.equ F_NAMELEN_SHIFT,     24          # 0b: number of bits to shift
-.equ F_TYPE_MASK,         0xE0000000  # 3b: the type (8 types)
-.equ F_TYPE_UNTYPED,      0x00000000  # 0b: untyped word
-.equ F_TYPE_TYWORD,       0x20000000  # 0b: typed word
-.equ F_TYPE_STRUCT,       0x40000000  # 0b: struct (data structure)
-.equ F_TYPE_METHOD,       0x60000000  # 0b: method (attached typed word_
-.equ F_TYPE_INTERFACE,    0x80000000  # 0b: interface (collection of methods)
-.equ F_TYPE_MODULE,       0xA0000000  # 0b: module (module-name and file-path)
-.equ F_TYPE_RES1,         0xC0000000  # 0b: type reserved
-.equ F_TYPE_RES2,         0xE0000000  # 0b: type reserved
+.equ F0_NAMELEN_MASK,      0x1F000000  # 5b: name's length (up to 32)
+.equ F0_NAMELEN_SHIFT,     24          # 0b: number of bits to shift
+.equ F0_TYPE_MASK,         0xE0000000  # 3b: the type (8 types)
+.equ F0_TYPE_UNTYPED,      0x00000000  # 0b: untyped word
+.equ F0_TYPE_TYWORD,       0x20000000  # 0b: typed word
+.equ F0_TYPE_STRUCT,       0x40000000  # 0b: struct (data structure)
+.equ F0_TYPE_METHOD,       0x60000000  # 0b: method (attached typed word_
+.equ F0_TYPE_INTERFACE,    0x80000000  # 0b: interface (collection of methods)
+.equ F0_TYPE_MODULE,       0xA0000000  # 0b: module (module-name and file-path)
+.equ F0_TYPE_RES1,         0xC0000000  # 0b: type reserved
+.equ F0_TYPE_RES2,         0xE0000000  # 0b: type reserved
 
-## Flag1  TODO: implement this for module system
+## Flag1 TODO: implement this for module system
 .equ F1_MODULE_ID,        0x000000FF  # 8b: module id this word is from
 .equ F1_RES,              0x0000FF00  # 8b: reserved
 .equ F1_LINENO,           0xFFFF0000  # 16b: line number
