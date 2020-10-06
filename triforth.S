@@ -123,24 +123,25 @@
 .equ F0_INP_MASK,          0x00000700  # 3b: input size mask
 .equ F0_OUT_MASK,          0x00003800  # 3b: output size mask
 .equ F0_TIME_MASK,         0x0000C000  # 2b: time mask (run/compile/etc)
-.equ F0_TIME_RUN,          0x00000000  # 0b: runtime only word
-.equ F0_TIME_IMM,          0x00004000  # 0b: immediate only word
-.equ F0_TIME_IMM_PART,     0x00008000  # 0b: immediate part of immediate+run
-.equ F0_TIME_RUN_PART,     0x0000C000  # 0b: run part of immediate+run
+.equ F0_TIME_RUN,          0x00000000  # na: runtime only word
+.equ F0_TIME_IMM,          0x00004000  # na: immediate only word
+.equ F0_TIME_IMM_PART,     0x00008000  # na: immediate part of immediate+run
+.equ F0_TIME_RUN_PART,     0x0000C000  # na: run part of immediate+run
 # Byte 3
 .equ F0_IMM_SIZE,          0x00FF0000  # 8b: immediate code size
 # Byte 4 (most-significant left-most byte)
+.equ F0_NAMELEN_BYTE_MASK, 0x0000001F  # na: mask used for left-most byte
 .equ F0_NAMELEN_MASK,      0x1F000000  # 5b: name's length (up to 32)
-.equ F0_NAMELEN_SHIFT,     24          # 0b: number of bits to shift
+.equ F0_NAMELEN_SHIFT,     24          # na: number of bits to shift
 .equ F0_TYPE_MASK,         0xE0000000  # 3b: the type (8 types)
-.equ F0_TYPE_UNTYPED,      0x00000000  # 0b: untyped word
-.equ F0_TYPE_TYWORD,       0x20000000  # 0b: typed word
-.equ F0_TYPE_STRUCT,       0x40000000  # 0b: struct (data structure)
-.equ F0_TYPE_METHOD,       0x60000000  # 0b: method (attached typed word_
-.equ F0_TYPE_INTERFACE,    0x80000000  # 0b: interface (collection of methods)
-.equ F0_TYPE_MODULE,       0xA0000000  # 0b: module (module-name and file-path)
-.equ F0_TYPE_RES1,         0xC0000000  # 0b: type reserved
-.equ F0_TYPE_RES2,         0xE0000000  # 0b: type reserved
+.equ F0_TYPE_UNTYPED,      0x00000000  # na: untyped word
+.equ F0_TYPE_TYWORD,       0x20000000  # na: typed word
+.equ F0_TYPE_STRUCT,       0x40000000  # na: struct (data structure)
+.equ F0_TYPE_METHOD,       0x60000000  # na: method (attached typed word_
+.equ F0_TYPE_INTERFACE,    0x80000000  # na: interface (collection of methods)
+.equ F0_TYPE_MODULE,       0xA0000000  # na: module (module-name and file-path)
+.equ F0_TYPE_RES1,         0xC0000000  # na: type reserved
+.equ F0_TYPE_RES2,         0xE0000000  # na: type reserved
 
 ## Flag1 TODO: implement this for module system
 .equ F1_MODULE_ID,        0x000000FF  # 8b: module id this word is from
@@ -166,9 +167,9 @@ ioBuffer: .space 128
 ioBufferLen: .int 0  # number of chars in ioBuffer
 .equ MAX_WORD_LEN,32
 wordBuffer: .space MAX_WORD_LEN
-stateFlags: .int 0
-.equ F_STATE_COMPILE, 0x01  # 0=run 1=compile
-.equ NOT_F_STATE_COMPILE, ~F_STATE_COMPILE
+state: .int 0
+.equ FSTATE_COMPILE, 0x01  # 0=run 1=compile
+.equ NOT_FSTATE_COMPILE, ~FSTATE_COMPILE
 
 # Word info
 .equ FLAG_WORD_IMMEDIATE, 0x01 # whether the word is immediate or not
@@ -1338,7 +1339,7 @@ cstr_EXIT:
   .ascii "EXIT" # the word name
   .align 4
 flags_EXIT:
-  .int (4<<F_NAMELEN_SHIFT)  # flags (just the NAMELEN)
+  .int (4<<F0_NAMELEN_SHIFT)  # flags (just the NAMELEN)
 xt_EXIT:
   .int word_EXIT # xt
 
@@ -1351,7 +1352,7 @@ cstr_MUL:
   .ascii "MUL"  # the word name
   .align 4
 flags_MUL:
-  .int (3<<F_NAMELEN_SHIFT)  # flags (just the NAMELEN)
+  .int (3<<F0_NAMELEN_SHIFT)  # flags (just the NAMELEN)
 xt_MUL:
   .int word_MUL # xt
 
@@ -1400,7 +1401,7 @@ cstr_\label :
   .ascii "\name"       # the ascii name itself
   .align 4             # padding to next 4 byte boundary
 flags_\label :
-  .int (\namelen<<F_NAMELEN_SHIFT) + \flags          # flags for the word
+  .int (\namelen<<F0_NAMELEN_SHIFT) + \flags          # flags for the word
 xt_\label :
   .int word_\label
 word_\label :
@@ -1645,11 +1646,35 @@ def_asmword "+"    , 1  ,  0 ,  ADD
   addl %eax, (%ebp)
   NEXT
 
+# ( u -- u ) \ add 1
+#            ascii  , len, flag, label
+def_asmword "+1"    , 2  ,  0 ,  ADD1
+  addl $1, (%ebp)
+  NEXT
+
+# ( u -- u ) \ add 4
+#            ascii  , len, flag, label
+def_asmword "+4"    , 2  ,  0 ,  ADD4
+  addl $4, (%ebp)
+  NEXT
+
 # ( a b -- a-b ) \ subtract values
 #           ascii  , len, flag, label
 def_asmword "-"    , 1  ,  0 ,  SUB
   dpop %eax
   subl %eax, (%ebp)
+  NEXT
+
+# ( u -- u ) \ sub 1
+#            ascii  , len, flag, label
+def_asmword "-1"    , 2  ,  0 ,  SUB1
+  subl $1, (%ebp)
+  NEXT
+
+# ( u -- u ) \ sub 4
+#            ascii  , len, flag, label
+def_asmword "-4"    , 2  ,  0 ,  SUB4
+  subl $4, (%ebp)
   NEXT
 
 # ( u:a u:b -- u u ) \ divide a/b -> quotient remainder
@@ -2238,7 +2263,6 @@ testNumber:
 # STATE    Is the interpreter executing code (0) or compiling a word (non-zero)?
 # LATEST   Points to the latest (most recently defined) word in the dictionary.
 # HERE     Points to the next free byte of memory.  When compiling, compiled words go here.
-# S0       Stores the address of the top of the parameter stack.
 
 # ( -- addr ) \ the "base" used in str<->int conversions
 #      ascii      , len, flag,  label, initial
@@ -2260,22 +2284,25 @@ var_\label :
 def_var "STATE"   ,   5,    0, state  , 0
 def_var "HERE"    ,   4,    0, here   , 0
 def_var "LATEST"  ,   6,    0, latest , 0 # initialized in _start
-def_var "S0"      ,   2,    0, s0     , 0 # initialized in _start
 
 ##############################
 # Builtin Constants
 # These simply return a constant value when run
-.macro def_const name, namelen, flags, label
-  def_asmword \name , \namelen , \flags , \label
+.macro def_const name, namelen, label
+  def_asmword \name , \namelen , 0, \label
   dpush $\label
   NEXT
 .endm
 
-#         ascii  ,     len, flag,  label
-def_const "RMAX" ,       4,    0,  rstackMax
-def_const "DOCOL",       5,    0,  DOCOL
-def_const "F_NAMELEN", 11,   0,  F_NAMELEN_MASK
-def_const "F_TIME_MASK", 11,   0,  F_TIME_MASK
+#         ascii  ,              len, label
+def_const "RMAX" ,                4, rstackMax
+def_const "DOCOL",                5, DOCOL
+def_const "F0_NAMELEN",          10, F0_NAMELEN_MASK
+def_const "F0_TIME_MASK",        12, F0_TIME_MASK
+def_const "F0_TIME_RUN",         11, F0_TIME_RUN
+def_const "F0_TIME_IMM",         11, F0_TIME_IMM
+def_const "F0_TIME_IMM_PART",    16, F0_TIME_IMM_PART
+def_const "F0_TIME_RUN_PART",    16, F0_TIME_RUN_PART
 
 ##############################
 # Compiler/Interpreter Internals
@@ -2290,18 +2317,27 @@ def_const "F_TIME_MASK", 11,   0,  F_TIME_MASK
 # HERE to point to the appropriate places. Items are insert using the `,` or
 # `C,` operators.
 #
-# How does code update the dictionary entry? Any word flagged as F_TIME_MASK ==
-# F_TIME_IMM or F_TIME_IMM_RUN gets executed immediately instead of being
-# stored in the data section. Alternatively, if F_STATE_COMPILE is set in the global
-# stateFlags then all words (immediate or not) will be executed instead of
+# How does code update the dictionary entry? Any word flagged as F0_TIME_MASK ==
+# F0_TIME_IMM or F0_TIME_IMM_RUN gets executed immediately instead of being
+# stored in the data section. Alternatively, if F0_STATE_COMPILE is set in the global
+# STATE then all words (immediate or not) will be executed instead of
 # compiled.
 
 # ( nt -- addr count ) \ given the nt return the name string
-#                      \ or 0 if not found
-#            ascii  , len, flag, label
+#   Note that this implementation is very clever with the flags0 cell. The
+#   left-most (msb) flag0 byte MUST have the 5 namelen bits in the lsb position. If
+#   the namelen is 0 (which it is for `:noname` words) then all our logic will
+#   work "as is." If namelen=0, the addr returned will be invalid but the count
+#   will be zero!
+#              ascii, len, flag, label
 def_asmword "NT>STR",   6,    0, ntTOstr
-  addl $4, (%ebp)      # address of name as cstr
-  callXt $xt_count     # convert to ( addr count )
+  dpop %eax            # address
+  addl $4, %eax        # address of name as cstr
+  movb (%eax), %bl     # get either cstr count or left-most F0 byte
+  andl $F0_NAMELEN_BYTE_MASK, %ebx  # clear other flags
+  addl $1, %eax        # addr=addr+1 (next character)
+  dpush %eax
+  dpush %ebx           # push count
   NEXT
 
 eax_align4: # %eax ( -- ) %eax \ modify eax so it is aligned by 4
@@ -2428,7 +2464,6 @@ def_asmword "FIND" , 4 ,    0 , find
   dpush %eax    # points to the nt of word we are looking at
   call rrot     # Stack: ( nt addr count )
 find_loop:
-
   call _2dup # ( nt addrf countf addrf countf )
   movl 16(%ebp), %ebx  # nt
   dpush %ebx # ( nt addrf countf addrf countf nt )
@@ -2500,7 +2535,7 @@ def_asmword "CREATE" ,  6 ,    0 , create
   movl var_here, %eax   # restore HERE into eax for eax_align4
   addl %ecx, %eax       # add count to here and align
   call eax_align4
-  shl $F_NAMELEN_SHIFT, %ecx  # set up flags
+  shl $F0_NAMELEN_SHIFT, %ecx  # set up flags
   movl %ecx, (%eax)       # dict: set flags
   addl $4, %eax           # increment eax to point to xt/data/etc
   movl $DOCREATE, (%eax)  # dict: xt for CREATE-ed word
@@ -2520,7 +2555,7 @@ xt_testCreate:
 # Find the word
 .int xt_lit, testCreatedWordUpper, xt_countnt, xt_find
 # Flags are as expected (namelen)
-.int xt_dup, xt_ntTOflags, xt_FETCH, xt_lit, 11<<F_NAMELEN_SHIFT, xt_assertEq
+.int xt_dup, xt_ntTOflags, xt_FETCH, xt_lit, 11<<F0_NAMELEN_SHIFT, xt_assertEq
 # Stored name is uppercased
 .int xt_ntTOname, xt_lit, testCreatedWordUpper, xt_countnt
 .int xt_ceq, xt_assertTrue
@@ -2531,48 +2566,70 @@ testCreate:
   callXt $xt_testCreate
   ret
 
-# ( u -- ) \ Store the value on the stack
+# ( u -- ) \ push a value onto the dictionary
 #      ascii  , len, flag, label
-def_asmword ",",  1,    0, COMMA
+def_asmword ",",  1,    0, pushDict
   movl var_here, %ebx
   dpop %eax
   movl %eax, (%ebx)  # move value into *here
   addl $4, var_here  # increment here for next value
   NEXT
 
-# ( -- ) \ clear F_STATE_COMPILE in stateFlags (start run mode in interpreter)
+# ( -- ) \ Set compilation STATE to false
 #        ascii  , len,       flag, label
-def_asmword "[" ,  1 , F_TIME_IMM, staterun
-  andl $NOT_F_STATE_COMPILE, stateFlags
+def_asmword "[" ,  1 , F0_TIME_IMM, staterun
+  movl $FALSE, var_state
   NEXT
 
-# ( -- ) \ set F_STATE_COMPILE in stateFlags (start compile mode in interpreter)
+# ( -- ) \ Set compilation STATE to true
 #        ascii  , len, flag, label
 def_asmword "]" ,  1 ,    0, statecompile
-  andl $F_STATE_COMPILE, stateFlags
+  movl $TRUE, var_state
   NEXT
+
+# ( -- ) \ The forth ":" to define a new word
+#      ascii  , len, flag, label
+def_doword ":",   1,    0, STARTWORD
+  # Create the next word and set correct xt
+  .int xt_word # ( addr count )
+  .int xt_create, xt_ntTOxt
+  # replace DOCREATE with DOCOL
+  .int xt_lit, DOCOL, xt_swap, xt_STORE
+  .int xt_statecompile # start compiling!
+  .int xt_EXIT
+
+# ( -- ) \ end compilation from ":"
+#      ascii  , len,        flag, label
+def_doword ";",   1, F0_TIME_IMM, ENDWORD
+  .int xt_lit, xt_EXIT, xt_pushDict  # compile EXIT
+  .int xt_staterun # [ go back to runmode
+  .int xt_EXIT
+
+# ( -- ) \ tag currently compiling word as TIME_IMM(ediate)
+#          ascii, len, flag, label
+def_doword "IMM",   3, F0_TIME_IMM, imm
+  .int xt_EXIT
 
 
 # ( -- ) \ 
-#      ascii  , len, flag, label
-def_doword ":",   1,    0, COLON
-  .int xt_word    # ( addr count )
-  .int xt_create, xt_drop # drop the nt
-  .int xt_lit, DOCOL, xt_COMMA # append DOCOL to data
+#            ascii, len, flag, label
+def_asmword "QUIT",   4,    0, quit
+  ret
 
 
 ##############################
 # Main Entrypoint
 .globl _start
 _start:
-  # TODO: initialze LATEST, S0 and HERE
-  movl $hereInitial, var_here
-  movl $nt_create, var_latest
+  movl $heapMin, var_here
+  movl $nt_quit, var_latest
   movl $rstackMax, %esp
   movl $dstackMax, %ebp
   call testSuite
   jmp exit0
 
 .data
-.align 4
-hereInitial: .space 1048576  # 1 MiB
+.align 128
+# The dictionary grows starting here
+heapMin: .space 131072  # 128 KiB
+heapMax:
