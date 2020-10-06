@@ -2401,7 +2401,7 @@ def_asmword "ALIGN4",  6,    0, align4
 
 # ( nt -- flags ) \ given the nt return the address of flags
 #               ascii  , len, flag, label
-def_asmword "NT>&FLAGS",   9,    0, ntTOflags
+def_asmword "NT>&FLAGS0",   9,    0, ntTOflags0
   dpop %eax           # address of nt
   addl $4, %eax       # start of cstr (count)
   movl $0, %ebx
@@ -2415,7 +2415,7 @@ def_asmword "NT>&FLAGS",   9,    0, ntTOflags
 # ( nt -- flags ) \ given the nt return the xt
 #               ascii  , len, flag, label
 def_asmword "NT>XT",   9,    0, ntTOxt
-  callXt $xt_ntTOflags
+  callXt $xt_ntTOflags0
   addl $4, (%ebp) # xt is directly after &flags
   NEXT
 
@@ -2443,9 +2443,9 @@ def_doword ">DFA",   4,    0, TOdfa
 xt_test_ntTOother:
 .int DOCOL
 # flags: already aligned, cstr=4bytes
-.int xt_lit, nt_lit, xt_ntTOflags, xt_lit, flags_lit, xt_assertEq
+.int xt_lit, nt_lit, xt_ntTOflags0, xt_lit, flags_lit, xt_assertEq
 # flags: not aligned, cstr=5bytes
-.int xt_lit, nt_word, xt_ntTOflags, xt_lit, flags_word, xt_assertEq
+.int xt_lit, nt_word, xt_ntTOflags0, xt_lit, flags_word, xt_assertEq
 # nt>xt: already aligned
 .int xt_lit, nt_lit, xt_ntTOxt, xt_lit, xt_lit, xt_assertEq
 # nt>xt: not aligned
@@ -2555,7 +2555,7 @@ xt_testCreate:
 # Find the word
 .int xt_lit, testCreatedWordUpper, xt_countnt, xt_find
 # Flags are as expected (namelen)
-.int xt_dup, xt_ntTOflags, xt_FETCH, xt_lit, 11<<F0_NAMELEN_SHIFT, xt_assertEq
+.int xt_dup, xt_ntTOflags0, xt_FETCH, xt_lit, 11<<F0_NAMELEN_SHIFT, xt_assertEq
 # Stored name is uppercased
 .int xt_ntTOname, xt_lit, testCreatedWordUpper, xt_countnt
 .int xt_ceq, xt_assertTrue
@@ -2608,13 +2608,48 @@ def_doword ";",   1, F0_TIME_IMM, ENDWORD
 # ( -- ) \ tag currently compiling word as TIME_IMM(ediate)
 #          ascii, len, flag, label
 def_doword "IMM",   3, F0_TIME_IMM, imm
+  .int xt_latest, xt_ntTOflags0, xt_dup
+  # Clear TIME flags
+  .int xt_F0_TIME_MASK, xt_invert, xt_and, xt_STORE
+  # Store TIME_IMM
+  .int xt_F0_TIME_IMM, xt_or, xt_STORE
   .int xt_EXIT
 
+# ( -- ) \ forth compliance, same as IMM
+#          ascii, len, flag, label
+def_doword "IMMEDIATE",   9, F0_TIME_IMM, immediate
+  .int xt_imm, xt_EXIT
+
+# ( -- xt ) \ Put the xt of the next word onto the stack.
+#          ascii, len, flag, label
+def_asmword "'",   1,    0, xt
+  lodsl       # do what is in NEXT
+  dpush %eax  # but push on stack instead of jmp *(...)
+  NEXT
+
+# ( -- ) \ add offset (next cell) to the forth instruction pointer
+#   \ performing an unconditional jump. The offset is left
+#   \ on the stack.
+#              ascii, len, flag, label
+def_asmword "BRANCH",   6,    0, branch
+  addl (%esi), %esi
+  NEXT
+
+# ( offset flag -- offset ) \ perform BRANCH iff flag=0
+#               ascii, len, flag, label
+def_asmword "0BRANCH",   7,    0, _0branch
+  # NOTE: %eax contains xt of current instruction from NEXT. Don't override it!
+  dpop %ebx  # count
+  cmp $0, %ebx
+  je word_branch  # if 0, jump to code in BRANCH above
+  lodsl           # otherwise skip the offset
+  NEXT
 
 # ( -- ) \ 
 #            ascii, len, flag, label
 def_asmword "QUIT",   4,    0, quit
   ret
+
 
 
 ##############################
