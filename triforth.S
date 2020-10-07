@@ -106,6 +106,7 @@
 .equ ERR_MAX_WORD_LEN,0x303
 .equ ERR_WORD_MISSING,0x304
 .equ ERR_NUMBER_INVALID,0x305
+.equ ERR_UNKNOWN_WORD,0x306
 
 .equ FALSE, 0
 .equ TRUE, -1
@@ -205,6 +206,7 @@ stackStr: .ascii "Stack< \0"
 maxWordLenErrorStr: .ascii "Maximum word length exceeded\0"
 _0xWordNeededStr: .ascii "Word needed for 0x\0"
 _0xNotNumberStr: .ascii "Not a valid hex number: \0"
+unknownWordStr: .ascii "Unknown word: \0"
 
 
 # Test Names
@@ -223,6 +225,7 @@ testAlign4Str: .ascii "testAlign4\0"
 test_ntTOotherStr: .ascii "test_ntTOother\0"
 testFindStr: .ascii "testFind\0"
 testCreateStr: .ascii "testCreate\0"
+testInterpretStr: .ascii "testInterpret\0"
 
 # Test Files
 testSimpleMathFile: .ascii "tests/simplemath.fs\0"
@@ -281,6 +284,7 @@ testSuite: # ( -- )
   call test_ntTOother
   call testFind
   call testCreate
+  call testInterpret
   call assertCleanState
   ret
 
@@ -2182,7 +2186,6 @@ testWord_assert0x: # ( addr count )
   callXt $xt_assertEq # 2
   ret
 
-
 ebx_ctou: # %ebx ( -- ) %ebx \ convert from a character to an integer
   cmpb $'0', %bl # Check if < 0 (invalid)
   jl ebx_ctou
@@ -2300,6 +2303,8 @@ def_var "STATE"   ,    5,    0, state  , 0
 def_var "HERE"    ,    4,    0, here   , 0
 def_var "LATEST"  ,    6,    0, latest , 0 # initialized in _start
 def_var "RSTACK_MAX", 10,    0, rstack_max , 0 # initialized in _start
+
+def_var "'INTERPRET_UNKNOWN", 18,    0, XTinterpret_unknown , 0
 
 ##############################
 # Builtin Constants
@@ -2577,7 +2582,6 @@ xt_testCreate:
 .int xt_ceq, xt_assertTrue
 .int xt_lit, testCreateStr, xt_countnt, xt_typeTestPass
 .int xt_EXIT
-.align 4
 testCreate:
   callXt $xt_testCreate
   ret
@@ -2661,26 +2665,79 @@ def_asmword "0BRANCH",   7,    0, _0branch
   lodsl           # otherwise skip the offset
   NEXT
 
+# ( xt -- ??? ) \ Execute the given xt
+#               ascii, len, flag, label
+def_asmword "EXECUTE",   7,    0, execute
+  # NOTE: %eax contains xt of current instruction from NEXT. Don't override it!
+  dpop %eax  # xt
+  call _callXt # expects %eax=xt
+  NEXT
+
+# ( -- ) \ Interpret bytes on the input stream until EOF
+# \ Basic design:
+# \ - call WORD
+# \ - call FIND
+# \ - if cannot be found, call 'INTERPRET_UNKNOWN if set or panic
+# \ - execute word (callXt)
+# \ - repeat until EOF
+# \ Note: we will create a more user-friendly interpreter in forth.
+# \ this is good enough for bootstrapping us.
+#                 ascii, len, flag, label
+def_asmword "INTERPRET",   9,    0, interpret
+interpret_loop:
+  callXt $xt_word
+  cmp $0, (%ebp)  # see if count<=0
+  jle interpret_eof
+  call _2dup # keep track of word for error handlin
+  callXt $xt_find
+  cmp $0, (%ebp)  # see if nt=0
+  je interpret_notfound
+  callXt $xt_ntTOxt
+  dpop %eax
+  call _callXt  # execute xt
+  jmp interpret_loop
+interpret_eof:
+  call _2drop
+  NEXT
+interpret_notfound:
+  call drop # drop nt=0
+  cmp $0, var_XTinterpret_unknown
+  jne interpret_unknown
+  # no means to handle unknown value, panic
+  dpush $unknownWordStr
+  call countnt
+  call type
+  callXt $xt_typeln
+  movl $ERR_UNKNOWN_WORD, panicErr
+  call *(panic)
+interpret_unknown:
+  callXt var_XTinterpret_unknown
+  jmp interpret_loop
+
+.align 4
+xt_testInterpret:
+.int DOCOL
+.int xt_lit, testInterpretStr, xt_countnt, xt_typeTestPass
+.int xt_EXIT
+testInterpret:
+  callXt $xt_testInterpret
+  ret
+
+# !!! NOTE: this must be the last word (or update var_latest) !!!
 # ( -- ) \ QUIT is the forth interpreter
 #            ascii, len, flag, label
-def_doword "QUIT",   4,    0, quit
+def_asmword "QUIT",   4,    0, quit
   # set the return stack to rstackMax (clear it)
   .int xt_rstack_max, xt_FETCH, xt_rstackSTORE # clear the rstack
   .int xt_interpret    # interpreter loop
-  .int xt_branch, -20  # loop forever
-
-# ( -- ) \ Interpret bytes on the input stream
-#                 ascii, len, flag, label
-def_asmword "INTERPRET",   9,    0, interpret
-  
-  NEXT
+  .int xt_branch, -8   # loop interpret forever
 
 ##############################
 # Main Entrypoint
 .globl _start
 _start:
   movl $heapMin, var_here
-  movl $nt_interpret, var_latest
+  movl $nt_quit, var_latest
   movl $rstackMax, var_rstack_max
   movl $rstackMax, %esp
   movl $dstackMax, %ebp
