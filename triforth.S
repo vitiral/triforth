@@ -229,6 +229,7 @@ testInterpretStr: .ascii "testInterpret\0"
 
 # Test Files
 testSimpleMathFile: .ascii "tests/simplemath.fs\0"
+testTheAnswerFile: .ascii "tests/theanswer.fs\0"
 
 # Test Inputs
 testWordWithSpaces: .ascii " spc    \0"
@@ -1357,8 +1358,8 @@ nt_MUL:
   .int LINK            # link to previous (in this case 0)
   .set LINK, nt_MUL  # set link for next word to be defined
 cstr_MUL:
-  .byte 3       # name length
-  .ascii "MUL"  # the word name
+  .byte 1       # name length
+  .ascii "*"    # the word name
   .align 4
 flags_MUL:
   .int (3<<F0_NAMELEN_SHIFT)  # flags (just the NAMELEN)
@@ -2031,12 +2032,16 @@ sysclose: # %ebx:fd ( -- )
   call *(panic)
   jmp unreachable
 
-openSimpleMathFile:
-  movl $testSimpleMathFile, %ebx
+openNtEbx:
   movl $O_RDONLY, %ecx
   movl $0666, %edx  # permissions
   call sysopen
   movl %eax, keyFd
+  ret
+
+openSimpleMathFile:
+  movl $testSimpleMathFile, %ebx
+  call openNtEbx
   ret
 
 closeKeyFd:
@@ -2694,6 +2699,7 @@ interpret_loop:
   je interpret_notfound
   callXt $xt_ntTOxt
   dpop %eax
+  call _2drop   # get rid of ( addr count )
   call _callXt  # execute xt
   jmp interpret_loop
 interpret_eof:
@@ -2715,12 +2721,22 @@ interpret_unknown:
   jmp interpret_loop
 
 .align 4
-xt_testInterpret:
+xt_testInterpret_theAnswer:
 .int DOCOL
+.int xt_interpret, xt_lit, 0x42, xt_assertEq
 .int xt_lit, testInterpretStr, xt_countnt, xt_typeTestPass
 .int xt_EXIT
+xt_testInterpret_inputstream:
+.int DOCOL, xt_interpret, xt_assertEmpty, xt_EXIT
 testInterpret:
-  callXt $xt_testInterpret
+  movl $testTheAnswerFile, %ebx
+  call openNtEbx
+  callXt $xt_testInterpret_theAnswer
+  call closeKeyFd
+
+  call openSimpleMathFile
+  callXt $xt_testInterpret_inputstream
+  call closeKeyFd
   ret
 
 # !!! NOTE: this must be the last word (or update var_latest) !!!
