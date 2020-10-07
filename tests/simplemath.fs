@@ -1,1 +1,1 @@
-12    3 2 * * 72 = assertTrue
+0x 12  0x 3  0x 2 * * 0x 72 = assertTrue

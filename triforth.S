@@ -218,7 +218,7 @@ testDictSimpleStr: .ascii "testDictSimple\0"
 testDictBuiltinStr: .ascii "testDictBuiltin\0"
 testKeyStr: .ascii "testKey\0"
 testWordStr: .ascii "testWord\0"
-testNumberStr: .ascii "testNumber\0"
+test0xStr: .ascii "test0x\0"
 testAlign4Str: .ascii "testAlign4\0"
 test_ntTOotherStr: .ascii "test_ntTOother\0"
 testFindStr: .ascii "testFind\0"
@@ -276,7 +276,7 @@ testSuite: # ( -- )
   call testWord
   call assertCleanState
 
-  call testNumber
+  call test0x
   call testAlign4
   call test_ntTOother
   call testFind
@@ -2044,11 +2044,11 @@ closeKeyFd:
 testKey:
   call openSimpleMathFile
   callXt $xt_key
-  dpush $'1'
+  dpush $'0'
   callXt $xt_assertEq
 
   callXt $xt_key
-  dpush $'2'
+  dpush $'x'
   callXt $xt_assertEq
 
   call closeKeyFd
@@ -2148,29 +2148,38 @@ word_err:
 testWord:
   call openSimpleMathFile
   callXt $xt_word
+  call testWord_assert0x
+
+  callXt $xt_word # "12"
   dpush $2
   callXt $xt_assertEq # len
   callXt $xt_dup
   callXt $xt_cFETCH
   dpush $'1'
-  callXt $xt_assertEq # 1
-
+  callXt $xt_assertEq
   addl $1, (%ebp) # add 1 to addr since count=2
   callXt $xt_cFETCH
   dpush $'2'
-  callXt $xt_assertEq # 2
+  callXt $xt_assertEq
 
   callXt $xt_word
-  dpush $1
-  callXt $xt_assertEq # len
-  callXt $xt_cFETCH
-  dpush $'3'
-  callXt $xt_assertEq # len
-
+  call testWord_assert0x
   call closeKeyFd
   dpush $testWordStr
   call countnt
   call typeTestPass
+  ret
+testWord_assert0x: # ( addr count )
+  dpush $2
+  callXt $xt_assertEq # count
+  callXt $xt_dup
+  callXt $xt_cFETCH
+  dpush $'0'
+  callXt $xt_assertEq # 1
+  addl $1, (%ebp) # add 1 to addr since count=2
+  callXt $xt_cFETCH
+  dpush $'X'
+  callXt $xt_assertEq # 2
   ret
 
 
@@ -2194,85 +2203,36 @@ ebx_ctou_err:
   neg %ebx
   ret
 
-
-# # ( addr count -- n u ) \ Convert the string into a number and the remaining characters
-# #           ascii   ,  len, flag, label
-# def_asmword "NUMBER",    6,    0, number
-#   cmpb $0, (%ebp)
-#   jne 1f # count is zero, we will just push 0 in this case
-#   call _2drop
-#   dpush $0
-#   dpush $0
-# 1:
-#   dpush $0
-#   call rrot           # ( isNegative addr count )
-#   movl $0, %edi       # index
-#   movl 4(%ebp), %ebx  # address
-#   movl $0, 4(%ebp)    # zero address, use as return number
-#   cmpb $'-', (%ebx)
-#   jne 1f
-#   movl $1, 8(%ebp)    # is negative=true
-#   inc %edi
-# 1:
-#   movl $0, %eax
-# number_loop:
-#   cmp %edi, (%ebp)
-#   je number_done
-#   movb (%ebx,%edi,1), %al  # get next character
-#   call eax_ctou
-#   cmpl $0, %eax      # check for negative values
-#   jle number_done 
-#   movl %eax, %ecx    # store number we just read in ecx
-#   movl 4(%ebp), %eax # get cumulative
-#   mull var_base      # %eax=%edx:%eax*base: multiple cumulative by base
-#   addl %ecx, %eax    # add number we read to cumulative
-#   movl %eax, 4(%ebp) # store new cumulative
-#   inc %edi           # increment index
-#   jmp number_loop
-# number_done:
-#   # Note: n already stored in 4(%ebp)
-#   subl %edi, (%ebp)  # subtract index from count
-#   call lrot
-#   dpop %ebx # isNegative
-#   cmpl $0, %ebx
-#   jne number_isNegative # isNegative
-#   NEXT
-# number_isNegative:
-#   negl 4(%ebp)
-#   NEXT
-
 # ( -- n ) \ Convert the next word to unsigned hex
 #   \ panics if the next word is not completely representable by hex
 #          ascii, len, flag, label
 def_asmword "0X",   2,    0, _0x
-  callXt xt_word # ( addr count )
+  callXt $xt_word # ( addr count )
   cmp $0, (%ebp)
-  jne _0x_noword  # word returned a count of 0=no word so panic
+  je _0x_noword   # word returned a count of 0=no word so panic
   movl $0, %edi   # index
-  movl 4(%ebp), %ecx  # address of word
-  movl $0, %ebx       # character value
-  movl $16, -4(%ebp)  # base value
-  movl $0, -8(%ebp)   # cumulative value
+  movl $0, %eax       # cumulative value
   movl $0, %edx       # for mul cmd
-1:
+  movl $0, %ebx       # character value
+  movl 4(%ebp), %ecx  # address of word
+  movl $16, -4(%ebp)  # base value
+_0x_loop:
   cmp %edi, (%ebp)  # cmp count with index
   je _0x_done
-  movb (%ebx,%edi,1), %bl # get the char and convert to int
+  movb (%ecx,%edi,1), %bl # get the char and convert to int
   call ebx_ctou
   cmpl $0, %ebx  # check that it is between [0,15]
   jl _0x_notnumber
   cmpl $15, %ebx
   jg _0x_notnumber
-  mull -4(%ebp)  # %edx:%eax=%edx:%eax*16: multiple cumulative by base
-
-
-_0x_done:
-  # TODO: implement
-  call dbgexit
+  mull -4(%ebp)  # %edx:%eax=%edx:%eax*16: multiply cumulative by base
+  addl %ebx, %eax # add new number to cumulative
+  inc %edi        # increment index
+  jmp _0x_loop
 _0x_noword:
   dpush $_0xWordNeededStr
   call countnt
-  callXt xt_typeln
+  callXt $xt_typeln
   movl $ERR_WORD_MISSING, panicErr
   call *(panic)
 _0x_notnumber:
@@ -2281,25 +2241,30 @@ _0x_notnumber:
   call type
   # addr count still contains the word, simply use that
   call _2dup
-  callXt xt_typeln
+  callXt $xt_typeln
   movl $ERR_NUMBER_INVALID, panicErr
   call *(panic)
+_0x_done:
+  call drop  # drop count
+  movl %eax, (%ebp)  # turn addr -> number
+  NEXT
 
 .align 4
-xt_testNumber:
-# .int DOCOL, xt_word, xt_number, xt_lit, 0, xt_assertEq  # count
-# .int xt_lit, 12, xt_assertEq  # number
-# .int xt_word, xt_number, xt_lit, 0, xt_assertEq, xt_lit, 3, xt_assertEq
-# .int xt_EXIT
-testNumber:
-  ret # TODO: fixme
+xt_test0x:
+.int DOCOL
+.int xt_word, xt__2drop  # ignore "0x"
+.int xt__0x # reads word and converts to number
+.int xt_lit, 0x12, xt_assertEq
+.int xt_word, xt__2drop  # ignore "0x"
+.int xt__0x
+.int xt_lit, 0x03, xt_assertEq
+.int xt_lit, test0xStr, xt_countnt, xt_typeTestPass
+.int xt_EXIT
+test0x:
   call openSimpleMathFile
-  callXt $xt_testNumber
-
+  callXt $xt_test0x
   call closeKeyFd
-  dpush $testNumberStr
-  call countnt
-  call typeTestPass
+  call assertCleanState
   ret
 
 ##############################
