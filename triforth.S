@@ -104,6 +104,8 @@
 .equ ERR_PSTACK_UNDERFLOW,0x301
 .equ ERR_ASCII_BOUNDS,0x302
 .equ ERR_MAX_WORD_LEN,0x303
+.equ ERR_WORD_MISSING,0x304
+.equ ERR_NUMBER_INVALID,0x305
 
 .equ FALSE, 0
 .equ TRUE, -1
@@ -201,6 +203,9 @@ registersDsStr: .ascii "e[ds]i: \0"
 ioBufferStr: .ascii "ioBuffer: \0"
 stackStr: .ascii "Stack< \0"
 maxWordLenErrorStr: .ascii "Maximum word length exceeded\0"
+_0xWordNeededStr: .ascii "Word needed for 0x\0"
+_0xNotNumberStr: .ascii "Not a valid hex number: \0"
+
 
 # Test Names
 testIoBufferStr: .ascii "testIoBuffer\0"
@@ -2169,22 +2174,22 @@ testWord:
   ret
 
 
-al_toint: # %eax ( -- ) %eax \ convert from a character to an integer
+eax_ctou: # %eax ( -- ) %eax \ convert from a character to an integer
   cmpb $'0', %al # Check if < 0 (invalid)
-  jl al_toint_err
+  jl eax_ctou
   cmpb $'9', %al # Check if <= 9 (valid 0-9)
-  jle al_0to9
+  jle eax_ctou_0to9
   call al_toupper
   cmpb $'A', %al # Check if ['A', 'Z']
-  jl al_toint_err
+  jl eax_ctou
   cmpb $'Z', %al
-  jg al_toint_err
+  jg eax_ctou_err
   subb $'A', %al
   ret
-al_0to9:
+eax_ctou_0to9:
   subb $'0', %al
   ret
-al_toint_err:
+eax_ctou_err:
   addl $1, %eax
   neg %eax
   ret
@@ -2195,13 +2200,12 @@ al_toint_err:
 def_asmword "NUMBER",    6,    0, number
   cmpb $0, (%ebp)
   jne 1f # count is zero, we will just push 0 in this case
-  call drop
-  call drop
+  call _2drop
   dpush $0
   dpush $0
 1:
   dpush $0
-  call rrot           # 8(%ebp)=isNegative=false
+  call rrot           # ( isNegative addr count )
   movl $0, %edi       # index
   movl 4(%ebp), %ebx  # address
   movl $0, 4(%ebp)    # zero address, use as return number
@@ -2215,12 +2219,12 @@ number_loop:
   cmp %edi, (%ebp)
   je number_done
   movb (%ebx,%edi,1), %al  # get next character
-  call al_toint
-  cmpl $0, %eax # check for negative values
+  call eax_ctou
+  cmpl $0, %eax      # check for negative values
   jle number_done 
   movl %eax, %ecx    # store number we just read in ecx
   movl 4(%ebp), %eax # get cumulative
-  mull var_base          # %eax=%eax*base: multiple cumulative by base
+  mull var_base      # %eax=%edx:%eax*base: multiple cumulative by base
   addl %ecx, %eax    # add number we read to cumulative
   movl %eax, 4(%ebp) # store new cumulative
   inc %edi           # increment index
@@ -2236,6 +2240,50 @@ number_done:
 number_isNegative:
   negl 4(%ebp)
   NEXT
+
+# ( -- n ) \ Convert the next word to unsigned hex
+#   \ panics if the next word is not completely representable by hex
+#          ascii, len, flag, label
+def_asmword "0X",   2,    0, _0x
+  callXt xt_word # ( addr count )
+  cmp $0, (%ebp)
+  jne _0x_noword  # word returned a count of 0=no word so panic
+  movl $0, %edi   # index
+  movl 4(%ebp), %ebx  # address of word
+  movl $0, %ecx   # cumulative value
+  movl $0, %eax   # character value
+  movl $0, %edx   # for mul cmd
+  movl $16, -4(%ebp) # base value
+1:
+  cmp %edi, (%ebp)  # cmp count with index
+  je _0x_done
+  movb (%ebx,%edi,1), %al # get the char and convert to int
+  call eax_ctou
+  cmpl $0, %eax  # check that it is between [0,15]
+  jl _0x_notnumber
+  cmpl $15, %eax
+  jg _0x_notnumber
+  mull -4(%ebp)  # %edx:%eax=%edx:%eax*16: multiple cumulative by base
+
+
+_0x_done:
+  # TODO: implement
+  call dbgexit
+_0x_noword:
+  dpush $_0xWordNeededStr
+  call countnt
+  callXt xt_typeln
+  movl $ERR_WORD_MISSING, panicErr
+  call *(panic)
+_0x_notnumber:
+  dpush $_0xNotNumberStr
+  call countnt
+  call type
+  # addr count still contains the word, simply use that
+  call _2dup
+  callXt xt_typeln
+  movl $ERR_NUMBER_INVALID, panicErr
+  call *(panic)
 
 .align 4
 xt_testNumber:
@@ -2259,10 +2307,11 @@ testNumber:
 # fetched and stored.
 #
 # The built-in variables are:
-# BASE     The current base for printing and reading numbers.
-# STATE    Is the interpreter executing code (0) or compiling a word (non-zero)?
-# LATEST   Points to the latest (most recently defined) word in the dictionary.
-# HERE     Points to the next free byte of memory.  When compiling, compiled words go here.
+# BASE       The current base for printing and reading numbers.
+# STATE      Is the interpreter executing code (0) or compiling a word (non-zero)?
+# LATEST     Points to the latest (most recently defined) word in the dictionary.
+# HERE       Points to the next free byte of memory.  When compiling, compiled words go here.
+# RSTACK_MAX The maximum memory address of the return stack.
 
 # ( -- addr ) \ the "base" used in str<->int conversions
 #      ascii      , len, flag,  label, initial
@@ -2280,10 +2329,11 @@ var_\label :
   .int \initial
 .endm
 
-#      ascii      , len, flag,  label , initial
-def_var "STATE"   ,   5,    0, state  , 0
-def_var "HERE"    ,   4,    0, here   , 0
-def_var "LATEST"  ,   6,    0, latest , 0 # initialized in _start
+#      ascii      ,  len, flag,  label , initial
+def_var "STATE"   ,    5,    0, state  , 0
+def_var "HERE"    ,    4,    0, here   , 0
+def_var "LATEST"  ,    6,    0, latest , 0 # initialized in _start
+def_var "RSTACK_MAX", 10,    0, rstack_max , 0 # initialized in _start
 
 ##############################
 # Builtin Constants
@@ -2645,19 +2695,27 @@ def_asmword "0BRANCH",   7,    0, _0branch
   lodsl           # otherwise skip the offset
   NEXT
 
-# ( -- ) \ 
+# ( -- ) \ QUIT is the forth interpreter
 #            ascii, len, flag, label
-def_asmword "QUIT",   4,    0, quit
-  ret
+def_doword "QUIT",   4,    0, quit
+  # set the return stack to rstackMax (clear it)
+  .int xt_rstack_max, xt_FETCH, xt_rstackSTORE # clear the rstack
+  .int xt_interpret    # interpreter loop
+  .int xt_branch, -20  # loop forever
 
-
+# ( -- ) \ Interpret bytes on the input stream
+#                 ascii, len, flag, label
+def_asmword "INTERPRET",   9,    0, interpret
+  
+  NEXT
 
 ##############################
 # Main Entrypoint
 .globl _start
 _start:
   movl $heapMin, var_here
-  movl $nt_quit, var_latest
+  movl $nt_interpret, var_latest
+  movl $rstackMax, var_rstack_max
   movl $rstackMax, %esp
   movl $dstackMax, %ebp
   call testSuite
