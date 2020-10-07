@@ -237,6 +237,8 @@ testAbcStr: .ascii "abc\0"
 testBcdStr: .ascii "bcd\0"
 testCreatedWord: .ascii "createdword\0"
 testCreatedWordUpper: .ascii "CREATEDWORD\0"
+test3Str: .ascii "3\0"
+test3CStr: .ascii "3C\0"
 
 .align 4
 
@@ -2193,15 +2195,16 @@ testWord_assert0x: # ( addr count )
 
 ebx_ctou: # %ebx ( -- ) %ebx \ convert from a character to an integer
   cmpb $'0', %bl # Check if < 0 (invalid)
-  jl ebx_ctou
+  jl ebx_ctou_err
   cmpb $'9', %bl # Check if <= 9 (valid 0-9)
   jle ebx_ctou_0to9
   call bl_toupper
   cmpb $'A', %bl # Check if ['A', 'Z']
-  jl ebx_ctou
+  jl ebx_ctou_err
   cmpb $'Z', %bl
   jg ebx_ctou_err
-  subb $'A', %bl
+  subb $'A', %bl  # convert A->10, B->11, etc
+  addb $10, %bl
   ret
 ebx_ctou_0to9:
   subb $'0', %bl
@@ -2211,19 +2214,23 @@ ebx_ctou_err:
   neg %ebx
   ret
 
-# ( -- n ) \ Convert the next word to unsigned hex
+# ( -- u ) \ Convert the next hex word to an unsigned number
 #   \ panics if the next word is not completely representable by hex
 #          ascii, len, flag, label
 def_asmword "0X",   2,    0, _0x
   callXt $xt_word # ( addr count )
+  call strTOhex
+  NEXT
+
+strTOhex: # ( addr count -- u )
   cmp $0, (%ebp)
-  je _0x_noword   # word returned a count of 0=no word so panic
-  movl $0, %edi   # index
+  je _0x_noword       # word returned a count of 0=no word so panic
+  movl $0, %edi       # index
   movl $0, %eax       # cumulative value
   movl $0, %edx       # for mul cmd
   movl $0, %ebx       # character value
   movl 4(%ebp), %ecx  # address of word
-  movl $16, -4(%ebp)  # base value
+  movl $0x10, -4(%ebp)  # base value (16)
 _0x_loop:
   cmp %edi, (%ebp)  # cmp count with index
   je _0x_done
@@ -2255,7 +2262,7 @@ _0x_notnumber:
 _0x_done:
   call drop  # drop count
   movl %eax, (%ebp)  # turn addr -> number
-  NEXT
+  ret
 
 .align 4
 xt_test0x:
@@ -2269,6 +2276,20 @@ xt_test0x:
 .int xt_lit, test0xStr, xt_countnt, xt_typeTestPass
 .int xt_EXIT
 test0x:
+  dpush $test3Str
+  call countnt
+  call strTOhex
+  dpop %eax
+  movl $3, %ebx
+  call assertEaxEbxEq
+
+  dpush $test3CStr
+  call countnt
+  call strTOhex
+  dpop %eax
+  movl $0x3C, %ebx
+  call assertEaxEbxEq
+
   call openSimpleMathFile
   callXt $xt_test0x
   call closeKeyFd
