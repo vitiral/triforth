@@ -2949,13 +2949,18 @@ xt_testCOLON:
 .int xt_word, xt_find, xt_ntTOxt, xt_execute  # :
 # Make sure state=compile
 .int xt_state, xt_FETCH, xt_lit, TRUE, xt_assertEq
-.int xt_dumpInfo
+# manually finish compilation, mimicking INTERPRET
+.int xt_word, xt_find, xt_ntTOxt, xt_execute  # 0x
+.int  xt_word, xt_find, xt_ntTOxt, xt_execute # ;
+# assert state is back in runmode
+.int xt_state, xt_FETCH, xt_lit, FALSE, xt_assertEq
+#### Validate the word cell by cell
 .int xt_lit, testNewDefinedWordStr, xt_countnt, xt_find
+# Make sure previous HERE = nt
+.int xt_dup, xt_rpop, xt_assertEq
 # Make sure the nt strings match
 .int xt_dup, xt_ntTOstr, xt_lit, testNewDefinedWordStr, xt_countnt
 .int   xt_ceq, xt_assertTrue
-# Make sure previous HERE = nt
-.int xt_dup, xt_rpop, xt_assertEq
 # Make sure str len is as expected in cstr
 .int xt_dup, xt_inc4, xt_cFETCH, xt_lit, 14, xt_assertEq
 # Make sure str len is as expected in F0
@@ -2964,13 +2969,19 @@ xt_testCOLON:
 .int xt_dup, xt_ntTOfr, xt_FETCH, xt_lit, 0, xt_assertEq
 # Make sure xt
 .int xt_dup, xt_ntTOxt, xt_FETCH, xt_lit, DOCOL, xt_assertEq
-# manually finish compilation, mimicking INTERPRET
-.int xt_word, xt_find, xt_ntTOxt, xt_execute  # 0x
-.int  xt_word, xt_find, xt_ntTOxt, xt_execute # ;
-# assert state is back in runmode
-.int xt_state, xt_FETCH, xt_lit, FALSE, xt_assertEq
-# drop nt, set state back to run and exit
-.int xt_drop, xt_EXIT
+# Validate our manual compilation
+.int xt_ntTOxt, xt_inc4  # LIT (for 0x42)
+.int xt_dup, xt_FETCH, xt_lit, xt_lit, xt_assertEq
+.int xt_inc4  # 0x42
+.int xt_dup, xt_FETCH, xt_lit, 0x42, xt_assertEq
+.int xt_inc4  # EXIT
+.int xt_dup, xt_FETCH, xt_lit, xt_EXIT, xt_assertEq
+.int xt_drop # drop address
+# Now run the word, mimicking the interpreter
+.int xt_word, xt_find, xt_ntTOxt, xt_execute  # newDefinedWord
+.int xt_lit, 0x42, xt_assertEq
+# drop addr, set state back to run and exit
+.int xt_EXIT
 xt_testCOLON_pnt:
 .int DOCOL, xt_lit, testCOLONStr, xt_countnt, xt_typeTestPass, xt_EXIT
 testCOLON:
