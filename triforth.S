@@ -98,6 +98,8 @@
 .equ RC_INVALIDRESET,102
 .equ RC_ARRAYBOUNDS,103
 .equ RC_PANIC,104
+.equ RC_STACK_UNDERFLOW,105
+.equ RC_STACK_OVERFLOW,106
 
 # Our Panic Error Codes
 .equ ERR_DSTACK_OVERFLOW,0x300
@@ -184,6 +186,7 @@ ioBuffer: .space 128
 ioBufferLen: .int 0  # number of chars in ioBuffer
 .equ MAX_WORD_LEN,32
 wordBuffer: .space MAX_WORD_LEN
+wordCount: .int 0 # for debugging only
 
 # Word info
 .equ FLAG_WORD_IMMEDIATE, 0x01 # whether the word is immediate or not
@@ -212,7 +215,7 @@ dbgexitStr: .ascii "\nDBG EXIT\n\0"
 panicStr: .ascii "!! PANIC ENCOUNTERED code=\0"
 registersAdStr: .ascii "Registers e(a-d)x: \0"
 registersDsStr: .ascii "e[ds]i: \0"
-ioBufferStr: .ascii "ioBuffer: \0"
+wordStr: .ascii "word: \0"
 stackStr: .ascii "Stack< \0"
 maxWordLenErrorStr: .ascii "Maximum word length exceeded\0"
 _0xWordNeededStr: .ascii "Word needed for 0x\0"
@@ -270,6 +273,7 @@ testSuite: # ( -- )
   call testPanicHandle
   call testDsPushPop
   call testModDIV
+  call testEbxStackSize
   call testDepth
   call testStackBasic
   call assertCleanState
@@ -298,8 +302,8 @@ testSuite: # ( -- )
   call test_ntTOother
   call testFind
   call testCreate
-  call testInterpret
-  call assertCleanState
+  # call testInterpret
+  # call assertCleanState
   ret
 
 testMemLocations:
@@ -494,6 +498,7 @@ checkPopDs:
   call *(panic)
   jmp unreachable
 
+
 .macro dpop reg
   movl (%ebp) , \reg
   call checkPopDs
@@ -600,8 +605,57 @@ testModDIV:
   call assertEmpty
   ret
 
+.macro ebxStackSize # set ebx to the stack size
+  movl $dstackMax, %ebx
+  subl %ebp, %ebx  # stackSize=ebx=dstackMax - dstackPtr
+.endm
+
+testEbxStackSize:
+  # going to check the math
+  ebxStackSize
+  movl $0, %eax
+  call assertEaxEbxEq
+
+  dpush $42
+  ebxStackSize
+  movl $4, %eax
+  call assertEaxEbxEq
+
+  dpush $42
+  ebxStackSize
+  movl $8, %eax
+  call assertEaxEbxEq
+
+  # Here we write checkStackSize verbatum, since we can't test it directly
+  ebxStackSize
+  movl $4, %eax
+  cmpl %ebx, %eax
+  jg 1f # error
+
+  dpop %eax
+  dpop %eax
+  ebxStackSize
+  movl $0, %eax
+  call assertEaxEbxEq
+  ret
+1:
+  jmp sysexit
+
+
+checkStackSize: # %eax:needSize ( )
+  # If stack size is not >=eax, panic
+  ebxStackSize
+  cmpl %ebx, %eax
+  jg 1f
+  ret
+1:
+  movl $RC_STACK_UNDERFLOW, %ebx
+  call sysexit
+
 swap: # ( a b -- b a )
   # Forth SWAP
+  movl $8, %eax
+  call checkStackSize
   dpop %ebx
   dpop %eax
   dpush %ebx
@@ -609,11 +663,15 @@ swap: # ( a b -- b a )
   ret
 
 dup: # ( a -- a a )
+  movl $4, %eax
+  call checkStackSize
   movl (%ebp), %eax
   dpush %eax
   ret
 
 _2dup: # ( a b -- a b a b )
+  movl $8, %eax
+  call checkStackSize
   movl 4(%ebp), %eax
   movl (%ebp), %ebx
   dpush %eax
@@ -621,23 +679,33 @@ _2dup: # ( a b -- a b a b )
   ret
 
 drop: # ( a -- )
+  movl $4, %eax
+  call checkStackSize
   addl $4, %ebp
   ret
 
 _2drop: # ( a b -- )
+  movl $8, %eax
+  call checkStackSize
   addl $8, %ebp
   ret
 
 _3drop: # ( a b c -- )
+  movl $12, %eax
+  call checkStackSize
   addl $12, %ebp
   ret
 
 _4drop: # ( a b c d -- )
+  movl $16, %eax
+  call checkStackSize
   addl $16, %ebp
   ret
 
 lrot: # ( a b c -- b c a )
   # Forth ROT, rotates left
+  movl $12, %eax
+  call checkStackSize
   dpop %ecx
   dpop %ebx
   dpop %eax
@@ -648,6 +716,8 @@ lrot: # ( a b c -- b c a )
 
 rrot: # ( a b c -- c a b )
   # Forth -ROT, rotates right
+  movl $12, %eax
+  call checkStackSize
   dpop %ecx
   dpop %ebx
   dpop %eax
@@ -657,18 +727,17 @@ rrot: # ( a b c -- c a b )
   ret
 
 over: # ( a b -- a b a )
+  movl $8, %eax
+  call checkStackSize
   movl 4(%ebp), %eax
   dpush %eax
   ret
 
 depth: # ( -- u )
   # returns the depth of the stack
-  movl $dstackMax, %eax
-  subl %ebp, %eax
-  dpush %eax
-  dpush $4
-  call DIVmod
-  call drop # drop remainder
+  ebxStackSize
+  shr  $2, %ebx # divide by 4
+  dpush %ebx
   ret
 
 testDepth:
@@ -782,6 +851,8 @@ testEmit:
 countnt: # ( addr -- addr count )
   # Given a null-terminated (c-style) string re-returns the string address and
   # the count
+  movl $4, %eax
+  call checkStackSize
   movl (%ebp), %eax # addr
   movl $0, %ebx # count
 1:
@@ -1101,11 +1172,11 @@ dumpInfo:
   # Stack
   call DOTs
   # IO buffer
-  dpush $ioBufferStr
+  dpush $wordStr
   call countnt
   call type
-  dpush $ioBuffer
-  movl ioBufferLen, %eax
+  dpush $wordBuffer
+  movl wordCount, %eax
   dpush %eax
   call type
   dpush $'\n'
@@ -1519,6 +1590,8 @@ def_callword "TUCK" , 4 ,  0 ,   tuck
 # ( a -- a a? ) \ duplicate top of stack if non-zero
 #           ascii  , len, flag, label
 def_asmword "?DUP" , 4 ,  0 ,   QDUP
+  movl $4, %eax
+  call checkStackSize
   cmp $0, (%ebp)
   je 1f
   call dup
@@ -1560,6 +1633,8 @@ def_asmword "DSP@",   4,    0, dstackFETCH
 # ( addr -- * ) \ set the data stack pointer
 #         ascii   , len, flag, label
 def_asmword "DSP!",   4,    0, dstackSTORE
+  movl $4, %eax
+  call checkStackSize
   movl (%ebp), %ebp
   RET
 
@@ -1578,6 +1653,8 @@ def_asmword "!" ,  1 ,  0 ,  STORE
 # ( addr -- u ) \ fetches the value at address
 #         ascii , len, flag, label
 def_asmword "@" ,  1 ,  0 ,  FETCH
+  movl $4, %eax
+  call checkStackSize
   movl (%ebp), %eax
   movl (%eax), %eax
   movl %eax, (%ebp)
@@ -1671,6 +1748,8 @@ def_callword "DBGEXIT" ,  7 ,  0 ,  dbgexit
 # ( a b -- a+b ) \ add values
 #           ascii  , len, flag, label
 def_asmword "+"    , 1  ,  0 ,  ADD
+  movl $8, %eax
+  call checkStackSize
   dpop %eax
   addl %eax, (%ebp)
   NEXT
@@ -1678,12 +1757,16 @@ def_asmword "+"    , 1  ,  0 ,  ADD
 # ( u -- u ) \ add 1
 #            ascii  , len, flag, label
 def_asmword "+1"    , 2  ,  0 ,  ADD1
+  movl $4, %eax
+  call checkStackSize
   addl $1, (%ebp)
   NEXT
 
 # ( u -- u ) \ add 4
 #            ascii  , len, flag, label
 def_asmword "+4"    , 2  ,  0 ,  ADD4
+  movl $4, %eax
+  call checkStackSize
   addl $4, (%ebp)
   NEXT
 
@@ -1697,12 +1780,16 @@ def_asmword "-"    , 1  ,  0 ,  SUB
 # ( u -- u ) \ sub 1
 #            ascii  , len, flag, label
 def_asmword "-1"    , 2  ,  0 ,  SUB1
+  movl $4, %eax
+  call checkStackSize
   subl $1, (%ebp)
   NEXT
 
 # ( u -- u ) \ sub 4
 #            ascii  , len, flag, label
 def_asmword "-4"    , 2  ,  0 ,  SUB4
+  movl $4, %eax
+  call checkStackSize
   subl $4, (%ebp)
   NEXT
 
@@ -1715,24 +1802,32 @@ def_asmword "/MOD" , 4  ,  0 ,  DIVmod
 # ( u -- u ) \ increment by 1
 #           ascii, len, flag, label
 def_asmword "INC",   3,    0, inc
+  movl $4, %eax
+  call checkStackSize
   addl $1, (%ebp)
   NEXT
 
 # ( u -- u ) \ increment by 4
 #            ascii, len, flag, label
 def_asmword "INC4",   4,    0, inc4
+  movl $4, %eax
+  call checkStackSize
   addl $4, (%ebp)
   NEXT
 
 # ( u -- u ) \ increment by 1
 #           ascii, len, flag, label
 def_asmword "DEC",   3,    0, dec
+  movl $4, %eax
+  call checkStackSize
   subl $1, (%ebp)
   NEXT
 
 # ( u -- u ) \ increment by 4
 #            ascii, len, flag, label
 def_asmword "DEC4",   4,    0, dec4
+  movl $4, %eax
+  call checkStackSize
   subl $4, (%ebp)
   NEXT
 
@@ -1746,6 +1841,8 @@ def_asmword "AND" ,  3 ,   0 , and
 # ( u u -- u ) \ bitwise OR
 #          ascii , len, flag, label
 def_asmword "OR" ,  2 ,   0 , or
+  movl $8, %eax
+  call checkStackSize
   dpop %eax
   orl %eax, (%ebp)
   NEXT
@@ -1753,6 +1850,8 @@ def_asmword "OR" ,  2 ,   0 , or
 # ( u u -- u ) \ bitwise XOR (exclusive OR)
 #          ascii , len, flag, label
 def_asmword "XOR" ,  3 ,   0 , xor
+  movl $8, %eax
+  call checkStackSize
   dpop %eax
   xorl %eax, (%ebp)
   NEXT
@@ -1760,6 +1859,8 @@ def_asmword "XOR" ,  3 ,   0 , xor
 # ( u -- u ) \ bitwise INVERT (switch all bits)
 #          ascii     , len, flag, label
 def_asmword "INVERT" ,  6 ,   0 , invert
+  movl $4, %eax
+  call checkStackSize
   notl (%ebp)
   NEXT
 
@@ -2168,11 +2269,9 @@ word_not_comment_line:
 word_ret_maybe:   # possibly return a word... or keep looping if count=0
   cmp $0, (%ebp)  # are there any characters in the buffer?
   je word_loop    # word not yet encountered, keep looping
-  dpush $wordBuffer # ( count addr )
-  call swap
-  NEXT
-word_eof:
-  # EOF reached, push count even if it is 0.
+word_eof: # (in case of EOF we still push the count)
+  movl (%ebp), %eax
+  movl %eax, wordCount
   dpush $wordBuffer # ( count addr )
   call swap
   NEXT
@@ -2252,14 +2351,14 @@ def_asmword "0X",   2,    0, _0x
   NEXT
 
 strTOhex: # ( addr count -- u )
+  movl $8, %eax
+  call checkStackSize
   cmp $0, (%ebp)
   je _0x_noword       # word returned a count of 0=no word so panic
   movl $0, %edi       # index
   movl $0, %eax       # cumulative value
-  movl $0, %edx       # for mul cmd
   movl $0, %ebx       # character value
   movl 4(%ebp), %ecx  # address of word
-  movl $0x10, -4(%ebp)  # base value (16)
 _0x_loop:
   cmp %edi, (%ebp)  # cmp count with index
   je _0x_done
@@ -2269,7 +2368,7 @@ _0x_loop:
   jl _0x_notnumber
   cmpl $15, %ebx
   jg _0x_notnumber
-  mull -4(%ebp)  # %edx:%eax=%edx:%eax*16: multiply cumulative by base
+  shl $4, %eax   # eax=eax*16. Note: bit-shift left 4 == *2^4= *16
   addl %ebx, %eax # add new number to cumulative
   inc %edi        # increment index
   jmp _0x_loop
@@ -2289,8 +2388,8 @@ _0x_notnumber:
   movl $ERR_NUMBER_INVALID, panicErr
   call *(panic)
 _0x_done:
+  movl %eax, 4(%ebp)  # turn addr -> number
   call drop  # drop count
-  movl %eax, (%ebp)  # turn addr -> number
   ret
 
 .align 4
@@ -2606,8 +2705,8 @@ DOCREATE: # ( -- xt-body ) \ the (default) execution word for CREATE. Simply
 # ( addr count -- nt ) \ create the next word on the input stream in the dictionary
 #             ascii  , len, flag, label
 def_asmword "CREATE" ,  6 ,    0 , create
-  movl (%ebp), %ecx  # count
-  cmp $MAX_WORD_LEN, %ecx  # check if count > max
+  movl (%ebp), %ecx       # count
+  cmp $MAX_WORD_LEN, %ecx # check if count > max
   jg create_fail
   movl var_here, %edi
   movl var_latest, %eax
@@ -2616,19 +2715,21 @@ def_asmword "CREATE" ,  6 ,    0 , create
   addl $4, %edi          # go to where cstr is stored
   movb %cl, (%edi)       # dict: cstr count
   inc %edi
-  call tuck # ( count addr count ) note: doesn't touch edi
-  dpush %edi # addr2
+  call tuck   # ( count addr count ) note: doesn't touch edi
+  dpush %edi  # addr2
   movl %edi, var_here # store edi, as cmove will destroy
   call swap           # stack: ( count addr addr2 count )
   call cmoveUpper     # dict: name string
-  dpop %ecx           # count
+  dpop %ecx           # count. stack: ( ) i.e. empty
   movl var_here, %eax   # restore HERE into eax for eax_align4
   addl %ecx, %eax       # add count to here and align
   call eax_align4
   shl $F0_NAMELEN_SHIFT, %ecx  # set up flags
   movl %ecx, (%eax)       # dict: set flags
-  addl $4, %eax           # increment eax to point to xt/data/etc
+  addl $4, %eax           # increment eax to point to FR
+  movl $0, (%eax)         # increment eax to point to xt/data/etc
   movl $DOCREATE, (%eax)  # dict: xt for CREATE-ed word
+  addl $4, %eax           # update HERE to point to next word
   movl %eax, var_here     # dict: update HERE
   NEXT
 create_fail:
@@ -2638,10 +2739,12 @@ create_fail:
 .align 4
 xt_testCreate:
 .int DOCOL
-.int xt_here, xt_FETCH
+.int xt_here, xt_FETCH, xt_rpush
 .int xt_lit, testCreatedWord, xt_countnt, xt_create
+.int xt_dumpInfo, xt_dup, xt_dumpInfo, xt_assertTrue # assert there is a name token
+.int xt_dbgexit
 # HERE has changed
-.int xt_here, xt_FETCH, xt_NEQ, xt_assertTrue
+.int xt_rpop, xt_here, xt_FETCH, xt_NEQ, xt_assertTrue
 # Find the word
 .int xt_lit, testCreatedWordUpper, xt_countnt, xt_find
 # Flags are as expected (namelen)
@@ -2653,6 +2756,7 @@ xt_testCreate:
 .int xt_EXIT
 testCreate:
   callXt $xt_testCreate
+  call assertCleanState
   ret
 
 # ( u -- ) \ push a value onto the dictionary
@@ -2681,9 +2785,9 @@ def_asmword "]" ,  1 ,    0, statecompile
 def_doword ":",   1,    0, STARTWORD
   # Create the next word and set correct xt
   .int xt_word # ( addr count )
-  .int xt_create, xt_ntTOxt
+  .int xt_create, xt_ntTOxt, xt_dbgexit
   # replace DOCREATE with DOCOL
-  .int xt_lit, DOCOL, xt_swap, xt_STORE
+  .int xt_lit, DOCOL, xt_swap, xt_dbgexit, xt_STORE
   .int xt_statecompile # start compiling!
   .int xt_EXIT
 
