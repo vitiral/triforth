@@ -269,6 +269,7 @@ test42Str: .ascii "42\0"
 testSuite: # ( -- )
   # We are doing test driven development. All assembly tests we write should go
   # here. You can ignore them for now.
+  # TODO: uncomment all!!!
   # call testMemLocations
   # call assertEmpty
   # call testAsserts
@@ -2390,13 +2391,24 @@ ebx_ctou_err:
   neg %ebx
   ret
 
-# ( -- u ) \ Convert the next hex word to an unsigned number
+# ( -- u ) \ Convert the next hex word to an unsigned number, compiling it if state!=0
 #   \ panics if the next word is not completely representable by hex
-#          ascii, len, flag, label
-def_asmword "0X",   2,    0, _0x
+#          ascii, len,        flag, label
+def_asmword "0X",   2, FR_TIME_IMM, _0x
   callXt $xt_word # ( addr count )
   call strTOhex
-  movl $0x43, %ebx
+  cmp $0, var_state
+  jne 1f
+  jmp 2f
+  movl $0x60, %edi # TODO: remove
+  call dumpInfo
+1:
+  # Compile mode: compile the literal into the word
+  dpush $xt_lit
+  callXt $xt_pushDict
+  callXt $xt_pushDict
+2:
+  movl $0x61, %edi # TODO: remove
   call dumpInfo
   NEXT
 
@@ -3000,22 +3012,21 @@ interpret_loop:
   je interpret_executext
   # else, compile the word into the dictionary
   callXt $xt_pushDict 
+  movl $0x13, %edi  # TODO: remove
+  call dumpInfo
+  call _2drop
+  movl $0x14, %edi  # TODO: remove
+  call dumpInfo
   jmp interpret_loop
 interpret_executext: # execute xt
   callXt $xt_ntTOxt
   dpop %eax     # eax=xt
-  # movl %eax, %ebx
-  # subl $28, %ebx
-  # dpush %ebx
-  # dpush $40
-  # movl $nt__0x, %ebx
-  # movl $xt__0x, %ecx
-  # call dumpInfo # TODO: XT is not correct
-  # call dump
   addl $8, %ebp # 2drop, but we can't pollute %eax
-  movl $0x55, %ebx
+  movl $0x15, %edi  # TODO: remove
   call dumpInfo
   call _callXt  # execute xt
+  movl $0x16, %edi  # TODO: remove
+  call dumpInfo
   jmp interpret_loop
 interpret_eof:
   call _2drop
@@ -3062,14 +3073,14 @@ xt_testInterpret_inputstream:
 xt_testInterpret_pnt:
 .int DOCOL, xt_lit, testInterpretStr, xt_countnt, xt_typeTestPass, xt_EXIT
 testInterpret:
-  movl $testTheAnswerFile, %ebx
-  call openNtEbx
-  callXt $xt_testInterpret_theAnswer
-  call closeKeyFd
-
-  # call openSimpleMathFile
-  # callXt $xt_testInterpret_inputstream
+  # movl $testTheAnswerFile, %ebx
+  # call openNtEbx
+  # callXt $xt_testInterpret_theAnswer
   # call closeKeyFd
+
+  call openSimpleMathFile
+  callXt $xt_testInterpret_inputstream
+  call closeKeyFd
 
   callXt $xt_testInterpret_pnt
   ret
