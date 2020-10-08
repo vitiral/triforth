@@ -1188,11 +1188,11 @@ dumpInfo:
 testDumpInfo:
   # preload ioBuffer with something
   dpush $testDumpInfoStr
-  call countnt
+  call countnt # ( addr count )
   movl (%ebp), %eax
-  movl %eax, ioBufferLen
-  dpush $ioBuffer
-  call swap
+  movl %eax, wordCount
+  dpush $wordBuffer
+  call swap # ( addr1 addr2 count )
   call cmove
 
   # push some values onto the stack
@@ -1208,7 +1208,7 @@ testDumpInfo:
   call dumpInfo
 
   call _2drop
-  movl $0, ioBufferLen
+  movl $0, wordCount
   dpush $testDumpInfoStr
   call countnt
   call typeTestPass
@@ -2278,9 +2278,7 @@ word_eof: # (in case of EOF we still push the count)
 word_err:
   dpush $maxWordLenErrorStr
   call countnt
-  dpush $ioBuffer
-  call swap
-  call cmove
+  call type
   movl $ERR_MAX_WORD_LEN, panicErr
   call *(panic)
 
@@ -2577,14 +2575,18 @@ def_asmword "ALIGN4",  6,    0, align4
 # ( nt -- F0 ) \ given the nt return the address of F0
 #            ascii  , len, flag, label
 def_asmword "NT>&F0",   6,    0, ntTOf0
+  call dumpInfo
   dpop %eax           # address of nt
   addl $4, %eax       # start of cstr (count)
-  movl $0, %ebx
   movb (%eax), %bl    # ebx=count
+  andl $F0_NAMELEN_BYTE_MASK, %ebx
+  # TODO: this actually DOESN'T work with F0 strategy.
+  # TODO: need to deal with that pesky $1
   addl %ebx, %eax     # eax=eax+count+1
   addl $1, %eax
   call eax_align4     # align, as F0 is always aligned
   dpush %eax
+  call dumpInfo
   NEXT
 
 # ( nt -- FR ) \ given the nt return the address of FR
@@ -2705,33 +2707,36 @@ DOCREATE: # ( -- xt-body ) \ the (default) execution word for CREATE. Simply
 # ( addr count -- nt ) \ create the next word on the input stream in the dictionary
 #             ascii  , len, flag, label
 def_asmword "CREATE" ,  6 ,    0 , create
-  movl (%ebp), %ecx       # count
-  cmp $MAX_WORD_LEN, %ecx # check if count > max
+  cmp $MAX_WORD_LEN, (%ebp) # check if count > max
   jg create_fail
   movl var_here, %edi
   movl var_latest, %eax
   movl %eax, (%edi)      # dict: link to previous
-  movl %edi, var_latest  # dict: update latest to this word
+  movl %edi, var_latest  # dict: update LATEST to this word
+  dpush %edi             # add nt onto the stack (to return)
+  call rrot              # ( nt addr count )
   addl $4, %edi          # go to where cstr is stored
+  movl (%ebp), %ecx      # count
   movb %cl, (%edi)       # dict: cstr count
   inc %edi
-  call tuck   # ( count addr count ) note: doesn't touch edi
+  call tuck   # ( nt count addr count ) note: doesn't touch edi
   dpush %edi  # addr2
   movl %edi, var_here # store edi, as cmove will destroy
-  call swap           # stack: ( count addr addr2 count )
+  call swap           # stack: ( nt count addr addr2 count )
   call cmoveUpper     # dict: name string
-  dpop %ecx           # count. stack: ( ) i.e. empty
+  dpop %ecx           # count. stack: ( nt )
   movl var_here, %eax   # restore HERE into eax for eax_align4
   addl %ecx, %eax       # add count to here and align
   call eax_align4
   shl $F0_NAMELEN_SHIFT, %ecx  # set up flags
   movl %ecx, (%eax)       # dict: set flags
   addl $4, %eax           # increment eax to point to FR
-  movl $0, (%eax)         # increment eax to point to xt/data/etc
+  movl $0, (%eax)         # set FR to 0
+  addl $4, %eax           # increment eax to point to xt
   movl $DOCREATE, (%eax)  # dict: xt for CREATE-ed word
-  addl $4, %eax           # update HERE to point to next word
+  addl $4, %eax           # increment eax to point to data space
   movl %eax, var_here     # dict: update HERE
-  NEXT
+  NEXT                    # nt is stil on the stack
 create_fail:
   movl $ERR_MAX_WORD_LEN, panicErr
   call *(panic)
@@ -2741,12 +2746,12 @@ xt_testCreate:
 .int DOCOL
 .int xt_here, xt_FETCH, xt_rpush
 .int xt_lit, testCreatedWord, xt_countnt, xt_create
-.int xt_dumpInfo, xt_dup, xt_dumpInfo, xt_assertTrue # assert there is a name token
-.int xt_dbgexit
-# HERE has changed
+.int xt_dup, xt_assertTrue # assert there is a name token
+# Assert HERE has changed
 .int xt_rpop, xt_here, xt_FETCH, xt_NEQ, xt_assertTrue
-# Find the word
-.int xt_lit, testCreatedWordUpper, xt_countnt, xt_find
+# Find the word and assert nt is the same
+.int xt_dup, xt_lit, testCreatedWordUpper, xt_countnt, xt_find, xt_assertEq
+# stack: ( nt )
 # Flags are as expected (namelen)
 .int xt_dup, xt_ntTOf0, xt_FETCH, xt_lit, 11<<F0_NAMELEN_SHIFT, xt_assertEq
 # Stored name is uppercased
