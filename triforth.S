@@ -2665,7 +2665,7 @@ def_asmword "NT>&FR",   6,    0, ntTOfr
   NEXT
 
 
-# ( nt -- flags ) \ given the nt return the xt
+# ( nt -- xt ) \ given the nt return the xt
 #           ascii  , len, flag, label
 def_asmword "NT>XT",   5,    0, ntTOxt
   callXt $xt_ntTOfr
@@ -3021,13 +3021,24 @@ interpret_loop:
   call dumpInfo
   jmp interpret_loop
 interpret_executext: # execute xt
+  call dup          # TODO: remove
   callXt $xt_ntTOxt
+  call swap         # TODO: remove
+  dpop %ecx         # TODO: remove
+  movl $0x15, %edi  # TODO: remove
+  call dumpInfo     # TODO: remove
+  call dup          # TODO: remove
+  subl $24, (%ebp)  # TODO: remove
+  dpush $32         # TODO: remove
+  call dump         # TODO: remove
+  call dumpInfo     # TODO: remove
   dpop %eax     # eax=xt
   addl $8, %ebp # 2drop, but we can't pollute %eax
-  movl $0x15, %edi  # TODO: remove
-  call dumpInfo
-  call _callXt  # execute xt
   movl $0x16, %edi  # TODO: remove
+  movl $heapMin, %ebx
+  call dumpInfo
+  call _callXt  # execute eax
+  movl $0x20, %edi  # TODO: remove
   call dumpInfo
   jmp interpret_loop
 interpret_eof:
@@ -3048,21 +3059,6 @@ interpret_notfound:
 interpret_unknown:
   callXt var_XTinterpret_unknown
   jmp interpret_loop
-
-#                   found-xt act-nt  act-xt
-# Registers e(a-d)x: 804C288 804C278 804C288 1 e[ds]i: 2 804E804 
-# Stack< 3 > 804DA1C 2 804C278 
-# DUMP 804C26C 
-# 804C26C : C330EB80 
-# 804C270 : F701C383 
-# 804C274 : C3DB 
-# 804C278 : 804C070   act-nt
-# 804C27C : 583002 
-# 804C280 : 2000000 
-# 804C284 : 0 
-# 804C288 : 804C28C   found-xt act-xt
-# 804C28C : 4C084B8 
-# 804C290 : DD9EE808 
 
 
 .align 4
@@ -3088,7 +3084,7 @@ testInterpret:
   ret
 
 # !!! NOTE: this must be the last word (or update var_latest) !!!
-# ( -- ) \ QUIT is the forth interpreter
+# ( -- ) \ QUIT is the forth interpreter loop
 #            ascii, len, flag, label
 def_asmword "QUIT",   4,    0, quit
   # set the return stack to rstackMax (clear it)
