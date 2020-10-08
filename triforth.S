@@ -118,16 +118,24 @@
 # NAMELEN: allows backreference from xt->nt
 # TIME_MASK and related: specifies when the xt should be run, and whether it
 #   has both IMM and RUN components (i.e. : word IMMEDIATE ... DOES> ... EXIT)
+#
+# The flags are arrayed in this way so that (1) we can have zero-length names
+# that take up no space and (2) so that once we have DOES> words (which most
+# typed words will be) we only need the right-most (FR) flag cell for lookback.
+# Don't worry too much about these details now, but that is why bits are where
+# they are.
 
 ## Flag 0 (left-most flag)
 # Byte 1 (least-significant right-most byte)
-.equ F0_RES,               0x000000FF   # 8b: reserved
+.equ F0_RES,               0x000000FF   # 8b: unused
 # Byte 2+3
-.equ F0_LINENO,            0x00FFFF00   # 16b: line number
+.equ F0_LINENO,            0x00000F00   # 4b: unused
+.equ F0_LINENO,            0x00FFF000   # 12b: line number (max 4096)
 # Byte 4 (most-significant left-most byte)
 .equ F0_NAMELEN_MASK,      0x1F000000   # 5b: name's length (up to 32)
 .equ F0_NAMELEN_SHIFT,     24           # na: number of bits to shift
 .equ F0_NAMELEN_BYTE_MASK, 0x1F         # na: mask used for left-most byte
+.equ F0_RESL,              0xE0000000   # 3b: top 3 bits unused
 
 ## FlagR - must be the right-most flags 
 # TODO: implement this for module system
@@ -135,8 +143,8 @@
 #   F0 can be excluded from run-only.
 
 # Byte 1
-.equ FR_INP_MASK,          0x00000007   # 3b: input types len mask
-.equ FR_OUT_MASK,          0x00000038   # 3b: output types len mask
+.equ FR_INP_MASK,          0x00000007   # 3b: len input types mask
+.equ FR_OUT_MASK,          0x00000038   # 3b: len output types mask
 .equ FR_TIME_MASK,         0x000000C0   # 2b: time mask (run/compile/etc)
 .equ FR_TIME_RUN,          0x00000000   # na: runtime only word
 .equ FR_TIME_IMM,          0x00000040   # na: immediate only word
@@ -145,7 +153,7 @@
 # Byte 2
 .equ FR_IMM_SIZE,          0x0000FF00  # 8b: immediate code size
 # Byte 3
-.equ FR_RES3,              0x00FF0000  # 8b: unused byte
+.equ FR_RES3,              0x00FF0000  # 8b: reserved for expanding IMM_SIZE
 # Byte 4
 .equ FR_RES4,              0x0F000000  # 4b: unused bits
 .equ FR_TYPE_MASK,         0xF0000000  # 4b: the type (16 supported)
@@ -155,7 +163,7 @@
 .equ FR_TYPE_METHOD,       0x30000000  # na: method (attached typed word_
 .equ FR_TYPE_INTERFACE,    0x40000000  # na: interface (collection of methods)
 .equ FR_TYPE_MODULE,       0x50000000  # na: module (module-name and file-path)
-.equ FR_TYPE_RES,          0x60000000  # na: 6-F unused
+.equ FR_TYPE_RES,          0x60000000  # na: values 6 to F are unused
 
 
 ######################################################
@@ -1714,6 +1722,18 @@ def_asmword "INC4",   4,    0, inc4
   addl $4, (%ebp)
   NEXT
 
+# ( u -- u ) \ increment by 1
+#           ascii, len, flag, label
+def_asmword "DEC",   3,    0, dec
+  subl $1, (%ebp)
+  NEXT
+
+# ( u -- u ) \ increment by 4
+#            ascii, len, flag, label
+def_asmword "DEC4",   4,    0, dec4
+  subl $4, (%ebp)
+  NEXT
+
 # ( u u -- u ) \ bitwise AND
 #          ascii  , len, flag, label
 def_asmword "AND" ,  3 ,   0 , and
@@ -2488,17 +2508,23 @@ def_asmword "NT>NAME",   9,    0, ntTOname
   callXt $xt_count
   NEXT
 
-# ( nt -- flags ) \ get "code field address" (xt) from nt
+# ( nt -- xt ) \ get "code field address" (xt) from nt
 #         ascii  , len, flag, label
 def_doword ">CFA",   4,    0, TOcfa
   .int xt_ntTOxt
   .int xt_EXIT
 
-# ( nt -- flags ) \ get "data field address" from nt
+# ( nt -- addr ) \ get "data field address" from nt
 #          ascii  , len, flag, label
 def_doword ">DFA",   4,    0, TOdfa
   .int xt_ntTOxt
   .int xt_inc4
+  .int xt_EXIT
+
+# ( xt -- FR ) \ get FR flags of the word
+#           ascii  , len, flag, label
+def_doword "XT>&FR",   5,    0, xtTOfr
+  .int xt_dec4
   .int xt_EXIT
 
 .align 4
@@ -2729,16 +2755,28 @@ interpret_loop:
   cmp $0, (%ebp)  # see if count<=0
   jle interpret_eof
   call _2dup # keep track of word for error handlin
-  callXt $xt_find
+  callXt $xt_find # stack: ( addr count xt )
   cmp $0, (%ebp)  # see if nt=0
   je interpret_notfound
+  # if we are in runmode (STATE=0) then always execute the word
   cmp $0, var_state
-  jne interpret_runstate
-
-interpret_runstate: # always execute
+  je interpret_executext
+  # check if the word is IMMEDIATE, execute if so
+  call dup
+  callXt $xt_xtTOfr
+  dpop %eax  # &FR
+  andl $FR_TIME_MASK, %eax
+  cmp $FR_TIME_IMM, %eax
+  je interpret_executext
+  cmp $FR_TIME_IMM_PART, %eax
+  je interpret_executext
+  # else, compile the word into the dictionary
+  callXt $xt_pushDict 
+  jmp interpret_cont
+interpret_executext: # execute xt
   callXt $xt_ntTOxt
 interpret_cont:
-  dpop %eax
+  dpop %eax     # eax=xt
   call _2drop   # get rid of ( addr count )
   call _callXt  # execute xt
   jmp interpret_loop
