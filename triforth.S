@@ -300,12 +300,12 @@ testSuite: # ( -- )
   call testWord
   call assertCleanState
 
-  call test0x  # TODO: uncomment
+  # call test0x  # TODO: uncomment
   call testAlign4
   call test_ntTOother
   call testFind
-  call testCreate # TODO: uncomment
-  # call testInterpret
+  # call testCreate # TODO: uncomment
+  call testInterpret
   call assertCleanState
   ret
 
@@ -2399,7 +2399,7 @@ def_asmword "0X",   2,    0, _0x
   NEXT
 
 strTOhex: # ( addr count -- u )
-  # call dbgexit  # TODO: remove
+  call dbgexit  # TODO: remove
   movl $8, %eax
   call checkStackSize
   cmp $0, (%ebp)
