@@ -2947,6 +2947,8 @@ xt_testCOLON:
 .int xt_state, xt_FETCH, xt_lit, FALSE, xt_assertEq
 # start compilation, mimicking INTERPRET
 .int xt_word, xt_find, xt_ntTOxt, xt_execute  # :
+# Make sure state=compile
+.int xt_state, xt_FETCH, xt_lit, TRUE, xt_assertEq
 .int xt_dumpInfo
 .int xt_lit, testNewDefinedWordStr, xt_countnt, xt_find
 # Make sure the nt strings match
@@ -2960,8 +2962,6 @@ xt_testCOLON:
 .int xt_dup, xt_ntTOf0, xt_inc4, xt_dec, xt_cFETCH, xt_lit, 14, xt_assertEq
 # Make sure FR
 .int xt_dup, xt_ntTOfr, xt_FETCH, xt_lit, 0, xt_assertEq
-# Make sure state=compile
-.int xt_state, xt_FETCH, xt_lit, TRUE, xt_assertEq
 # Make sure xt
 .int xt_dup, xt_ntTOxt, xt_FETCH, xt_lit, DOCOL, xt_assertEq
 # manually finish compilation, mimicking INTERPRET
