@@ -110,6 +110,7 @@
 .equ ERR_NUMBER_INVALID,0x305
 .equ ERR_UNKNOWN_WORD,0x306
 .equ ERR_STATE_REDUNDANT,0x307
+.equ ERR_STACK_UNDERFLOW,0x308
 
 .equ FALSE, 0
 .equ TRUE, -1
@@ -306,6 +307,8 @@ testSuite: # ( -- )
   call testFind
   call testCreate
   call testCOLON
+  call assertCleanState
+
   call testInterpret
   call assertCleanState
   ret
@@ -653,8 +656,8 @@ checkStackSize: # %eax:needSize ( )
   jg 1f
   ret
 1:
-  movl $RC_STACK_UNDERFLOW, %ebx
-  call sysexit
+  movl $ERR_STACK_UNDERFLOW, panicErr
+  call *(panic)
 
 swap: # ( a b -- b a )
   # Forth SWAP
@@ -900,6 +903,13 @@ typent: # ( addr -- )
   # Type a null nerminated str
   call countnt
   call type
+  ret
+
+typentln: # ( addr -- )
+  # Type a null nerminated str ending w/ newline
+  call typent
+  dpush $'\n'
+  call emit
   ret
 
 testIoBuffer:
@@ -2716,6 +2726,8 @@ flags:
 .int xt_lit, nt_lit, xt_ntTOxt, xt_lit, xt_lit, xt_assertEq
 # # nt>xt: not aligned
 .int xt_lit, nt_word, xt_ntTOxt, xt_lit, xt_word, xt_assertEq
+# Test this because I've hit issues
+.int xt_lit, nt_ENDWORD, xt_ntTOfr, xt_FETCH, xt_lit, FR_TIME_IMM, xt_assertEq
 .int xt_assertEmpty, xt_lit, test_ntTOotherStr, xt_countnt, xt_typeTestPass
 .int xt_EXIT
 test_ntTOother:
@@ -2730,6 +2742,7 @@ test_ntTOother:
   call test_ntTOother_constructed
   callXt $xt_test_ntTOother
   ret
+.align 4
 test_ntTOother_constructed: # ( nt -- )
   # Test a constructed dict entry which always contains
   # certain data (but not the same name)
@@ -2747,11 +2760,22 @@ test_ntTOother_constructed: # ( nt -- )
   movl $0x43, %ebx
   call assertEaxEbxEq
 
+  # call dup
   callXt $xt_ntTOxt
   dpop %eax
   movl (%eax), %eax
   movl $0x44, %ebx
   call assertEaxEbxEq
+
+  # call dup
+  # callXt $xt_ntTOxt
+  # callXt $xt_xtTOfr
+  # dpop %eax
+  # movl (%eax), %eax
+  # movl $0x43, %ebx
+  # call assertEaxEbxEq
+
+  # call drop
   ret
 
 # ( addr count -- nt ) \ finds the string in the dictionary, returning it's nt (name token)
