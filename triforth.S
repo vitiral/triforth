@@ -274,44 +274,44 @@ testSuite: # ( -- )
   # We are doing test driven development. All assembly tests we write should go
   # here. You can ignore them for now.
   # TODO: uncomment all!!!
-  # call testMemLocations
-  # call assertEmpty
-  # call testAsserts
-  # call testIndirectCall
-  # call testPanicHandle
-  # call testDsPushPop
-  # call testModDIV
-  # call testEbxStackSize
-  # call testDepth
-  # call testStackBasic
-  # call assertCleanState
+  call testMemLocations
+  call assertEmpty
+  call testAsserts
+  call testIndirectCall
+  call testPanicHandle
+  call testDsPushPop
+  call testModDIV
+  call testEbxStackSize
+  call testDepth
+  call testStackBasic
+  call assertCleanState
 
-  # call testEmit
-  # call testCountNt
-  # call testIoBuffer
-  # call testDOT
-  # call testDOTs
-  # call testMUL
-  # call testDumpInfo
-  # call assertCleanState
+  call testEmit
+  call testCountNt
+  call testIoBuffer
+  call testDOT
+  call testDOTs
+  call testMUL
+  call testDumpInfo
+  call assertCleanState
 
-  # call testNEXT
-  # call testEXIT
-  # call testDictSimple
-  # call assertCleanState
+  call testNEXT
+  call testEXIT
+  call testDictSimple
+  call assertCleanState
 
-  # call testDictBuiltin
-  # call testKey
-  # call testWord
-  # call assertCleanState
+  call testDictBuiltin
+  call testKey
+  call testWord
+  call assertCleanState
 
-  # # call test0x  # TODO: uncomment
-  # call testAlign4
-  # call test_ntTOother
-  # call testFind
-  # call testCreate # TODO: uncomment
+  call test0x  # TODO: uncomment
+  call testAlign4
+  call test_ntTOother
+  call testFind
+  call testCreate # TODO: uncomment
   call testCOLON
-  # call testInterpret
+  call testInterpret
   call assertCleanState
   ret
 
