@@ -141,10 +141,6 @@
 .equ F0_RESL,              0xE0000000   # 3b: top 3 bits unused
 
 ## FlagR - must be the right-most flags 
-# TODO: implement this for module system
-# TODO: move TYPE and TIME here so that they can be looked up from only xt and
-#   F0 can be excluded from run-only.
-
 # Byte 1
 .equ FR_INP_MASK,          0x00000007   # 3b: len input types mask
 .equ FR_OUT_MASK,          0x00000038   # 3b: len output types mask
@@ -273,7 +269,6 @@ testNewDefinedWordStr: .ascii "NEWDEFINEDWORD\0"
 testSuite: # ( -- )
   # We are doing test driven development. All assembly tests we write should go
   # here. You can ignore them for now.
-  # TODO: uncomment all!!!
   call testMemLocations
   call assertEmpty
   call testAsserts
@@ -305,11 +300,11 @@ testSuite: # ( -- )
   call testWord
   call assertCleanState
 
-  call test0x  # TODO: uncomment
+  call test0x
   call testAlign4
   call test_ntTOother
   call testFind
-  call testCreate # TODO: uncomment
+  call testCreate
   call testCOLON
   call testInterpret
   call assertCleanState
@@ -1571,7 +1566,6 @@ def_asmword \name , \namelen , \flags , \label
 
 # Finally, this macro allows for defining a word in terms of calling other
 # words.
-# TODO: write test to ensure these are equivalent
 .macro def_doword name , namelen , flags=0 , label
   .align 4
 nt_\label :
@@ -3104,10 +3098,10 @@ xt_testInterpret_inputstream:
 xt_testInterpret_pnt:
 .int DOCOL, xt_lit, testInterpretStr, xt_countnt, xt_typeTestPass, xt_EXIT
 testInterpret:
-  # movl $testTheAnswerFile, %ebx
-  # call openNtEbx
-  # callXt $xt_testInterpret_theAnswer
-  # call closeKeyFd
+  movl $testTheAnswerFile, %ebx
+  call openNtEbx
+  callXt $xt_testInterpret_theAnswer
+  call closeKeyFd
 
   call openSimpleMathFile
   callXt $xt_testInterpret_inputstream
