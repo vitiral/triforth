@@ -100,8 +100,8 @@
 .equ RC_PANIC,104
 
 # Our Panic Error Codes
-.equ ERR_PSTACK_OVERFLOW,0x300
-.equ ERR_PSTACK_UNDERFLOW,0x301
+.equ ERR_DSTACK_OVERFLOW,0x300
+.equ ERR_DSTACK_UNDERFLOW,0x301
 .equ ERR_ASCII_BOUNDS,0x302
 .equ ERR_MAX_WORD_LEN,0x303
 .equ ERR_WORD_MISSING,0x304
@@ -472,7 +472,7 @@ checkPushDs:
   ret
 1:
   addl $4, %ebp
-  movl $ERR_PSTACK_OVERFLOW, panicErr
+  movl $ERR_DSTACK_OVERFLOW, panicErr
   call *(panic)
   jmp unreachable
 
@@ -490,7 +490,7 @@ checkPopDs:
   ret
 1:
   subl $4, %ebp
-  movl $ERR_PSTACK_UNDERFLOW, panicErr
+  movl $ERR_DSTACK_UNDERFLOW, panicErr
   call *(panic)
   jmp unreachable
 
@@ -1162,7 +1162,9 @@ defaultPanic: # ( -- )
   call countnt
   call type
   movl panicErr, %eax
-  call DOT
+  dpush %eax
+  dpush $16
+  call DOTbase
   dpush $'\n'
   call emit
   movl $RC_PANIC, %ebx
@@ -2802,10 +2804,11 @@ interpret_unknown:
 xt_testInterpret_theAnswer:
 .int DOCOL
 .int xt_interpret, xt_lit, 0x42, xt_assertEq
-.int xt_lit, testInterpretStr, xt_countnt, xt_typeTestPass
 .int xt_EXIT
 xt_testInterpret_inputstream:
 .int DOCOL, xt_interpret, xt_assertEmpty, xt_EXIT
+xt_testInterpret_pnt:
+.int xt_lit, testInterpretStr, xt_countnt, xt_typeTestPass, xt_EXIT
 testInterpret:
   movl $testTheAnswerFile, %ebx
   call openNtEbx
@@ -2815,6 +2818,8 @@ testInterpret:
   call openSimpleMathFile
   callXt $xt_testInterpret_inputstream
   call closeKeyFd
+
+  callXt $xt_testInterpret_pnt
   ret
 
 # !!! NOTE: this must be the last word (or update var_latest) !!!
