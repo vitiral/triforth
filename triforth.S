@@ -1235,9 +1235,6 @@ dbgexit: # ( -- )
   jmp sysexit
 
 defaultPanic: # ( -- )
-  # TODO: grow the data stack with emergency reservers
-  # The default panic implemention uses the above tools to ouput
-  # relevant panic messages.
   call dumpInfo
   dpush $panicStr
   call typent
@@ -3055,43 +3052,30 @@ interpret_loop:
   callXt $xt_word
   cmp $0, (%ebp)  # see if count<=0
   jle interpret_eof
-  call _2dup # keep track of word for error handlin
-  callXt $xt_find # stack: ( addr count xt )
+  call _2dup # keep track of word for error handling
+  callXt $xt_find # stack: ( addr count nt )
   cmp $0, (%ebp)  # see if nt=0
   je interpret_notfound
+  callXt $xt_ntTOxt  # ( addr count xt )
   # if we are in runmode (STATE=0) then always execute the word
   cmp $0, var_state
-  je interpret_executext
+  je interpret_execute_xt
   # check if the word is IMMEDIATE, execute if so
   call dup
   callXt $xt_xtTOfr
-  dpop %eax  # &FR
+  dpop %eax  # eax=&FR stack: ( addr count xt )
   andl $FR_TIME_MASK, %eax
   cmp $FR_TIME_IMM, %eax
-  je interpret_executext
+  je interpret_execute_xt
   cmp $FR_TIME_IMM_PART, %eax
-  je interpret_executext
+  je interpret_execute_xt
   # else, compile the word into the dictionary
   callXt $xt_pushDict 
-  call _2drop
-  movl $0x100, %ebx   # TODO: remove
-  call dumpInfo       # TODO: remove
+  call _2drop # drop ( addr count )
   jmp interpret_loop
-interpret_executext: # execute xt
-  call dup      # TODO: remove
-  callXt $xt_ntTOxt
-  call swap     # TODO: remove
-  dpop %ebx     # ebx=nt TODO: remove
+interpret_execute_xt: # execute xt
   dpop %eax     # eax=xt
   addl $8, %ebp # 2drop, but we can't pollute %eax
-
-  dpush %eax        # TODO: remove
-  subl $32, (%ebp)  # TODO: remove
-  dpush $64         # TODO: remove
-  call dump         # TODO: remove
-  movl $heapMin, %ecx
-  call dumpInfo     # TODO: remove
-
   call _callXt  # execute eax
   jmp interpret_loop
 interpret_eof:
