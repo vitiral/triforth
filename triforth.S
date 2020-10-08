@@ -121,35 +121,41 @@
 
 ## Flag 0 (left-most flag)
 # Byte 1 (least-significant right-most byte)
-.equ F0_RES,               0x000000FF  # 8b: reserved
-# Byte 2
-.equ F0_INP_MASK,          0x00000700  # 3b: input size mask
-.equ F0_OUT_MASK,          0x00003800  # 3b: output size mask
-.equ F0_TIME_MASK,         0x0000C000  # 2b: time mask (run/compile/etc)
-.equ F0_TIME_RUN,          0x00000000  # na: runtime only word
-.equ F0_TIME_IMM,          0x00004000  # na: immediate only word
-.equ F0_TIME_IMM_PART,     0x00008000  # na: immediate part of immediate+run
-.equ F0_TIME_RUN_PART,     0x0000C000  # na: run part of immediate+run
-# Byte 3
-.equ F0_IMM_SIZE,          0x00FF0000  # 8b: immediate code size
+.equ F0_RES,               0x000000FF   # 8b: reserved
+# Byte 2+3
+.equ F0_LINENO,            0x00FFFF00   # 16b: line number
 # Byte 4 (most-significant left-most byte)
-.equ F0_NAMELEN_BYTE_MASK, 0x0000001F  # na: mask used for left-most byte
-.equ F0_NAMELEN_MASK,      0x1F000000  # 5b: name's length (up to 32)
-.equ F0_NAMELEN_SHIFT,     24          # na: number of bits to shift
-.equ F0_TYPE_MASK,         0xE0000000  # 3b: the type (8 types)
-.equ F0_TYPE_UNTYPED,      0x00000000  # na: untyped word
-.equ F0_TYPE_TYWORD,       0x20000000  # na: typed word
-.equ F0_TYPE_STRUCT,       0x40000000  # na: struct (data structure)
-.equ F0_TYPE_METHOD,       0x60000000  # na: method (attached typed word_
-.equ F0_TYPE_INTERFACE,    0x80000000  # na: interface (collection of methods)
-.equ F0_TYPE_MODULE,       0xA0000000  # na: module (module-name and file-path)
-.equ F0_TYPE_RES1,         0xC0000000  # na: type reserved
-.equ F0_TYPE_RES2,         0xE0000000  # na: type reserved
+.equ F0_NAMELEN_MASK,      0x1F000000   # 5b: name's length (up to 32)
+.equ F0_NAMELEN_SHIFT,     24           # na: number of bits to shift
+.equ F0_NAMELEN_BYTE_MASK, 0x1F         # na: mask used for left-most byte
 
-## Flag1 TODO: implement this for module system
-.equ F1_MODULE_ID,        0x000000FF  # 8b: module id this word is from
-.equ F1_RES,              0x0000FF00  # 8b: reserved
-.equ F1_LINENO,           0xFFFF0000  # 16b: line number
+## FlagR - must be the right-most flags 
+# TODO: implement this for module system
+# TODO: move TYPE and TIME here so that they can be looked up from only xt and
+#   F0 can be excluded from run-only.
+
+# Byte 1
+.equ FR_INP_MASK,          0x00000007   # 3b: input types len mask
+.equ FR_OUT_MASK,          0x00000038   # 3b: output types len mask
+.equ FR_TIME_MASK,         0x000000C0   # 2b: time mask (run/compile/etc)
+.equ FR_TIME_RUN,          0x00000000   # na: runtime only word
+.equ FR_TIME_IMM,          0x00000040   # na: immediate only word
+.equ FR_TIME_IMM_PART,     0x00000080   # na: immediate part of immediate+run
+.equ FR_TIME_RUN_PART,     0x000000C0   # na: run part of immediate+run
+# Byte 2
+.equ FR_IMM_SIZE,          0x0000FF00  # 8b: immediate code size
+# Byte 3
+.equ FR_RES3,              0x00FF0000  # 8b: unused byte
+# Byte 4
+.equ FR_RES4,              0x0F000000  # 4b: unused bits
+.equ FR_TYPE_MASK,         0xF0000000  # 4b: the type (16 supported)
+.equ FR_TYPE_UNTYPED,      0x00000000  # na: untyped word
+.equ FR_TYPE_TYWORD,       0x10000000  # na: typed word
+.equ FR_TYPE_STRUCT,       0x20000000  # na: struct (data structure)
+.equ FR_TYPE_METHOD,       0x30000000  # na: method (attached typed word_
+.equ FR_TYPE_INTERFACE,    0x40000000  # na: interface (collection of methods)
+.equ FR_TYPE_MODULE,       0x50000000  # na: module (module-name and file-path)
+.equ FR_TYPE_RES,          0x60000000  # na: 6-F unused
 
 
 ######################################################
@@ -170,9 +176,6 @@ ioBuffer: .space 128
 ioBufferLen: .int 0  # number of chars in ioBuffer
 .equ MAX_WORD_LEN,32
 wordBuffer: .space MAX_WORD_LEN
-state: .int 0
-.equ FSTATE_COMPILE, 0x01  # 0=run 1=compile
-.equ NOT_FSTATE_COMPILE, ~FSTATE_COMPILE
 
 # Word info
 .equ FLAG_WORD_IMMEDIATE, 0x01 # whether the word is immediate or not
@@ -1351,7 +1354,8 @@ cstr_EXIT:
   .ascii "EXIT" # the word name
   .align 4
 flags_EXIT:
-  .int (4<<F0_NAMELEN_SHIFT)  # flags (just the NAMELEN)
+  .int (4<<F0_NAMELEN_SHIFT)  # F0
+  .int 0                      # FR
 xt_EXIT:
   .int word_EXIT # xt
 
@@ -1364,7 +1368,8 @@ cstr_MUL:
   .ascii "*"    # the word name
   .align 4
 flags_MUL:
-  .int (3<<F0_NAMELEN_SHIFT)  # flags (just the NAMELEN)
+  .int (3<<F0_NAMELEN_SHIFT)  # F0
+  .int 0                      # FR
 xt_MUL:
   .int word_MUL # xt
 
@@ -1413,7 +1418,8 @@ cstr_\label :
   .ascii "\name"       # the ascii name itself
   .align 4             # padding to next 4 byte boundary
 flags_\label :
-  .int (\namelen<<F0_NAMELEN_SHIFT) + \flags          # flags for the word
+  .int \namelen << F0_NAMELEN_SHIFT # F0
+  .int \flags                       # FR
 xt_\label :
   .int word_\label
 word_\label :
@@ -1441,7 +1447,8 @@ cstr_\label :
   .ascii "\name"        # the ascii name itself
   .align 4              # padding to next 4 byte boundary
 flags_\label :
-  .int \flags           # flags for the word
+  .int \namelen << F0_NAMELEN_SHIFT # F0
+  .int \flags                       # FR
 xt_\label :
   .int DOCOL
 word_\label :           # follow with .int for xt's to call
@@ -2345,11 +2352,11 @@ def_var "'INTERPRET_UNKNOWN", 18,    0, XTinterpret_unknown , 0
 def_const "RMAX" ,                4, rstackMax
 def_const "DOCOL",                5, DOCOL
 def_const "F0_NAMELEN",          10, F0_NAMELEN_MASK
-def_const "F0_TIME_MASK",        12, F0_TIME_MASK
-def_const "F0_TIME_RUN",         11, F0_TIME_RUN
-def_const "F0_TIME_IMM",         11, F0_TIME_IMM
-def_const "F0_TIME_IMM_PART",    16, F0_TIME_IMM_PART
-def_const "F0_TIME_RUN_PART",    16, F0_TIME_RUN_PART
+def_const "FR_TIME_MASK",        12, FR_TIME_MASK
+def_const "FR_TIME_RUN",         11, FR_TIME_RUN
+def_const "FR_TIME_IMM",         11, FR_TIME_IMM
+def_const "FR_TIME_IMM_PART",    16, FR_TIME_IMM_PART
+def_const "FR_TIME_RUN_PART",    16, FR_TIME_RUN_PART
 
 ##############################
 # Compiler/Interpreter Internals
@@ -2364,8 +2371,8 @@ def_const "F0_TIME_RUN_PART",    16, F0_TIME_RUN_PART
 # HERE to point to the appropriate places. Items are insert using the `,` or
 # `C,` operators.
 #
-# How does code update the dictionary entry? Any word flagged as F0_TIME_MASK ==
-# F0_TIME_IMM or F0_TIME_IMM_RUN gets executed immediately instead of being
+# How does code update the dictionary entry? Any word flagged as FR_TIME_MASK ==
+# FR_TIME_IMM or FR_TIME_IMM_RUN gets executed immediately instead of being
 # stored in the data section. Alternatively, if F0_STATE_COMPILE is set in the global
 # STATE then all words (immediate or not) will be executed instead of
 # compiled.
@@ -2446,24 +2453,32 @@ def_asmword "ALIGN4",  6,    0, align4
   dpush %eax
   NEXT
 
-# ( nt -- flags ) \ given the nt return the address of flags
-#               ascii  , len, flag, label
-def_asmword "NT>&FLAGS0",   9,    0, ntTOflags0
+# ( nt -- F0 ) \ given the nt return the address of F0
+#            ascii  , len, flag, label
+def_asmword "NT>&F0",   6,    0, ntTOf0
   dpop %eax           # address of nt
   addl $4, %eax       # start of cstr (count)
   movl $0, %ebx
   movb (%eax), %bl    # ebx=count
   addl %ebx, %eax     # eax=eax+count+1
   addl $1, %eax
-  call eax_align4     # align, as flags is always aligned
+  call eax_align4     # align, as F0 is always aligned
   dpush %eax
   NEXT
 
+# ( nt -- FR ) \ given the nt return the address of FR
+#            ascii  , len, flag, label
+def_asmword "NT>&FR",   6,    0, ntTOfr
+  callXt $xt_ntTOf0
+  addl $4, (%ebp)
+  NEXT
+
+
 # ( nt -- flags ) \ given the nt return the xt
-#               ascii  , len, flag, label
-def_asmword "NT>XT",   9,    0, ntTOxt
-  callXt $xt_ntTOflags0
-  addl $4, (%ebp) # xt is directly after &flags
+#           ascii  , len, flag, label
+def_asmword "NT>XT",   5,    0, ntTOxt
+  callXt $xt_ntTOfr
+  addl $4, (%ebp) # xt is directly after right-most flag (FR)
   NEXT
 
 # ( nt -- addr count ) \ given the nt return the name
@@ -2490,12 +2505,12 @@ def_doword ">DFA",   4,    0, TOdfa
 xt_test_ntTOother:
 .int DOCOL
 # flags: already aligned, cstr=4bytes
-.int xt_lit, nt_lit, xt_ntTOflags0, xt_lit, flags_lit, xt_assertEq
-# flags: not aligned, cstr=5bytes
-.int xt_lit, nt_word, xt_ntTOflags0, xt_lit, flags_word, xt_assertEq
+.int xt_lit, nt_lit, xt_ntTOf0, xt_lit, flags_lit, xt_assertEq
+# # flags: not aligned, cstr=5bytes
+.int xt_lit, nt_word, xt_ntTOf0, xt_lit, flags_word, xt_assertEq
 # nt>xt: already aligned
 .int xt_lit, nt_lit, xt_ntTOxt, xt_lit, xt_lit, xt_assertEq
-# nt>xt: not aligned
+# # nt>xt: not aligned
 .int xt_lit, nt_word, xt_ntTOxt, xt_lit, xt_word, xt_assertEq
 .int xt_assertEmpty, xt_lit, test_ntTOotherStr, xt_countnt, xt_typeTestPass
 .int xt_EXIT
@@ -2602,7 +2617,7 @@ xt_testCreate:
 # Find the word
 .int xt_lit, testCreatedWordUpper, xt_countnt, xt_find
 # Flags are as expected (namelen)
-.int xt_dup, xt_ntTOflags0, xt_FETCH, xt_lit, 11<<F0_NAMELEN_SHIFT, xt_assertEq
+.int xt_dup, xt_ntTOf0, xt_FETCH, xt_lit, 11<<F0_NAMELEN_SHIFT, xt_assertEq
 # Stored name is uppercased
 .int xt_ntTOname, xt_lit, testCreatedWordUpper, xt_countnt
 .int xt_ceq, xt_assertTrue
@@ -2623,7 +2638,7 @@ def_asmword ",",  1,    0, pushDict
 
 # ( -- ) \ Set compilation STATE to false
 #        ascii  , len,       flag, label
-def_asmword "[" ,  1 , F0_TIME_IMM, staterun
+def_asmword "[" ,  1 , FR_TIME_IMM, staterun
   movl $FALSE, var_state
   NEXT
 
@@ -2646,36 +2661,35 @@ def_doword ":",   1,    0, STARTWORD
 
 # ( -- ) \ end compilation from ":"
 #      ascii  , len,        flag, label
-def_doword ";",   1, F0_TIME_IMM, ENDWORD
+def_doword ";",   1, FR_TIME_IMM, ENDWORD
   .int xt_lit, xt_EXIT, xt_pushDict  # compile EXIT
   .int xt_staterun # [ go back to runmode
   .int xt_EXIT
 
 # ( -- ) \ tag currently compiling word as TIME_IMM(ediate)
 #          ascii, len, flag, label
-def_doword "IMM",   3, F0_TIME_IMM, imm
-  .int xt_latest, xt_ntTOflags0, xt_dup
+def_doword "IMM",   3, FR_TIME_IMM, imm
+  .int xt_latest, xt_ntTOfr, xt_dup
   # Clear TIME flags
-  .int xt_F0_TIME_MASK, xt_invert, xt_and, xt_STORE
+  .int xt_FR_TIME_MASK, xt_invert, xt_and, xt_STORE
   # Store TIME_IMM
-  .int xt_F0_TIME_IMM, xt_or, xt_STORE
+  .int xt_FR_TIME_IMM, xt_or, xt_STORE
   .int xt_EXIT
 
 # ( -- ) \ forth compliance, same as IMM
 #          ascii, len, flag, label
-def_doword "IMMEDIATE",   9, F0_TIME_IMM, immediate
+def_doword "IMMEDIATE",   9, FR_TIME_IMM, immediate
   .int xt_imm, xt_EXIT
 
 # ( -- xt ) \ Put the xt of the next word onto the stack.
 #          ascii, len, flag, label
 def_asmword "'",   1,    0, xt
   lodsl       # do what is in NEXT
-  dpush %eax  # but push on stack instead of jmp *(...)
+  dpush %eax  # but push xt on stack instead of jmp *(...)
   NEXT
 
 # ( -- ) \ add offset (next cell) to the forth instruction pointer
-#   \ performing an unconditional jump. The offset is left
-#   \ on the stack.
+#   \ performing an unconditional jump.
 #              ascii, len, flag, label
 def_asmword "BRANCH",   6,    0, branch
   addl (%esi), %esi
@@ -2718,7 +2732,12 @@ interpret_loop:
   callXt $xt_find
   cmp $0, (%ebp)  # see if nt=0
   je interpret_notfound
+  cmp $0, var_state
+  jne interpret_runstate
+
+interpret_runstate: # always execute
   callXt $xt_ntTOxt
+interpret_cont:
   dpop %eax
   call _2drop   # get rid of ( addr count )
   call _callXt  # execute xt
