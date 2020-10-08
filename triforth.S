@@ -255,6 +255,7 @@ testCreatedWord: .ascii "createdword\0"
 testCreatedWordUpper: .ascii "CREATEDWORD\0"
 test3Str: .ascii "3\0"
 test3CStr: .ascii "3C\0"
+test42Str: .ascii "42\0"
 
 .align 4
 
@@ -299,12 +300,12 @@ testSuite: # ( -- )
   call testWord
   call assertCleanState
 
-  call test0x
+  call test0x  # TODO: uncomment
   call testAlign4
   call test_ntTOother
   call testFind
-  call testCreate
-  call testInterpret
+  call testCreate # TODO: uncomment
+  # call testInterpret
   call assertCleanState
   ret
 
@@ -2398,6 +2399,7 @@ def_asmword "0X",   2,    0, _0x
   NEXT
 
 strTOhex: # ( addr count -- u )
+  # call dbgexit  # TODO: remove
   movl $8, %eax
   call checkStackSize
   cmp $0, (%ebp)
@@ -2450,24 +2452,29 @@ xt_test0x:
 .int xt_lit, test0xStr, xt_countnt, xt_typeTestPass
 .int xt_EXIT
 test0x:
+  dpush $0x3
   dpush $test3Str
-  call countnt
-  call strTOhex
-  dpop %eax
-  movl $3, %ebx
-  call assertEaxEbxEq
+  call test0x_str
 
+  dpush $0x3C
   dpush $test3CStr
-  call countnt
-  call strTOhex
-  dpop %eax
-  movl $0x3C, %ebx
-  call assertEaxEbxEq
+  call test0x_str
+
+  dpush $0x42
+  dpush $test42Str
+  call test0x_str
 
   call openSimpleMathFile
   callXt $xt_test0x
   call closeKeyFd
   call assertCleanState
+  ret
+test0x_str: # ( expected strnt -- )
+  call countnt
+  call strTOhex
+  dpop %eax
+  dpop %ebx
+  call assertEaxEbxEq
   ret
 
 ##############################
@@ -2750,6 +2757,8 @@ test_ntTOother_constructed: # ( nt -- )
 #                      \ or 0 if not found
 #           ascii  , len, flag, label
 def_asmword "FIND" , 4 ,    0 , find
+  movl $8, %eax
+  call checkStackSize
   movl var_latest, %eax
   dpush %eax    # points to the nt of word we are looking at
   call rrot     # Stack: ( nt addr count )
@@ -2783,12 +2792,14 @@ find_not_found:
 .align 4
 xt_testFind:
 .int DOCOL
-# Find DNE
+# Cannot find word which DNE
 .int xt_lit, testAbcStr, xt_countnt, xt_find, xt_lit, 0, xt_assertEq
 # Find SWAP
 .int xt_lit, cstr_swap, xt_count, xt_find, xt_lit, nt_swap, xt_assertEq
 # Find EXIT
 .int xt_lit, cstr_EXIT, xt_count, xt_find, xt_lit, nt_EXIT, xt_assertEq
+# Find 0x
+.int xt_lit, cstr__0x, xt_count, xt_find, xt_lit, nt__0x, xt_assertEq
 .int xt_lit, testFindStr, xt_countnt, xt_typeTestPass
 .int xt_EXIT
 .align 4
@@ -2806,6 +2817,8 @@ DOCREATE: # ( -- xt-body ) \ the (default) execution word for CREATE. Simply
 # ( addr count -- nt ) \ create the next word on the input stream in the dictionary
 #             ascii  , len, flag, label
 def_asmword "CREATE" ,  6 ,    0 , create
+  movl $8, %eax
+  call checkStackSize
   cmp $MAX_WORD_LEN, (%ebp) # check if count > max
   jg create_fail
   movl var_here, %edi
@@ -2984,15 +2997,17 @@ interpret_loop:
   callXt $xt_pushDict 
   jmp interpret_loop
 interpret_executext: # execute xt
+  call dup
   callXt $xt_ntTOxt
   dpop %eax     # eax=xt
-  subl $20, %eax
-  dpush %eax
-  dpush $28
-  call dump
-  movl nt__0x, %ebx
-  movl xt__0x, %ecx
+  movl %eax, %ebx
+  subl $28, %ebx
+  dpush %ebx
+  dpush $40
+  movl $nt__0x, %ebx
+  movl $xt__0x, %ecx
   call dumpInfo # TODO: XT is not correct
+  call dump
   addl $8, %ebp # 2drop, but we can't pollute %eax
   call _callXt  # execute xt
   jmp interpret_loop
@@ -3012,6 +3027,22 @@ interpret_notfound:
 interpret_unknown:
   callXt var_XTinterpret_unknown
   jmp interpret_loop
+
+#                   found-xt act-nt  act-xt
+# Registers e(a-d)x: 804C288 804C278 804C288 1 e[ds]i: 2 804E804 
+# Stack< 3 > 804DA1C 2 804C278 
+# DUMP 804C26C 
+# 804C26C : C330EB80 
+# 804C270 : F701C383 
+# 804C274 : C3DB 
+# 804C278 : 804C070   act-nt
+# 804C27C : 583002 
+# 804C280 : 2000000 
+# 804C284 : 0 
+# 804C288 : 804C28C   found-xt act-xt
+# 804C28C : 4C084B8 
+# 804C290 : DD9EE808 
+
 
 .align 4
 xt_testInterpret_theAnswer:
