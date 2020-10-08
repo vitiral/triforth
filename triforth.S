@@ -241,10 +241,12 @@ testAlign4Str: .ascii "testAlign4\0"
 test_ntTOotherStr: .ascii "test_ntTOother\0"
 testFindStr: .ascii "testFind\0"
 testCreateStr: .ascii "testCreate\0"
+testCOLONStr: .ascii "testCOLON\0"
 testInterpretStr: .ascii "testInterpret\0"
 
 # Test Files
 testSimpleMathFile: .ascii "tests/simplemath.fs\0"
+testDefineFile: .ascii "tests/define.fs\0"
 testTheAnswerFile: .ascii "tests/theanswer.fs\0"
 
 # Test Inputs
@@ -256,6 +258,7 @@ testCreatedWordUpper: .ascii "CREATEDWORD\0"
 test3Str: .ascii "3\0"
 test3CStr: .ascii "3C\0"
 test42Str: .ascii "42\0"
+testNewDefinedWordStr: .ascii "NEWDEFINEDWORD\0"
 
 .align 4
 
@@ -306,7 +309,8 @@ testSuite: # ( -- )
   # call test_ntTOother
   # call testFind
   # call testCreate # TODO: uncomment
-  call testInterpret
+  call testCOLON
+  # call testInterpret
   call assertCleanState
   ret
 
@@ -1580,11 +1584,11 @@ cstr_\label :
   .ascii "\name"        # the ascii name itself
   .align 4              # padding to next 4 byte boundary
 flags_\label :
-  .int \namelen << F0_NAMELEN_SHIFT # F0
-  .int \flags                       # FR
+  .int ( \namelen << F0_NAMELEN_SHIFT ) # F0
+  .int \flags                           # FR
 xt_\label :
   .int DOCOL
-word_\label :           # follow with .int for xt's to call
+# follow with .int for xt's to call
 .endm
 
 # ( a b -- b a )
@@ -1993,8 +1997,6 @@ def_asmcmp ">="  , 2 ,   0 , GTE , jge
 def_asmword "LIT",    3,   0,    lit
   lodsl # see NEXT for what this does.
   dpush %eax
-  movl $0x80, %edi  # TODO: remove
-  call dumpInfo
   NEXT
 
 ##############################
@@ -2402,16 +2404,12 @@ def_asmword "0X",   2, FR_TIME_IMM, _0x
   cmp $0, var_state
   jne 1f
   jmp 2f
-  movl $0x60, %edi # TODO: remove
-  call dumpInfo
 1:
   # Compile mode: compile the literal into the word
   dpush $xt_lit
   callXt $xt_pushDict
   callXt $xt_pushDict
 2:
-  movl $0x61, %edi # TODO: remove
-  call dumpInfo
   NEXT
 
 strTOhex: # ( addr count -- u )
@@ -2912,7 +2910,7 @@ def_asmword "]" ,  1 ,    0, statecompile
 
 # ( -- ) \ The forth ":" to define a new word
 #      ascii  , len, flag, label
-def_doword ":",   1,    0, STARTWORD
+def_doword ":",   1,    0, COLON
   # Create the next word and set correct xt
   .int xt_word # ( addr count )
   .int xt_create, xt_ntTOxt
@@ -2921,12 +2919,44 @@ def_doword ":",   1,    0, STARTWORD
   .int xt_statecompile # start compiling!
   .int xt_EXIT
 
+
 # ( -- ) \ end compilation from ":"
 #      ascii  , len,        flag, label
 def_doword ";",   1, FR_TIME_IMM, ENDWORD
   .int xt_lit, xt_EXIT, xt_pushDict  # compile EXIT
   .int xt_staterun # [ go back to runmode
   .int xt_EXIT
+
+
+.align 4
+xt_testCOLON:
+.int DOCOL
+.int xt_here, xt_FETCH, xt_rpush
+.int xt_COLON
+.int xt_dumpInfo
+.int xt_lit, testNewDefinedWordStr, xt_countnt, xt_find
+# Make sure the nt strings match
+.int xt_dup, xt_ntTOstr, xt_lit, testNewDefinedWordStr, xt_countnt
+.int    xt_ceq, xt_assertTrue
+# Make sure previous HERE = nt
+.int xt_dup, xt_rpop, xt_assertEq
+# Make sure str len is as expected in cstr
+.int xt_dup, xt_inc4, xt_cFETCH, xt_lit, 14, xt_assertEq
+# Make sure str len is as expected in F0 TODO: YAY an error!
+.int xt_dup, xt_ntTOf0, xt_cFETCH, xt_lit, 14, xt_assertEq
+
+# drop nt and exit
+.int xt_drop, xt_EXIT
+xt_testCOLON_pnt:
+.int DOCOL, xt_lit, testCOLONStr, xt_countnt, xt_typeTestPass, xt_EXIT
+testCOLON:
+  movl $testDefineFile, %ebx
+  call openNtEbx
+  callXt $xt_testCOLON
+  call closeKeyFd
+  
+  callXt $xt_testCOLON_pnt
+  ret
 
 # ( -- ) \ tag currently compiling word as TIME_IMM(ediate)
 #          ascii, len, flag, label
@@ -2987,17 +3017,11 @@ def_asmword "EXECUTE",   7,    0, execute
 #                 ascii, len, flag, label
 def_asmword "INTERPRET",   9,    0, interpret
 interpret_loop:
-  movl $0x10, %edi  # TODO: remove
-  call dumpInfo
   callXt $xt_word
-  movl $0x11, %edi  # TODO: remove
-  call dumpInfo
   cmp $0, (%ebp)  # see if count<=0
   jle interpret_eof
   call _2dup # keep track of word for error handlin
   callXt $xt_find # stack: ( addr count xt )
-  movl $0x12, %edi  # TODO: remove
-  call dumpInfo
   cmp $0, (%ebp)  # see if nt=0
   je interpret_notfound
   # if we are in runmode (STATE=0) then always execute the word
@@ -3014,37 +3038,29 @@ interpret_loop:
   je interpret_executext
   # else, compile the word into the dictionary
   callXt $xt_pushDict 
-  movl $0x13, %edi  # TODO: remove
-  call dumpInfo
   call _2drop
-  movl $0x14, %edi  # TODO: remove
-  call dumpInfo
+  movl $0x100, %ebx   # TODO: remove
+  call dumpInfo       # TODO: remove
   jmp interpret_loop
 interpret_executext: # execute xt
-  call dup          # TODO: remove
+  call dup      # TODO: remove
   callXt $xt_ntTOxt
-  call swap         # TODO: remove
-  dpop %ecx         # TODO: remove
-  movl $0x15, %edi  # TODO: remove
-  call dumpInfo     # TODO: remove
-  call dup          # TODO: remove
-  subl $24, (%ebp)  # TODO: remove
-  dpush $32         # TODO: remove
-  call dump         # TODO: remove
-  call dumpInfo     # TODO: remove
+  call swap     # TODO: remove
+  dpop %ebx     # ebx=nt TODO: remove
   dpop %eax     # eax=xt
   addl $8, %ebp # 2drop, but we can't pollute %eax
-  movl $0x16, %edi  # TODO: remove
-  movl $heapMin, %ebx
-  call dumpInfo
+
+  dpush %eax        # TODO: remove
+  subl $32, (%ebp)  # TODO: remove
+  dpush $64         # TODO: remove
+  call dump         # TODO: remove
+  movl $heapMin, %ecx
+  call dumpInfo     # TODO: remove
+
   call _callXt  # execute eax
-  movl $0x20, %edi  # TODO: remove
-  call dumpInfo
   jmp interpret_loop
 interpret_eof:
   call _2drop
-  movl $56, %ebx # TODO: remove
-  call dumpInfo  # TODO: remove
   NEXT
 interpret_notfound:
   call drop # drop nt=0
