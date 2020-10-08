@@ -269,41 +269,41 @@ test42Str: .ascii "42\0"
 testSuite: # ( -- )
   # We are doing test driven development. All assembly tests we write should go
   # here. You can ignore them for now.
-  call testMemLocations
-  call assertEmpty
-  call testAsserts
-  call testIndirectCall
-  call testPanicHandle
-  call testDsPushPop
-  call testModDIV
-  call testEbxStackSize
-  call testDepth
-  call testStackBasic
-  call assertCleanState
+  # call testMemLocations
+  # call assertEmpty
+  # call testAsserts
+  # call testIndirectCall
+  # call testPanicHandle
+  # call testDsPushPop
+  # call testModDIV
+  # call testEbxStackSize
+  # call testDepth
+  # call testStackBasic
+  # call assertCleanState
 
-  call testEmit
-  call testCountNt
-  call testIoBuffer
-  call testDOT
-  call testDOTs
-  call testMUL
-  call testDumpInfo
-  call assertCleanState
+  # call testEmit
+  # call testCountNt
+  # call testIoBuffer
+  # call testDOT
+  # call testDOTs
+  # call testMUL
+  # call testDumpInfo
+  # call assertCleanState
 
-  call testNEXT
-  call testEXIT
-  call testDictSimple
-  call assertCleanState
+  # call testNEXT
+  # call testEXIT
+  # call testDictSimple
+  # call assertCleanState
 
-  call testDictBuiltin
-  call testKey
-  call testWord
-  call assertCleanState
+  # call testDictBuiltin
+  # call testKey
+  # call testWord
+  # call assertCleanState
 
-  # call test0x  # TODO: uncomment
-  call testAlign4
-  call test_ntTOother
-  call testFind
+  # # call test0x  # TODO: uncomment
+  # call testAlign4
+  # call test_ntTOother
+  # call testFind
   # call testCreate # TODO: uncomment
   call testInterpret
   call assertCleanState
@@ -2396,10 +2396,11 @@ ebx_ctou_err:
 def_asmword "0X",   2,    0, _0x
   callXt $xt_word # ( addr count )
   call strTOhex
+  movl $0x43, %ebx
+  call dumpInfo
   NEXT
 
 strTOhex: # ( addr count -- u )
-  call dbgexit  # TODO: remove
   movl $8, %eax
   call checkStackSize
   cmp $0, (%ebp)
@@ -2421,6 +2422,10 @@ _0x_loop:
   addl %ebx, %eax # add new number to cumulative
   inc %edi        # increment index
   jmp _0x_loop
+_0x_done:
+  movl %eax, 4(%ebp)  # turn addr -> number
+  call drop  # drop count
+  ret
 _0x_noword:
   dpush $_0xWordNeededStr
   call countnt
@@ -2435,10 +2440,6 @@ _0x_notnumber:
   callXt $xt_typeln
   movl $ERR_NUMBER_INVALID, panicErr
   call *(panic)
-_0x_done:
-  movl %eax, 4(%ebp)  # turn addr -> number
-  call drop  # drop count
-  ret
 
 .align 4
 xt_test0x:
@@ -2634,14 +2635,12 @@ def_asmword "NT>&F0",   6,    0, ntTOf0
   addl $4, %eax       # start of cstr (count)
   movb (%eax), %bl    # ebx=count
   andl $F0_NAMELEN_BYTE_MASK, %ebx
-  call dumpInfo
   # TODO: this actually DOESN'T work with F0 strategy.
   #   need to deal with that pesky $1
   addl %ebx, %eax     # eax=eax+count+1
   addl $1, %eax
   call eax_align4     # align, as F0 is always aligned
   dpush %eax
-  call dumpInfo
   NEXT
 
 # ( nt -- FR ) \ given the nt return the address of FR
@@ -2974,11 +2973,17 @@ def_asmword "EXECUTE",   7,    0, execute
 #                 ascii, len, flag, label
 def_asmword "INTERPRET",   9,    0, interpret
 interpret_loop:
+  movl $0x10, %edi  # TODO: remove
+  call dumpInfo
   callXt $xt_word
+  movl $0x11, %edi  # TODO: remove
+  call dumpInfo
   cmp $0, (%ebp)  # see if count<=0
   jle interpret_eof
   call _2dup # keep track of word for error handlin
   callXt $xt_find # stack: ( addr count xt )
+  movl $0x12, %edi  # TODO: remove
+  call dumpInfo
   cmp $0, (%ebp)  # see if nt=0
   je interpret_notfound
   # if we are in runmode (STATE=0) then always execute the word
@@ -2997,22 +3002,25 @@ interpret_loop:
   callXt $xt_pushDict 
   jmp interpret_loop
 interpret_executext: # execute xt
-  call dup
   callXt $xt_ntTOxt
   dpop %eax     # eax=xt
-  movl %eax, %ebx
-  subl $28, %ebx
-  dpush %ebx
-  dpush $40
-  movl $nt__0x, %ebx
-  movl $xt__0x, %ecx
-  call dumpInfo # TODO: XT is not correct
-  call dump
+  # movl %eax, %ebx
+  # subl $28, %ebx
+  # dpush %ebx
+  # dpush $40
+  # movl $nt__0x, %ebx
+  # movl $xt__0x, %ecx
+  # call dumpInfo # TODO: XT is not correct
+  # call dump
   addl $8, %ebp # 2drop, but we can't pollute %eax
+  movl $0x55, %ebx
+  call dumpInfo
   call _callXt  # execute xt
   jmp interpret_loop
 interpret_eof:
   call _2drop
+  movl $56, %ebx # TODO: remove
+  call dumpInfo  # TODO: remove
   NEXT
 interpret_notfound:
   call drop # drop nt=0
@@ -3052,7 +3060,7 @@ xt_testInterpret_theAnswer:
 xt_testInterpret_inputstream:
 .int DOCOL, xt_interpret, xt_assertEmpty, xt_EXIT
 xt_testInterpret_pnt:
-.int xt_lit, testInterpretStr, xt_countnt, xt_typeTestPass, xt_EXIT
+.int DOCOL, xt_lit, testInterpretStr, xt_countnt, xt_typeTestPass, xt_EXIT
 testInterpret:
   movl $testTheAnswerFile, %ebx
   call openNtEbx
