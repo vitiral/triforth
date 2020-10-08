@@ -109,6 +109,7 @@
 .equ ERR_WORD_MISSING,0x304
 .equ ERR_NUMBER_INVALID,0x305
 .equ ERR_UNKNOWN_WORD,0x306
+.equ ERR_STATE_REDUNDANT,0x307
 
 .equ FALSE, 0
 .equ TRUE, -1
@@ -2899,14 +2900,24 @@ def_asmword ",",  1,    0, pushDict
 # ( -- ) \ Set compilation STATE to false
 #        ascii  , len,       flag, label
 def_asmword "[" ,  1 , FR_TIME_IMM, staterun
+  cmpl $FALSE, var_state
+  je 1f
   movl $FALSE, var_state
   NEXT
+1:
+  movl $ERR_STATE_REDUNDANT, panicErr
+  call *(panic)
 
 # ( -- ) \ Set compilation STATE to true
 #        ascii  , len, flag, label
 def_asmword "]" ,  1 ,    0, statecompile
+  cmpl $TRUE, var_state
+  je 1f
   movl $TRUE, var_state
   NEXT
+1:
+  movl $ERR_STATE_REDUNDANT, panicErr
+  call *(panic)
 
 # ( -- ) \ The forth ":" to define a new word
 #      ascii  , len, flag, label
@@ -2932,20 +2943,33 @@ def_doword ";",   1, FR_TIME_IMM, ENDWORD
 xt_testCOLON:
 .int DOCOL
 .int xt_here, xt_FETCH, xt_rpush
-.int xt_COLON
+# Make sure state=run
+.int xt_state, xt_FETCH, xt_lit, FALSE, xt_assertEq
+# start compilation, mimicking INTERPRET
+.int xt_word, xt_find, xt_ntTOxt, xt_execute  # :
 .int xt_dumpInfo
 .int xt_lit, testNewDefinedWordStr, xt_countnt, xt_find
 # Make sure the nt strings match
 .int xt_dup, xt_ntTOstr, xt_lit, testNewDefinedWordStr, xt_countnt
-.int    xt_ceq, xt_assertTrue
+.int   xt_ceq, xt_assertTrue
 # Make sure previous HERE = nt
 .int xt_dup, xt_rpop, xt_assertEq
 # Make sure str len is as expected in cstr
 .int xt_dup, xt_inc4, xt_cFETCH, xt_lit, 14, xt_assertEq
-# Make sure str len is as expected in F0 TODO: YAY an error!
-.int xt_dup, xt_ntTOf0, xt_cFETCH, xt_lit, 14, xt_assertEq
-
-# drop nt and exit
+# Make sure str len is as expected in F0
+.int xt_dup, xt_ntTOf0, xt_inc4, xt_dec, xt_cFETCH, xt_lit, 14, xt_assertEq
+# Make sure FR
+.int xt_dup, xt_ntTOfr, xt_FETCH, xt_lit, 0, xt_assertEq
+# Make sure state=compile
+.int xt_state, xt_FETCH, xt_lit, TRUE, xt_assertEq
+# Make sure xt
+.int xt_dup, xt_ntTOxt, xt_FETCH, xt_lit, DOCOL, xt_assertEq
+# manually finish compilation, mimicking INTERPRET
+.int xt_word, xt_find, xt_ntTOxt, xt_execute  # 0x
+.int  xt_word, xt_find, xt_ntTOxt, xt_execute # ;
+# assert state is back in runmode
+.int xt_state, xt_FETCH, xt_lit, FALSE, xt_assertEq
+# drop nt, set state back to run and exit
 .int xt_drop, xt_EXIT
 xt_testCOLON_pnt:
 .int DOCOL, xt_lit, testCOLONStr, xt_countnt, xt_typeTestPass, xt_EXIT
