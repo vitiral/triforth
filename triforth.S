@@ -1499,8 +1499,8 @@ cstr_\label :
   .ascii "\name"       # the ascii name itself
   .align 4             # padding to next 4 byte boundary
 flags_\label :
-  .int \namelen << F0_NAMELEN_SHIFT # F0
-  .int \flags                       # FR
+  .int (\namelen << F0_NAMELEN_SHIFT) # F0
+  .int \flags                         # FR
 xt_\label :
   .int word_\label
 word_\label :
@@ -2575,13 +2575,13 @@ def_asmword "ALIGN4",  6,    0, align4
 # ( nt -- F0 ) \ given the nt return the address of F0
 #            ascii  , len, flag, label
 def_asmword "NT>&F0",   6,    0, ntTOf0
-  call dumpInfo
   dpop %eax           # address of nt
   addl $4, %eax       # start of cstr (count)
   movb (%eax), %bl    # ebx=count
   andl $F0_NAMELEN_BYTE_MASK, %ebx
+  call dumpInfo
   # TODO: this actually DOESN'T work with F0 strategy.
-  # TODO: need to deal with that pesky $1
+  #   need to deal with that pesky $1
   addl %ebx, %eax     # eax=eax+count+1
   addl $1, %eax
   call eax_align4     # align, as F0 is always aligned
@@ -2630,12 +2630,31 @@ def_doword "XT>&FR",   5,    0, xtTOfr
   .int xt_dec4
   .int xt_EXIT
 
+
+.align 4
+xt_test_ntTOother_constructed0: # unaligned name
+.int 0      # fake link
+.byte 2     # fake count
+.byte 1,2   # fake string
+.align 4
+.int 42     # fake F0
+.int 43     # fake FR
+.int 44     # fake xt
+xt_test_ntTOother_constructed1: # aligned name
+.int 0      # fake link
+.byte 3     # fake count
+.byte 1,2,3 # fake string
+.align 4
+.int 42     # fake F0
+.int 43     # fake FR
+.int 44     # fake xt
 .align 4
 xt_test_ntTOother:
 .int DOCOL
-# flags: already aligned, cstr=4bytes
+flags:
+# already aligned, cstr=4bytes
 .int xt_lit, nt_lit, xt_ntTOf0, xt_lit, flags_lit, xt_assertEq
-# # flags: not aligned, cstr=5bytes
+# flags: not aligned, cstr=5bytes
 .int xt_lit, nt_word, xt_ntTOf0, xt_lit, flags_word, xt_assertEq
 # nt>xt: already aligned
 .int xt_lit, nt_lit, xt_ntTOxt, xt_lit, xt_lit, xt_assertEq
@@ -2644,7 +2663,34 @@ xt_test_ntTOother:
 .int xt_assertEmpty, xt_lit, test_ntTOotherStr, xt_countnt, xt_typeTestPass
 .int xt_EXIT
 test_ntTOother:
+  dpush $xt_test_ntTOother_constructed0
+  call test_ntTOother_constructed
+  dpush $xt_test_ntTOother_constructed1
+  call test_ntTOother_constructed
   callXt $xt_test_ntTOother
+  ret
+test_ntTOother_constructed: # ( nt -- )
+  # Test a constructed dict entry which always contains
+  # certain data (but not the same name)
+  call dup
+  callXt $xt_ntTOf0
+  dpop %eax
+  movl (%eax), %eax
+  movl $42, %ebx
+  call assertEaxEbxEq
+
+  call dup
+  callXt $xt_ntTOfr
+  dpop %eax
+  movl (%eax), %eax
+  movl $43, %ebx
+  call assertEaxEbxEq
+
+  callXt $xt_ntTOxt
+  dpop %eax
+  movl (%eax), %eax
+  movl $44, %ebx
+  call assertEaxEbxEq
   ret
 
 # ( addr count -- nt ) \ finds the string in the dictionary, returning it's nt (name token)
@@ -2790,9 +2836,9 @@ def_asmword "]" ,  1 ,    0, statecompile
 def_doword ":",   1,    0, STARTWORD
   # Create the next word and set correct xt
   .int xt_word # ( addr count )
-  .int xt_create, xt_ntTOxt, xt_dbgexit
+  .int xt_create, xt_ntTOxt
   # replace DOCREATE with DOCOL
-  .int xt_lit, DOCOL, xt_swap, xt_dbgexit, xt_STORE
+  .int xt_lit, DOCOL, xt_swap, xt_STORE
   .int xt_statecompile # start compiling!
   .int xt_EXIT
 
@@ -2883,12 +2929,13 @@ interpret_loop:
   je interpret_executext
   # else, compile the word into the dictionary
   callXt $xt_pushDict 
-  jmp interpret_cont
+  jmp interpret_loop
 interpret_executext: # execute xt
   callXt $xt_ntTOxt
-interpret_cont:
+  movl xt__0x, %ebx
   dpop %eax     # eax=xt
-  call _2drop   # get rid of ( addr count )
+  call dumpInfo # TODO: XT is not correct
+  addl $8, %ebp # 2drop, but we can't pollute %eax
   call _callXt  # execute xt
   jmp interpret_loop
 interpret_eof:
