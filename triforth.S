@@ -589,7 +589,7 @@ testing_overflow:
   dpush $4  # overflow
   call unreachable
 
-DIVmod: # ( u:a u:b -- u u )
+DIVmod: # ( u:a u:b -- u:quot u:rem )
   # Forth MOD/, unsigned divide a by b
   # returns: quotient remainder
   dpop %ebx # divisor
@@ -2401,13 +2401,11 @@ def_asmword "0X",   2, FR_TIME_IMM, _0x
   call strTOhex
   cmp $0, var_state
   jne 1f
-  jmp 2f
-1:
-  # Compile mode: compile the literal into the word
+  NEXT # runmode: leave value on stack
+1: # Compile mode: compile the literal into the word
   dpush $xt_lit
   callXt $xt_pushDict
   callXt $xt_pushDict
-2:
   NEXT
 
 strTOhex: # ( addr count -- u )
@@ -3137,6 +3135,10 @@ _start:
   movl $rstackMax, %esp
   movl $dstackMax, %ebp
   call testSuite
+
+  # Reset here+latest to get rid of words defined during test.
+  movl $heapMin, var_here
+  movl $nt_quit, var_latest
   jmp exit0
 
 .data
