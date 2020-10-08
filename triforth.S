@@ -302,8 +302,8 @@ testSuite: # ( -- )
   call test_ntTOother
   call testFind
   call testCreate
-  # call testInterpret
-  # call assertCleanState
+  call testInterpret
+  call assertCleanState
   ret
 
 testMemLocations:
@@ -2924,9 +2924,9 @@ testInterpret:
   callXt $xt_testInterpret_theAnswer
   call closeKeyFd
 
-  call openSimpleMathFile
-  callXt $xt_testInterpret_inputstream
-  call closeKeyFd
+  # call openSimpleMathFile
+  # callXt $xt_testInterpret_inputstream
+  # call closeKeyFd
 
   callXt $xt_testInterpret_pnt
   ret
