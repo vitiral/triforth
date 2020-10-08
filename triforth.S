@@ -221,6 +221,8 @@ maxWordLenErrorStr: .ascii "Maximum word length exceeded\0"
 _0xWordNeededStr: .ascii "Word needed for 0x\0"
 _0xNotNumberStr: .ascii "Not a valid hex number: \0"
 unknownWordStr: .ascii "Unknown word: \0"
+dumpAddrStr: .ascii "DUMP \0"
+colonSpaceStr: .ascii ": \0"
 
 
 # Test Names
@@ -892,6 +894,12 @@ typeTestPass: # ( addr count -- )
   call type
   ret
 
+typent: # ( addr -- )
+  # Type a null nerminated str
+  call countnt
+  call type
+  ret
+
 testIoBuffer:
   dpush $testIoBufferStr
   call countnt
@@ -1006,8 +1014,7 @@ DOTs: # ( -- )
   # Forth .S, prints the current stack
   dpush $stackStr
   # "Stack< DEPTH > "
-  call countnt
-  call type
+  call typent
 
   call depth 
   dpush $10
@@ -1125,8 +1132,7 @@ dumpInfo:
 
   # Registers
   dpush $registersAdStr
-  call countnt
-  call type
+  call typent
   movl $registerSnapshot, %ebx
   movl (%ebx), %eax  # eax
   dpush %eax
@@ -1153,8 +1159,7 @@ dumpInfo:
 
   movl $registerSnapshot, %ebx
   dpush $registersDsStr
-  call countnt
-  call type
+  call typent
   movl $registerSnapshot, %ebx
   movl 16(%ebx), %eax # edi
   dpush %eax
@@ -1173,8 +1178,7 @@ dumpInfo:
   call DOTs
   # IO buffer
   dpush $wordStr
-  call countnt
-  call type
+  call typent
   dpush $wordBuffer
   movl wordCount, %eax
   dpush %eax
@@ -1219,8 +1223,7 @@ dbgexit: # ( -- )
   # Mainly used in debugging.
   call dumpInfo
   dpush $dbgexitStr
-  call countnt
-  call type
+  call typent
   movl $RC_DBG, %ebx
   jmp sysexit
 
@@ -1230,8 +1233,7 @@ defaultPanic: # ( -- )
   # relevant panic messages.
   call dumpInfo
   dpush $panicStr
-  call countnt
-  call type
+  call typent
   movl panicErr, %eax
   dpush %eax
   dpush $16
@@ -1384,6 +1386,54 @@ testEXIT:
   dpush $testEXITStr
   call countnt
   call typeTestPass
+  ret
+
+dump: # ( addr count -- ) \ Dump the contents of the address onto emitFd
+  call snapshotRegisters
+  dpush $dumpAddrStr
+  call typent
+  call over
+  dpush $16
+  call DOTbase
+  dpush $'\n'
+  call emit
+
+  # Make sure we are always starting at an aligned address
+  call over
+  callXt $xt_align4
+  dpop %eax
+  cmp 4(%ebp), %eax
+  je 1f
+  subl $4, %eax # we are not aligned, start at aligned-4
+  movl %eax, 4(%ebp)
+1:
+  dpop %eax # count
+  addl (%ebp), %eax  # addr+count=address we want to get to
+  dpush %eax
+2:
+  movl (%ebp), %eax
+  cmp %eax, 4(%ebp) # does addr=addrtop?
+  je 2f
+  call over
+  call dump_addr
+  addl $4, 4(%ebp) # add 4 to addr
+  jmp 2b
+2:
+  call _2drop
+  call restoreRegisters
+  ret
+
+dump_addr: # ( addr -- ) \ print "<addr>: "
+  call dup
+  dpush $16
+  call DOTbase
+  dpush $colonSpaceStr
+  call typent
+  callXt $xt_FETCH
+  dpush $16
+  call DOTbase
+  dpush $'\n'
+  call emit
   ret
 
 
@@ -2277,8 +2327,7 @@ word_eof: # (in case of EOF we still push the count)
   NEXT
 word_err:
   dpush $maxWordLenErrorStr
-  call countnt
-  call type
+  call typent
   movl $ERR_MAX_WORD_LEN, panicErr
   call *(panic)
 
@@ -2378,8 +2427,7 @@ _0x_noword:
   call *(panic)
 _0x_notnumber:
   dpush $_0xNotNumberStr
-  call countnt
-  call type
+  call typent
   # addr count still contains the word, simply use that
   call _2dup
   callXt $xt_typeln
@@ -2633,21 +2681,21 @@ def_doword "XT>&FR",   5,    0, xtTOfr
 
 .align 4
 xt_test_ntTOother_constructed0: # unaligned name
-.int 0      # fake link
+.int 1      # fake link
 .byte 2     # fake count
 .byte 1,2   # fake string
 .align 4
-.int 42     # fake F0
-.int 43     # fake FR
-.int 44     # fake xt
+.int 0x42     # fake F0
+.int 0x43     # fake FR
+.int 0x44     # fake xt
 xt_test_ntTOother_constructed1: # aligned name
-.int 0      # fake link
+.int 1      # fake link
 .byte 3     # fake count
 .byte 1,2,3 # fake string
 .align 4
-.int 42     # fake F0
-.int 43     # fake FR
-.int 44     # fake xt
+.int 0x42     # fake F0
+.int 0x43     # fake FR
+.int 0x44     # fake xt
 .align 4
 xt_test_ntTOother:
 .int DOCOL
@@ -2663,6 +2711,11 @@ flags:
 .int xt_assertEmpty, xt_lit, test_ntTOotherStr, xt_countnt, xt_typeTestPass
 .int xt_EXIT
 test_ntTOother:
+  # demonstration of dump
+  dpush $xt_test_ntTOother_constructed0
+  dpush $20
+  call dump
+
   dpush $xt_test_ntTOother_constructed0
   call test_ntTOother_constructed
   dpush $xt_test_ntTOother_constructed1
@@ -2676,20 +2729,20 @@ test_ntTOother_constructed: # ( nt -- )
   callXt $xt_ntTOf0
   dpop %eax
   movl (%eax), %eax
-  movl $42, %ebx
+  movl $0x42, %ebx
   call assertEaxEbxEq
 
   call dup
   callXt $xt_ntTOfr
   dpop %eax
   movl (%eax), %eax
-  movl $43, %ebx
+  movl $0x43, %ebx
   call assertEaxEbxEq
 
   callXt $xt_ntTOxt
   dpop %eax
   movl (%eax), %eax
-  movl $44, %ebx
+  movl $0x44, %ebx
   call assertEaxEbxEq
   ret
 
@@ -2774,15 +2827,15 @@ def_asmword "CREATE" ,  6 ,    0 , create
   movl var_here, %eax   # restore HERE into eax for eax_align4
   addl %ecx, %eax       # add count to here and align
   call eax_align4
-  shl $F0_NAMELEN_SHIFT, %ecx  # set up flags
-  movl %ecx, (%eax)       # dict: set flags
-  addl $4, %eax           # increment eax to point to FR
-  movl $0, (%eax)         # set FR to 0
-  addl $4, %eax           # increment eax to point to xt
-  movl $DOCREATE, (%eax)  # dict: xt for CREATE-ed word
-  addl $4, %eax           # increment eax to point to data space
-  movl %eax, var_here     # dict: update HERE
-  NEXT                    # nt is stil on the stack
+  shl $F0_NAMELEN_SHIFT, %ecx # set up flags
+  movl %ecx, (%eax)           # dict: set flags
+  addl $4, %eax               # increment eax to point to FR
+  movl $0, (%eax)             # set FR to 0
+  addl $4, %eax               # increment eax to point to xt
+  movl $DOCREATE, (%eax)      # dict: xt for CREATE-ed word
+  addl $4, %eax               # increment eax to point to data space
+  movl %eax, var_here         # dict: update HERE
+  NEXT                        # nt is stil on the stack
 create_fail:
   movl $ERR_MAX_WORD_LEN, panicErr
   call *(panic)
@@ -2813,8 +2866,8 @@ testCreate:
 # ( u -- ) \ push a value onto the dictionary
 #      ascii  , len, flag, label
 def_asmword ",",  1,    0, pushDict
-  movl var_here, %ebx
   dpop %eax
+  movl var_here, %ebx
   movl %eax, (%ebx)  # move value into *here
   addl $4, var_here  # increment here for next value
   NEXT
@@ -2932,8 +2985,13 @@ interpret_loop:
   jmp interpret_loop
 interpret_executext: # execute xt
   callXt $xt_ntTOxt
-  movl xt__0x, %ebx
   dpop %eax     # eax=xt
+  subl $20, %eax
+  dpush %eax
+  dpush $28
+  call dump
+  movl nt__0x, %ebx
+  movl xt__0x, %ecx
   call dumpInfo # TODO: XT is not correct
   addl $8, %ebp # 2drop, but we can't pollute %eax
   call _callXt  # execute xt
@@ -2947,8 +3005,7 @@ interpret_notfound:
   jne interpret_unknown
   # no means to handle unknown value, panic
   dpush $unknownWordStr
-  call countnt
-  call type
+  call typent
   callXt $xt_typeln
   movl $ERR_UNKNOWN_WORD, panicErr
   call *(panic)
