@@ -1993,6 +1993,8 @@ def_asmcmp ">="  , 2 ,   0 , GTE , jge
 def_asmword "LIT",    3,   0,    lit
   lodsl # see NEXT for what this does.
   dpush %eax
+  movl $0x80, %edi  # TODO: remove
+  call dumpInfo
   NEXT
 
 ##############################
