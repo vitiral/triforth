@@ -114,6 +114,7 @@
 .equ ERR_WORD_NOT_FOUND,0x309
 .equ ERR_INVALID_FLAG,0x310
 .equ ERR_INVALID_CHAR,0x311
+.equ ERR_STACK_NOT_EMPTY,0x312
 
 .equ FALSE, 0
 .equ TRUE, -1
@@ -298,6 +299,7 @@ testSuite: # ( -- )
   call assertCleanState
 
   call testDictBuiltin
+  call testLitbytes
   call testKey
   call testWord
   call assertCleanState
@@ -1267,7 +1269,7 @@ defaultPanic: # ( -- )
   # Note that lodsl is the same as below:
   # movl (%esi), %eax
   # addl $4, %esi
-  lodsl 
+  lodsl  # %eax=(%esi) %esi+=4
   jmp *(%eax)
 .endm
 
@@ -1790,7 +1792,7 @@ def_callword "ASSERTCLEANSTATE", 16, 0, assertCleanState
 
 # ( n u -- ) \ prints a number with the given base to emitFd
 #            ascii          , len, flag, label
-def_callword "typeTestPass" ,  12 ,  0 ,  typeTestPass
+def_callword "TYPETESTPASS" ,  12 ,  0 ,  typeTestPass
 
 # ( -- ) \ prints the current stack
 #           ascii , len, flag, label
@@ -2042,9 +2044,42 @@ def_asmcmp ">="  , 2 ,   0 , GTE , jge
 # "instruction", skipping its execution.
 #           ascii , len, flag, label
 def_asmword "LIT",    3,   0,    lit
-  lodsl # see NEXT for what this does.
+  lodsl  # %eax=(%esi) %esi+=4, see NEXT
   dpush %eax
   NEXT
+
+# ( -- addr count ) \ used to construct strings and other literal data, similar
+# \ to LIT above. The memory looks like this:
+# \    xt_litbytes | len | cell0 | cell1 | cell2 | ... | cellN
+#               ascii , len, flag, label
+def_asmword "LITBYTES",   8,    0, litbytes
+  call dumpInfo  # TODO: remove
+  lodsl  # %eax=(%esi) %esi+=4, see NEXT
+  dpush %esi  # address
+  dpush %eax  # count
+  # start execution after the literal bytes (aligned)
+  addl %eax, %esi
+  addl $3, %esi  # see eax_align4 for explanation
+  andl $~3, %esi
+  movl $testLitBytes_cont, %ebx
+  NEXT
+
+.align 4
+xt_testLitBytes:
+.int DOCOL
+.int xt_litbytes
+.int 15 # length
+testLitBytes_str:
+.ascii "--testLitbytes-"  # exra added for misaligment
+.align 4
+# ( addr count )
+testLitBytes_cont:
+.int xt__2dup, xt_lit, testLitBytes_str, xt_lit, 15, xt_ceq, xt_assertTrue
+.int xt_typeTestPass
+.int xt_EXIT
+testLitbytes:
+  callXt $xt_testLitBytes
+  ret
 
 ##############################
 # Strings and Input / Output
@@ -3015,14 +3050,24 @@ def_doword ":",   1,    0, COLON
   .int xt_statecompile # start compiling!
   .int xt_EXIT
 
+# ( -- ) \ require the stack to be empty or panic
+#                  ascii  , len, flag, label
+def_asmword "REQUIREEMPTY",  12,    0, requireEmpty
+  call depth
+  dpop %eax
+  cmp $0, %eax
+  jne 1f
+  NEXT
+1:
+  movl $ERR_STACK_NOT_EMPTY, panicErr
+  call *(panic)
 
 # ( -- ) \ end compilation from ":"
 #      ascii  , len,        flag, label
 def_doword ";",   1, FR_TIME_IMM, SEMICOLON
-  .int xt_lit, xt_EXIT, xt_pushDict  # compile EXIT
+  .int xt_requireEmpty, xt_lit, xt_EXIT, xt_pushDict  # compile EXIT
   .int xt_staterun # [ go back to runmode
   .int xt_EXIT
-
 
 .align 4
 xt_testFlags:
