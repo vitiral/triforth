@@ -37,6 +37,29 @@
 : '.' [ CHAR . ] LITERAL ; \ .
 ';' 0x 3B assertEq  '(' 0x 28 assertEq  ')' 0x 29 assertEq \ test: yo'basic
 
+: VARIABLE WORD create drop ; \ Allow defining variables
+
+VARIABLE testCache 0x 0 , 0x 0 , 0x 0 , \ temp storage for tests
+
+\ Addressing and indexing mechanisms
+: cell   0x 4 ;        \ ( -- u ) the cell size
+: cell+  cell + ;  \ ( u -- u ) increment by cell size
+: cells  cell * ;  \ ( u -- u ) multiply by cell size
+: @i     cells + @ ; \ ( addr i -- u ) fetch at index=i of addr
+: @1     cell+ @ ; \ ( addr -- u ) fetch at index=1 of addr
+: @2     [ 0x 2 CELL * ] LITERAL + @ ; \ ( addr -- u ) fetch at index=1 of addr
+: @3     [ 0x 3 CELL * ] LITERAL + @ ; \ ( addr -- u ) fetch at index=1 of addr
+: !i     cells + ! ; \ ( u addr i -- ) store u at index=i of addr
+: !1     cell+ ! ; \ ( u addr -- u ) store u at index=1 of addr
+: !2     [ 0x 2 CELL * ] LITERAL + ! ; \ ( u addr -- u ) store u at index=2 of addr
+: !3     [ 0x 3 CELL * ] LITERAL + ! ; \ ( u addr -- u ) store u at index=3 of addr
+
+0x 42 testCache !         testCache @ 0x 42 assertEq
+0x 43 testCache !1        testCache @1 0x 43 assertEq
+0x 51 testCache !2        testCache @2 0x 51 assertEq
+0x 50 testCache 0x 1 !i   testCache 0x 1 @i 0x 50 assertEq
+assertEmpty
+
 \ The xt's of "!@," repsectively. It can be hard to read otherwise
 : !xt ' ! ;     : @xt ' @ ;    : ,xt ' , ;
 
@@ -48,9 +71,8 @@
 
 
 \ MARK allows us to define words to be forgotten. It has many uses, but for
-\ us the main one is we can now define tests, execute them, and forget
-\ everything we learned.
-
+\ us right now the main one is we can now define tests, execute them, and
+\ forget them, consuming no dictionary space.
 : MARK \ consume next WORD to create dictionary snapshot. When that word is
   \ called, return the dictionary to the previous state.
   &latest @ &here @  \ get the current ( latest here )
@@ -61,14 +83,17 @@
   ' &latest ,   !xt , \ the word will set LATEST to previous value
   ' EXIT , ;
 
-&here @  &latest @
+
+&here @   testCache !
+&latest @ testCache !1
 MARK -test
 : thisWillNotExist 0x 42 ;
 thisWillNotExist 0x 42 assertEq -test
 \ -test     \ Neither of these lines will work if uncommented
 \ thisWillNotExist
 MARK -test  -test \ test mark+unmark works
-&latest @ assertEq   &here @ assertEq assertEmpty \ test: dict restored
+testCache @   &here @ assertEq \ test: dict restored
+testCache @1  &latest @ assertEq assertEmpty
 
 \ ########################
 \ # Control Structures
@@ -96,5 +121,8 @@ MARK -test  -test \ test mark+unmark works
   0x 0 , \ put a dummy location for THEN to store to. Stack: ( elseaddr ifaddr )
   [COMPILE] THEN ; \ THEN consumes ifaddr to jump right here IF 0
 
-\ BEGIN <block> ( flag ) UNTIL will execute <block> until flag<>0
-
+: BEGIN IMM \ BEGIN <block> ( flag ) UNTIL will execute <block> until flag<>0
+  &here @ ; \ put the address of HERE on the stack for UNTIL to consume
+: UNTIL IMM  ' 0BRANCH &HERE @ - , ; \ 0BRANCH to the offset from BEGIN
+: AGAIN IMM  ' BRANCH &HERE @ - , ; \ Always branch back (infinite loop)
+\ : WHILE IMM \ BEGIN ... ( flag ) WHILE ... REPEAT loop while flag<>0

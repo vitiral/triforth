@@ -3072,6 +3072,7 @@ def_asmword "REQUIREEMPTY",  12,    0, requireEmpty
 #      ascii  , len,        flag, label
 def_doword ";",   1, FR_TIME_IMM, SEMICOLON
   .int xt_lit, xt_EXIT, xt_pushDict  # compile EXIT
+  .int xt_requireEmpty
   .int xt_staterun # [ go back to runmode
   .int xt_EXIT
 
