@@ -923,24 +923,39 @@ cSTORE: # ( c addr -- )
 uPntX: # ( n -- ) \ emit the number as unsigned hex
   movl $4, %eax
   call checkStackSize
+  cmpl $0, (%ebp) # if number if 0 just print that
+  je uPntX_zero
   dpush $0
-  call swap
+  call swap # ( count n )
 uPntX_loop:
   movl (%ebp), %ebx
-  cmpl $0, %ebx
+  cmpl $0, %ebx  # if number is zero, exit
   je uPntX_ret
   andl $15, %ebx  # ebx=ebx%16
   shrl $4, (%ebp) # divide n by 16. Note: n>>4 == n/2^4
   call ebx_toascii   # ( count n )
-  movl $emitBufferMax-1, %eax
-  subl 4(%ebp), %eax  # eax=bufferMax - 1 - count
+  # eax=emitBufferMax - 1 - count
+  movl $emitBufferMax-1, %eax 
+  subl 4(%ebp), %eax
   dpush %ebx          # character to store
   dpush %eax          # address to store character at
   call cSTORE
-  addl $1, 4(%ebp)
+  addl $1, 4(%ebp)    # increment count
   jmp uPntX_loop
 uPntX_ret:
-  call nip # get rid of count
+  call drop # drop n (it is 0)
+  movl $emitBufferMax, %eax 
+  subl (%ebp), %eax
+  dpush %eax
+  call swap
+  call type
+  dpush $' '
+  call emit
+  ret
+uPntX_zero:
+  dpush $'0'
+  call emit
+  call _2drop
   ret
 
 ebx_toascii: # ( u -- c )
@@ -1028,6 +1043,15 @@ uTOascii: # ( u -- c )
   call unreachable
 
 testDOT:
+  dpush $1
+  call uPntX
+  dpush $0x12
+  call uPntX
+  dpush $0xDEADBEEF
+  call uPntX
+  dpush $'\n'
+  call emit
+
   dpush $1
   call DOT
   call assertEmpty
