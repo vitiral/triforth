@@ -37,7 +37,10 @@
 : '.' [ CHAR . ] LITERAL ; \ .
 ';' 0x 3B assertEq  '(' 0x 28 assertEq  ')' 0x 29 assertEq \ test: yo'basic
 
-: [COMPILE] IMM \ ( -- ) immediately compile the next word
+\ The xt's of "!@," repsectively. It can be hard to read otherwise
+: !xt ' ! ;     : @xt ' @ ;    : ,xt ' , ;
+
+: [compile] IMM \ ( -- ) immediately compile the next word
   \ This allows you to easily compile IMM words into other words, or compile
   \ words during [ runstate ]
   word find nt>xt \ get xt for next word
@@ -48,9 +51,24 @@
 \ us the main one is we can now define tests, execute them, and forget
 \ everything we learned.
 
-\ : MARK \ consume next WORD to create dictionary snapshot. When that word is
-\   \ called, return the dictionary to the previous state.
-\   WORD CREATE 
+: MARK \ consume next WORD to create dictionary snapshot. When that word is
+  \ called, return the dictionary to the previous state.
+  &latest @ &here @  \ get the current ( latest here )
+  CREATEWORD          \ create the MARK word
+  ' lit , ,         \ compile literal HERE directly
+  ' &here ,   !xt , \ which the code will store into HERE
+  ' lit , ,         \ Same with LATEST
+  ' &latest ,   !xt , \ the word will set LATEST to previous value
+  ' EXIT , ;
+
+&here @  &latest @
+MARK -test
+: thisWillNotExist 0x 42 ;
+thisWillNotExist 0x 42 assertEq -test
+\ -test     \ Neither of these lines will work if uncommented
+\ thisWillNotExist
+MARK -test  -test \ test mark+unmark works
+&latest @ assertEq   &here @ assertEq assertEmpty \ test: dict restored
 
 \ ########################
 \ # Control Structures

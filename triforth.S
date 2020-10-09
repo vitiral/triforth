@@ -3038,7 +3038,9 @@ def_asmword "]" ,  1 ,    0, statecompile
   movl $ERR_STATE_REDUNDANT, panicErr
   call *(panic)
 
-def_doword "CREATEWORD", 10, 0, createWord
+# ( -- ) \ Used by ':' or anyone to create a word with xt=DOCOL
+#               ascii  , len, flag, label
+def_doword "CREATEWORD",  10,    0, createWord
   .int xt_word # ( addr count )
   .int xt_create, xt_ntTOxt # ( xt )
   # replace DOCREATE with DOCOL
@@ -3069,7 +3071,7 @@ def_asmword "REQUIREEMPTY",  12,    0, requireEmpty
 # ( -- ) \ end compilation from ":"
 #      ascii  , len,        flag, label
 def_doword ";",   1, FR_TIME_IMM, SEMICOLON
-  .int xt_requireEmpty, xt_lit, xt_EXIT, xt_pushDict  # compile EXIT
+  .int xt_lit, xt_EXIT, xt_pushDict  # compile EXIT
   .int xt_staterun # [ go back to runmode
   .int xt_EXIT
 
