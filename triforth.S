@@ -113,6 +113,7 @@
 .equ ERR_STACK_UNDERFLOW,0x308
 .equ ERR_WORD_NOT_FOUND,0x309
 .equ ERR_INVALID_FLAG,0x310
+.equ ERR_INVALID_CHAR,0x311
 
 .equ FALSE, 0
 .equ TRUE, -1
@@ -302,6 +303,7 @@ testSuite: # ( -- )
   call assertCleanState
 
   call test0x
+  call testConst
   call testAlign4
   call test_ntTOother
   call testFind
@@ -1606,7 +1608,7 @@ def_callword "OVER" , 4 ,  0 ,   over
 #           ascii , len, flag, label
 def_callword "NIP" , 3 ,  0   , nip
 
-tuck:
+tuck: # ( a b -- b a b ) \ copy the top stack item below the second stack item
   dpop %ebx
   dpop %eax
   dpush %ebx
@@ -1684,11 +1686,9 @@ def_asmword "!" ,   1,    0,  STORE
 # ( addr -- u ) \ fetches the value at address
 #         ascii , len, flag, label
 def_asmword "@" ,  1 ,  0 ,  FETCH
-  movl $4, %eax
-  call checkStackSize
-  movl (%ebp), %eax
-  movl (%eax), %eax
-  movl %eax, (%ebp)
+  dpop %eax
+  movl (%eax), %ebx
+  dpush %ebx
   NEXT
 
 # ( addr -- ) \ increments the value at address
@@ -1799,6 +1799,10 @@ def_callword "PNTSTACK" ,  8 ,  0 ,  pntStack
 # ( -- ) \ prints current stack/register/etc info
 #           ascii       , len, flag, label
 def_callword "DUMPINFO" ,  8 ,  0 ,  dumpInfo
+
+# ( addr count -- ) \ dump contents of address
+#            ascii     , len, flag, label
+def_callword "DUMP" ,  4 ,  0 ,  dump
 
 # ( -- ) \ exits immediately, printing info
 #            ascii     , len, flag, label
@@ -2441,13 +2445,30 @@ ebx_ctou_err:
   neg %ebx
   ret
 
+# ( -- c ) \ Convert the single-character "word" to it's ASCII representation
+#   \ panics if the next word has len > 1
+#            ascii, len, flag, label
+def_asmword "CHAR",   4,    0, char
+  callXt $xt_word # ( addr count )
+  dpop %eax
+  cmp $1, %eax  # see if length <> 1
+  jne 1f
+  dpop %eax  # get the address
+  movl $0, %ebx  # zero ebx and move char into bl
+  movb (%eax), %bl
+  dpush %ebx     # push character on stack
+  NEXT
+1:
+  movl $ERR_INVALID_CHAR, panicErr
+  call *(panic)
+
 # ( -- u ) \ Convert the next hex word to an unsigned number, compiling it if state!=0
 #   \ panics if the next word is not completely representable by hex
 #          ascii, len,        flag, label
 def_asmword "0X",   2, FR_TIME_IMM, _0x
   callXt $xt_word # ( addr count )
   call strTOhex
-  cmp $0, var_state
+  cmp $0, var_REFstate
   jne 1f
   NEXT # runmode: leave value on stack
 1: # Compile mode: compile the literal into the word
@@ -2536,13 +2557,13 @@ test0x_str: # ( expected strnt -- )
 
 ##############################
 # Builtin Variables
-# All of these simply return the memory location of the variables so values can be
-# fetched and stored.
+# All of these simply return the memory location of the variables so values can
+# be fetched and stored.
 #
 # The built-in variables are:
-# STATE      Is the interpreter executing code (0) or compiling a word (non-zero)?
-# LATEST     Points to the latest (most recently defined) word in the dictionary.
-# HERE       Points to the next free byte of memory.  When compiling, compiled words go here.
+# &STATE     Interpreter executing code (0) or compiling (non-zero)?
+# LATEST     Points to the nt of the latest (most recently defined) word
+# HERE       Points to the next free byte of memory.
 # RSTACK_MAX The maximum memory address of the return stack.
 
 # ( -- u )
@@ -2557,7 +2578,7 @@ var_\label :
 .endm
 
 #      ascii      ,  len, flag,  label , initial
-def_var "STATE"   ,    5,    0, state  , 0
+def_var "&STATE"   ,   6,    0, REFstate  , 0
 def_var "HERE"    ,    4,    0, here   , 0
 def_var "LATEST"  ,    6,    0, latest , 0 # initialized in _start
 def_var "RSTACK_MAX", 10,    0, rstack_max , 0 # initialized in _start
@@ -2566,7 +2587,7 @@ def_var "RSTACK_MAX", 10,    0, rstack_max , 0 # initialized in _start
 # Builtin Constants
 # These simply return a constant value when run
 .macro def_const name, namelen, label
-  def_asmword \name , \namelen , 0, \label
+def_asmword \name , \namelen , 0, \label
   dpush $\label
   NEXT
 .endm
@@ -2580,6 +2601,14 @@ def_const "FR_TIME_RUN",         11, FR_TIME_RUN
 def_const "FR_TIME_IMM",         11, FR_TIME_IMM
 def_const "FR_TIME_IMM_PART",    16, FR_TIME_IMM_PART
 def_const "FR_TIME_RUN_PART",    16, FR_TIME_RUN_PART
+
+testConst:
+  callXt $xt_FR_TIME_IMM
+  dpop %eax
+  movl $FR_TIME_IMM, %ebx
+  call assertEaxEbxEq
+  # Not printing test name for such a minor test
+  ret
 
 ##############################
 # Compiler/Interpreter Internals
@@ -2763,7 +2792,7 @@ flags:
 # # nt>xt: not aligned
 .int xt_lit, nt_word, xt_ntTOxt, xt_lit, xt_word, xt_assertEq
 # Test this because I've hit issues
-.int xt_lit, nt_ENDWORD, xt_ntTOfr, xt_FETCH, xt_lit, FR_TIME_IMM, xt_assertEq
+.int xt_lit, nt_SEMICOLON, xt_ntTOfr, xt_FETCH, xt_lit, FR_TIME_IMM, xt_assertEq
 .int xt_assertEmpty, xt_lit, test_ntTOotherStr, xt_countnt, xt_typeTestPass
 .int xt_EXIT
 test_ntTOother:
@@ -2875,41 +2904,41 @@ DOCREATE: # ( -- xt-body ) \ the (default) execution word for CREATE. Simply
   dpush %eax     # push the body
   NEXT
 
-# ( addr count -- nt ) \ create the next word on the input stream in the dictionary
+# ( addr namelen -- nt ) \ create the next word on the input stream in the dictionary
 #             ascii  , len, flag, label
 def_asmword "CREATE" ,  6 ,    0 , create
   movl $8, %eax
   call checkStackSize
-  cmp $MAX_WORD_LEN, (%ebp) # check if count > max
+  cmp $MAX_WORD_LEN, (%ebp) # check if namelen > max
   jg create_fail
-  movl var_here, %edi
-  movl var_latest, %eax
+  movl var_here, %edi    # edi=here=nt of this word
+  movl var_latest, %eax  # latest=previous word
   movl %eax, (%edi)      # dict: link to previous
   movl %edi, var_latest  # dict: update LATEST to this word
   dpush %edi             # add nt onto the stack (to return)
-  call rrot              # ( nt addr count )
+  call rrot              # ( nt addr namelen )
   addl $4, %edi          # go to where cstr is stored
-  movl (%ebp), %ecx      # count
-  movb %cl, (%edi)       # dict: cstr count
+  movl (%ebp), %ecx      # ecx=namelen
+  movb %cl, (%edi)       # dict: namelen
   inc %edi
-  call tuck   # ( nt count addr count ) note: doesn't touch edi
+  call tuck   # ( nt namelen addr namelen ) note: doesn't touch edi
+  movl %edi, var_here # store edi in HERE, as cmove will destroy
   dpush %edi  # addr2
-  movl %edi, var_here # store edi, as cmove will destroy
-  call swap           # stack: ( nt count addr addr2 count )
-  call cmoveUpper     # dict: name string
-  dpop %ecx           # count. stack: ( nt )
-  movl var_here, %eax   # restore HERE into eax for eax_align4
-  addl %ecx, %eax       # add count to here and align
+  call swap           # stack: ( nt namelen addr addr2 namelen )
+  call cmoveUpper     # dict: put name string
+  dpop %ecx         # namelen. stack: ( nt )
+  movl var_here, %eax   # restore HERE into eax
+  addl %ecx, %eax       # add namelen to HERE and align
   call eax_align4
-  shl $F0_NAMELEN_SHIFT, %ecx # set up flags
-  movl %ecx, (%eax)           # dict: set flags
+  shl $F0_NAMELEN_SHIFT, %ecx # shift namelen to use as F0
+  movl %ecx, (%eax)           # dict: set F0
   addl $4, %eax               # increment eax to point to FR
   movl $0, (%eax)             # set FR to 0
   addl $4, %eax               # increment eax to point to xt
   movl $DOCREATE, (%eax)      # dict: xt for CREATE-ed word
   addl $4, %eax               # increment eax to point to data space
   movl %eax, var_here         # dict: update HERE
-  NEXT                        # nt is stil on the stack
+  NEXT                        # return ( nt )
 create_fail:
   movl $ERR_MAX_WORD_LEN, panicErr
   call *(panic)
@@ -2918,10 +2947,12 @@ create_fail:
 xt_testCreate:
 .int DOCOL
 .int xt_here, xt_FETCH, xt_rpush
-.int xt_lit, testCreatedWord, xt_countnt, xt_create
+.int xt_lit, testCreatedWord, xt_countnt, xt_create # ( nt )
 .int xt_dup, xt_assertTrue # assert there is a name token
 # Assert HERE has changed
 .int xt_rpop, xt_here, xt_FETCH, xt_NEQ, xt_assertTrue
+# Assert xt of latest = here - 4
+.int xt_dup, xt_ntTOxt, xt_here, xt_FETCH, xt_dec4, xt_assertEq
 # Find the word and assert nt is the same
 .int xt_dup, xt_lit, testCreatedWordUpper, xt_countnt, xt_find, xt_assertEq
 # stack: ( nt )
@@ -2949,9 +2980,9 @@ def_asmword ",",  1,    0, pushDict
 # ( -- ) \ Set compilation STATE to false
 #        ascii  , len,       flag, label
 def_asmword "[" ,  1 , FR_TIME_IMM, staterun
-  cmpl $FALSE, var_state
+  cmpl $FALSE, var_REFstate
   je 1f
-  movl $FALSE, var_state
+  movl $FALSE, var_REFstate
   NEXT
 1:
   movl $ERR_STATE_REDUNDANT, panicErr
@@ -2960,9 +2991,9 @@ def_asmword "[" ,  1 , FR_TIME_IMM, staterun
 # ( -- ) \ Set compilation STATE to true
 #        ascii  , len, flag, label
 def_asmword "]" ,  1 ,    0, statecompile
-  cmpl $TRUE, var_state
+  cmpl $TRUE, var_REFstate
   je 1f
-  movl $TRUE, var_state
+  movl $TRUE, var_REFstate
   NEXT
 1:
   movl $ERR_STATE_REDUNDANT, panicErr
@@ -2973,16 +3004,17 @@ def_asmword "]" ,  1 ,    0, statecompile
 def_doword ":",   1,    0, COLON
   # Create the next word and set correct xt
   .int xt_word # ( addr count )
-  .int xt_create, xt_ntTOxt
+  .int xt_create, xt_ntTOxt # ( xt )
   # replace DOCREATE with DOCOL
-  .int xt_lit, DOCOL, xt_swap, xt_STORE
+  .int xt_lit, DOCOL, xt_swap # ( DOCOL xt )
+  .int xt_STORE # compile DOCOl into xt
   .int xt_statecompile # start compiling!
   .int xt_EXIT
 
 
 # ( -- ) \ end compilation from ":"
 #      ascii  , len,        flag, label
-def_doword ";",   1, FR_TIME_IMM, ENDWORD
+def_doword ";",   1, FR_TIME_IMM, SEMICOLON
   .int xt_lit, xt_EXIT, xt_pushDict  # compile EXIT
   .int xt_staterun # [ go back to runmode
   .int xt_EXIT
@@ -2992,10 +3024,10 @@ def_doword ";",   1, FR_TIME_IMM, ENDWORD
 xt_testFlags:
 .int DOCOL
 # F0
-.int xt_lit, flags_ENDWORD, xt_FETCH, xt_lit, 1 << F0_NAMELEN_SHIFT
+.int xt_lit, flags_SEMICOLON, xt_FETCH, xt_lit, 1 << F0_NAMELEN_SHIFT
 .int   xt_assertEq
 # FR
-.int xt_lit, flags_ENDWORD, xt_inc4, xt_FETCH, xt_lit, FR_TIME_IMM
+.int xt_lit, flags_SEMICOLON, xt_inc4, xt_FETCH, xt_lit, FR_TIME_IMM
 .int   xt_assertEq
 .int xt_lit, testFlagsStr, xt_countnt, xt_typeTestPass
 .int xt_EXIT
@@ -3008,16 +3040,16 @@ xt_testCOLON:
 .int DOCOL
 .int xt_here, xt_FETCH, xt_rpush
 # Make sure state=run
-.int xt_state, xt_FETCH, xt_lit, FALSE, xt_assertEq
+.int xt_REFstate, xt_FETCH, xt_lit, FALSE, xt_assertEq
 # start compilation, mimicking INTERPRET
 .int xt_word, xt_find, xt_ntTOxt, xt_execute  # :
 # Make sure state=compile
-.int xt_state, xt_FETCH, xt_lit, TRUE, xt_assertEq
+.int xt_REFstate, xt_FETCH, xt_lit, TRUE, xt_assertEq
 # manually finish compilation, mimicking INTERPRET
 .int xt_word, xt_find, xt_ntTOxt, xt_execute  # 0x
 .int  xt_word, xt_find, xt_ntTOxt, xt_execute # ;
 # assert state is back in runmode
-.int xt_state, xt_FETCH, xt_lit, FALSE, xt_assertEq
+.int xt_REFstate, xt_FETCH, xt_lit, FALSE, xt_assertEq
 #### Validate the word cell by cell
 .int xt_lit, testNewDefinedWordStr, xt_countnt, xt_find
 # Make sure previous HERE = nt
@@ -3063,13 +3095,14 @@ testCOLON:
 # ( -- ) \ tag currently compiling word as TIME_IMM(ediate)
 #          ascii, len, flag, label
 def_doword "IMM",   3, FR_TIME_IMM, imm
-  .int xt_latest, xt_ntTOfr
+  .int xt_latest, xt_FETCH, xt_ntTOfr # ( &FR )
   # Clear TIME flags
   .int xt_dup, xt_dup, xt_FETCH # ( &FR &FR FR )
-  .int xt_FR_TIME_MASK, xt_invert, xt_and, xt_STORE
+  .int xt_FR_TIME_MASK, xt_invert, xt_and # ( &FR &FR FR&FR_TIME_MASK )
+  .int xt_swap, xt_STORE
   # Store TIME_IMM
   .int xt_dup, xt_FETCH # ( &FR FR )
-  .int xt_FR_TIME_IMM, xt_or, xt_STORE
+  .int xt_FR_TIME_IMM, xt_or, xt_swap, xt_STORE
   .int xt_EXIT
 
 # ( -- ) \ forth compliance, same as IMM
@@ -3110,7 +3143,7 @@ def_asmword "EXECUTE",   7,    0, execute
   NEXT
 
 
-# ( nt -- ??? ) \ Execute or compile a word based on runtime
+# ( nt -- ??? ) \ Execute or compile a word based on STATE+FR_TIME
 #            ascii, len, flag, label
 def_asmword "EXEC|COMP", 4, 0, execORcomp
   movl $4, %eax
@@ -3120,7 +3153,7 @@ def_asmword "EXEC|COMP", 4, 0, execORcomp
   callXt $xt_ntTOxt
 
   # Check if state = 0 (executing)
-  cmpl $0, var_state
+  cmpl $0, var_REFstate
   je eorc_exec
   call dup
   callXt $xt_xtTOfr # ( xt &FR )
