@@ -2498,17 +2498,10 @@ test0x_str: # ( expected strnt -- )
 # fetched and stored.
 #
 # The built-in variables are:
-# BASE       The current base for printing and reading numbers.
 # STATE      Is the interpreter executing code (0) or compiling a word (non-zero)?
 # LATEST     Points to the latest (most recently defined) word in the dictionary.
 # HERE       Points to the next free byte of memory.  When compiling, compiled words go here.
 # RSTACK_MAX The maximum memory address of the return stack.
-
-# ( -- addr ) \ the "base" used in str<->int conversions
-#      ascii      , len, flag,  label, initial
-def_asmword "BASE",   4,    0,  base
-  dpush $var_base
-  NEXT
 
 .macro def_var name, namelen, flags, label, initial
 def_asmword \name , \namelen , \flags , \label
