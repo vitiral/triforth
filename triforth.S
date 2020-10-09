@@ -2347,12 +2347,15 @@ word_loop:
   cmpb $'\\', %bl  # is it a comment?
   jne word_not_comment_line
 word_comment_loop:
-  # if comment, read till \n
-  # then return with word if there is one,
-  # else continue
+  # if a comment char, first check if we are within a word
+  cmpl $0, (%ebp) # count
+  jg word_not_comment_line
+  # read till \n then keep looping
   call readKey
+  cmp $0, %eax # check for EOF
+  je word_eof
   cmpb $'\n', keyBuffer
-  je word_ret_maybe
+  je word_loop
   jmp word_comment_loop
 word_not_comment_line:
   # check for whitespace: all characters > space are not whitespace. This means
@@ -2366,7 +2369,7 @@ word_not_comment_line:
   # movb %al, wordBuffer(,%eax,1) # indexed addressing mode
   addl $wordBuffer, %eax
   movb %bl, (%eax)
-  addl $1, (%ebp)  # increment index
+  addl $1, (%ebp)  # increment count
   jmp word_loop
 word_ret_maybe:   # possibly return a word... or keep looping if count=0
   cmp $0, (%ebp)  # are there any characters in the buffer?
