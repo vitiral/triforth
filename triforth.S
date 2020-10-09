@@ -200,7 +200,7 @@ rstackCheckpoint: .int 0
 
 emitFd: .int STDERR # where to EMIT and TYPE to
 .equ EMIT_BUFFER_SIZE,16
-emitBuffer: .space EMIT_BUFFER_SIZE # scratch space for emit and DOT
+emitBuffer: .space EMIT_BUFFER_SIZE # scratch space for emit and uPntX
 emitBufferMax:
 keyFd: .int STDIN   # where KEY/etc gets input from
 keyBuffer: .int 0
@@ -226,8 +226,8 @@ colonSpaceStr: .ascii ": \0"
 
 # Test Names
 testIoBufferStr: .ascii "testIoBuffer\0"
-testDOTStr: .ascii "testDOT\0"
-testDOTsStr: .ascii "testDOTs\0"
+testuPntXStr: .ascii "testuPntX\0"
+testPntStackStr: .ascii "testPntStack\0"
 testDumpInfoStr: .ascii "testDumpInfo\0"
 testNEXTStr: .ascii "testNEXT\0"
 testEXITStr: .ascii "testEXIT\0"
@@ -287,8 +287,8 @@ testSuite: # ( -- )
   call testEmit
   call testCountNt
   call testIoBuffer
-  call testDOT
-  call testDOTs
+  call testuPntX
+  call testPntStack
   call testMUL
   call testDumpInfo
   call assertCleanState
@@ -808,7 +808,7 @@ testStackBasic:
 # String and Emiting/Printing
 # Dealing with strings and outputing to STDERR is important when devleoping and
 # debugging. The below functions allow easier access to data than printing a
-# return code, including DOTs (.S) which allows us to view the stack at any
+# return code, including pntStack which allows us to view the stack at any
 # time.
 # In addition, many of these will eventually be included directly as forth
 # words, so by defining them as early as possible we can get the greatest use
@@ -960,7 +960,7 @@ uPntX_zero:
 
 ebx_toascii: # ( u -- c )
   # convert a number (typically 1-16) into ascii equivalent
-  # This is used with DOTbase (above)
+  # This is used with uPntX (above)
   cmp $9, %ebx
   jg 1f
   # number <= 9
@@ -979,70 +979,7 @@ ebx_toascii: # ( u -- c )
   call unreachable
 
 
-DOT: # ( n -- )
-  # forth '.', emit the value on the stack.
-  movl var_base, %eax  # note: will be defined later
-  dpush %eax
-  call DOTbase
-  dpush $' '
-  call emit
-  ret
-
-DOTbase: # ( n u:base -- )
-  # emit the number using the given base.
-  # TODO: deal with negatives
-  dpush $0 # count: characters in buffer
-  call rrot # ( count n base )
-1:
-  call dup  # ( count n base base )
-  call rrot # ( count base n base )
-  call DIVmod # ( count base quot rem )
-  call uTOascii # ( count base quot c )
-
-  # write characters right->left
-  movl $emitBufferMax-1, %eax
-  subl 12(%ebp), %eax # note: count at index=3
-  dpush %eax # address to store character at
-  # ( count base quot c addr )
-  call cSTORE # ( count base quot )
-  call swap   # ( count quot base )
-  addl $1, 8(%ebp) # increment count
-  cmp $0, 4(%ebp) # check if quot=0
-  jne 1b # loop
-
-  call _2drop # no need for quot or base
-  movl $emitBufferMax, %eax
-  subl (%ebp), %eax
-  dpush %eax # ( count addr )
-  call swap
-  call type
-  dpush $' '
-  call emit
-  ret
-
-uTOascii: # ( u -- c )
-  # convert a number (typically 1-16) into ascii equivalent
-  # This is used with DOTbase (above)
-  dpop %ebx
-  cmp $9, %ebx
-  jg 1f
-  # number <= 9
-  addl $'0', %ebx
-  jmp 2f
-1: # number > 9
-  subl $10, %ebx
-  cmpl $23, %ebx
-  jg 3f
-  addl $'A', %ebx
-2: # push and return
-  dpush %ebx
-  ret
-3: # error
-  movl $ERR_ASCII_BOUNDS, panicErr
-  call *(panic)
-  call unreachable
-
-testDOT:
+testuPntX:
   dpush $1
   call uPntX
   dpush $0x12
@@ -1052,17 +989,7 @@ testDOT:
   dpush $'\n'
   call emit
 
-  dpush $1
-  call DOT
-  call assertEmpty
-  dpush $12
-  call DOT
-  dpush $0x1A2B
-  dpush $16
-  call DOTbase
-  dpush $'\n'
-  call emit
-  dpush $testDOTStr
+  dpush $testuPntXStr
   call countnt
   call typeTestPass
   call assertEmpty
@@ -1085,15 +1012,14 @@ testMUL:
   call assertEaxEbxEq
   ret
 
-DOTs: # ( -- )
+pntStack: # ( -- )
   # Forth .S, prints the current stack
   dpush $stackStr
   # "Stack< DEPTH > "
   call typent
 
   call depth 
-  dpush $10
-  call DOTbase
+  call uPntX
 
   dpush $'>'
   call emit
@@ -1117,8 +1043,7 @@ DOTs: # ( -- )
   # print the number in hex
   movl (%ebx), %eax
   dpush %eax
-  dpush $16
-  call DOTbase
+  call uPntX
 
   addl $1, (%ebp) # increment index
   jmp 1b # loop
@@ -1129,15 +1054,15 @@ DOTs: # ( -- )
   call emit
   ret
 
-testDOTs:
+testPntStack:
   dpush $0x01
   dpush $0x02
   dpush $0xAA
   dpush $0x1A2B
-  call DOTs
+  call pntStack
   call _2drop
   call _2drop
-  dpush $testDOTsStr
+  dpush $testPntStackStr
   call countnt
   call typeTestPass
   ret
@@ -1211,26 +1136,22 @@ dumpInfo:
   movl $registerSnapshot, %ebx
   movl (%ebx), %eax  # eax
   dpush %eax
-  dpush $16
-  call DOTbase
+  call uPntX
 
   movl $registerSnapshot, %ebx
   movl 4(%ebx), %eax # ebx
   dpush %eax
-  dpush $16
-  call DOTbase
+  call uPntX
 
   movl $registerSnapshot, %ebx
   movl 8(%ebx), %eax # ecx
   dpush %eax
-  dpush $16
-  call DOTbase
+  call uPntX
 
   movl $registerSnapshot, %ebx
   movl 12(%ebx), %eax # edx
   dpush %eax
-  dpush $16
-  call DOTbase
+  call uPntX
 
   movl $registerSnapshot, %ebx
   dpush $registersDsStr
@@ -1238,19 +1159,17 @@ dumpInfo:
   movl $registerSnapshot, %ebx
   movl 16(%ebx), %eax # edi
   dpush %eax
-  dpush $16
-  call DOTbase
+  call uPntX
 
   movl $registerSnapshot, %ebx
   movl 20(%ebx), %eax # esi
   dpush %eax
-  dpush $16
-  call DOTbase
+  call uPntX
   dpush $'\n'
   call emit
 
   # Stack
-  call DOTs
+  call pntStack
   # IO buffer
   dpush $wordStr
   call typent
@@ -1308,8 +1227,7 @@ defaultPanic: # ( -- )
   call typent
   movl panicErr, %eax
   dpush %eax
-  dpush $16
-  call DOTbase
+  call uPntX
   dpush $'\n'
   call emit
   movl $RC_PANIC, %ebx
@@ -1465,8 +1383,7 @@ dump: # ( addr count -- ) \ Dump the contents of the address onto emitFd
   dpush $dumpAddrStr
   call typent
   call over
-  dpush $16
-  call DOTbase
+  call uPntX
   dpush $'\n'
   call emit
 
@@ -1497,13 +1414,11 @@ dump: # ( addr count -- ) \ Dump the contents of the address onto emitFd
 
 dump_addr: # ( addr -- ) \ print "<addr>: "
   call dup
-  dpush $16
-  call DOTbase
+  call uPntX
   dpush $colonSpaceStr
   call typent
   callXt $xt_FETCH
-  dpush $16
-  call DOTbase
+  call uPntX
   dpush $'\n'
   call emit
   ret
@@ -1806,7 +1721,7 @@ def_asmword "C@" ,  2 ,  0 ,  cFETCH
 
 # ( n -- ) \ prints a number to emitFd
 #           ascii, len, flag, label
-def_callword "." ,  1 ,  0 ,  DOT
+def_callword "." ,  1 ,  0 ,  uPntX
 
 # ( -- ) \ asserts that stack is empty
 #                    ascii,len, flag, label
@@ -1878,13 +1793,9 @@ def_callword "ASSERTCLEANSTATE", 16, 0, assertCleanState
 #            ascii          , len, flag, label
 def_callword "typeTestPass" ,  12 ,  0 ,  typeTestPass
 
-# ( n u -- ) \ prints a number with the given base to emitFd
-#           ascii      , len, flag, label
-def_callword ".BASE" ,  5 ,  0 ,  DOTbase
-
 # ( -- ) \ prints the current stack
 #           ascii , len, flag, label
-def_callword ".S" ,  2 ,  0 ,  DOTs
+def_callword "PNTSTACK" ,  8 ,  0 ,  pntStack
 
 # ( -- ) \ prints current stack/register/etc info
 #           ascii       , len, flag, label
