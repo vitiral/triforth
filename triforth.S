@@ -111,6 +111,8 @@
 .equ ERR_UNKNOWN_WORD,0x306
 .equ ERR_STATE_REDUNDANT,0x307
 .equ ERR_STACK_UNDERFLOW,0x308
+.equ ERR_WORD_NOT_FOUND,0x309
+.equ ERR_INVALID_FLAG,0x310
 
 .equ FALSE, 0
 .equ TRUE, -1
@@ -156,7 +158,7 @@
 .equ FR_RES3,              0x00FF0000  # 8b: reserved for expanding IMM_SIZE
 # Byte 4
 .equ FR_RES4,              0x0F000000  # 4b: unused bits
-.equ FR_TYPE_MASK,         0xF0000000  # 4b: the type (16 supported)
+.equ FR_TYPE_MASK,         0xF0000000  # 4b: the word's type
 .equ FR_TYPE_UNTYPED,      0x00000000  # na: untyped word
 .equ FR_TYPE_TYWORD,       0x10000000  # na: typed word
 .equ FR_TYPE_STRUCT,       0x20000000  # na: struct (data structure)
@@ -188,7 +190,6 @@ wordCount: .int 0 # for debugging only
 
 # Word info
 .equ FLAG_WORD_IMMEDIATE, 0x01 # whether the word is immediate or not
-
 
 # Address that should be called when panicing, can be redirected when testing.
 panic: .int defaultPanic
@@ -239,6 +240,7 @@ testAlign4Str: .ascii "testAlign4\0"
 test_ntTOotherStr: .ascii "test_ntTOother\0"
 testFindStr: .ascii "testFind\0"
 testCreateStr: .ascii "testCreate\0"
+testFlagsStr: .ascii "testFlags\0"
 testCOLONStr: .ascii "testCOLON\0"
 testInterpretStr: .ascii "testInterpret\0"
 
@@ -270,44 +272,47 @@ testNewDefinedWordStr: .ascii "NEWDEFINEDWORD\0"
 testSuite: # ( -- )
   # We are doing test driven development. All assembly tests we write should go
   # here. You can ignore them for now.
-  call testMemLocations
-  call assertEmpty
-  call testAsserts
-  call testIndirectCall
-  call testPanicHandle
-  call testDsPushPop
-  call testModDIV
-  call testEbxStackSize
-  call testDepth
-  call testStackBasic
-  call assertCleanState
+  # call testMemLocations
+  # call assertEmpty
+  # call testAsserts
+  # call testIndirectCall
+  # call testPanicHandle
+  # call testDsPushPop
+  # call testModDIV
+  # call testEbxStackSize
+  # call testDepth
+  # call testStackBasic
+  # call assertCleanState
 
-  call testEmit
-  call testCountNt
-  call testIoBuffer
-  call testDOT
-  call testDOTs
-  call testMUL
-  call testDumpInfo
-  call assertCleanState
+  # call testEmit
+  # call testCountNt
+  # call testIoBuffer
+  # call testDOT
+  # call testDOTs
+  # call testMUL
+  # call testDumpInfo
+  # call assertCleanState
 
-  call testNEXT
-  call testEXIT
-  call testDictSimple
-  call assertCleanState
+  # call testNEXT
+  # call testEXIT
+  # call testDictSimple
+  # call assertCleanState
 
-  call testDictBuiltin
-  call testKey
-  call testWord
-  call assertCleanState
+  # call testDictBuiltin
+  # call testKey
+  # call testWord
+  # call assertCleanState
 
-  call test0x
-  call testAlign4
-  call test_ntTOother
-  call testFind
-  call testCreate
-  call testCOLON
-  call assertCleanState
+  # call test0x
+  # call testAlign4
+  # call test_ntTOother
+  # call testFind
+  # call testCreate
+  # call testFlags
+  # call assertCleanState
+
+  # call testCOLON
+  # call assertCleanState
 
   call testInterpret
   call assertCleanState
@@ -516,22 +521,6 @@ assertEmpty:
   # Assert that the datastack is empty
   movl %ebp, %eax
   movl $dstackMax, %ebx
-  call assertEaxEbxEq
-  ret
-
-assertCleanState:
-  call assertEmpty
-
-  movl panic, %eax
-  movl $defaultPanic, %ebx
-  call assertEaxEbxEq
-
-  movl panicErr, %eax
-  movl $0, %ebx
-  call assertEaxEbxEq
-
-  movl rstackCheckpoint, %eax
-  movl $0, %ebx
   call assertEaxEbxEq
   ret
 
@@ -1558,8 +1547,8 @@ cstr_\label :
   .ascii "\name"       # the ascii name itself
   .align 4             # padding to next 4 byte boundary
 flags_\label :
-  .int (\namelen << F0_NAMELEN_SHIFT) # F0
-  .int \flags                         # FR
+  .int \namelen << F0_NAMELEN_SHIFT # F0
+  .int \flags                       # FR
 xt_\label :
   .int word_\label
 word_\label :
@@ -1586,8 +1575,8 @@ cstr_\label :
   .ascii "\name"        # the ascii name itself
   .align 4              # padding to next 4 byte boundary
 flags_\label :
-  .int ( \namelen << F0_NAMELEN_SHIFT ) # F0
-  .int \flags                           # FR
+  .int \namelen << F0_NAMELEN_SHIFT # F0
+  .int \flags                       # FR
 xt_\label :
   .int DOCOL
 # follow with .int for xt's to call
@@ -1702,7 +1691,7 @@ def_callword "DEPTH" , 5 ,  0 ,   depth
 
 # ( u addr -- ) \ stores the value at address
 #         ascii , len, flag, label
-def_asmword "!" ,  1 ,  0 ,  STORE
+def_asmword "!" ,   1,    0,  STORE
   dpop %eax # addr
   dpop %ebx # u
   movl %ebx, (%eax)
@@ -1782,6 +1771,38 @@ def_asmword "ASSERTEQ",  8,    0, assertEq
   dpop %ebx
   call assertEaxEbxEq
   NEXT
+
+# ( addr -- ) \ assert the address is aligned by 4
+#                     ascii,     len, flag, label
+def_asmword "ASSERTALIGNED", 13, 0, assertAligned
+  dpop %eax
+  andl $3, %eax
+  movl $0, %ebx
+  call assertEaxEbxEq
+  NEXT
+
+assertCleanState:
+  call assertEmpty
+
+  movl panic, %eax
+  movl $defaultPanic, %ebx
+  call assertEaxEbxEq
+
+  movl panicErr, %eax
+  movl $0, %ebx
+  call assertEaxEbxEq
+
+  movl rstackCheckpoint, %eax
+  movl $0, %ebx
+  call assertEaxEbxEq
+
+  callXt $xt_here
+  callXt $xt_assertAligned
+  ret
+
+# ( -- ) \ assert the state is clean
+#                     ascii,     len, flag, label
+def_callword "ASSERTCLEANSTATE", 16, 0, assertCleanState
 
 # ( n u -- ) \ prints a number with the given base to emitFd
 #            ascii          , len, flag, label
@@ -2401,6 +2422,7 @@ ebx_ctou_err:
 #   \ panics if the next word is not completely representable by hex
 #          ascii, len,        flag, label
 def_asmword "0X",   2, FR_TIME_IMM, _0x
+  callXt $xt_testFlags # TODO: remove
   callXt $xt_word # ( addr count )
   call strTOhex
   cmp $0, var_state
@@ -2760,22 +2782,22 @@ test_ntTOother_constructed: # ( nt -- )
   movl $0x43, %ebx
   call assertEaxEbxEq
 
-  # call dup
+  call dup
   callXt $xt_ntTOxt
   dpop %eax
   movl (%eax), %eax
   movl $0x44, %ebx
   call assertEaxEbxEq
 
-  # call dup
-  # callXt $xt_ntTOxt
-  # callXt $xt_xtTOfr
-  # dpop %eax
-  # movl (%eax), %eax
-  # movl $0x43, %ebx
-  # call assertEaxEbxEq
+  call dup
+  callXt $xt_ntTOxt
+  callXt $xt_xtTOfr
+  dpop %eax
+  movl (%eax), %eax
+  movl $0x43, %ebx
+  call assertEaxEbxEq
 
-  # call drop
+  call drop
   ret
 
 # ( addr count -- nt ) \ finds the string in the dictionary, returning it's nt (name token)
@@ -2953,6 +2975,21 @@ def_doword ";",   1, FR_TIME_IMM, ENDWORD
 
 
 .align 4
+xt_testFlags:
+.int DOCOL
+# F0
+.int xt_lit, flags_ENDWORD, xt_FETCH, xt_lit, 1 << F0_NAMELEN_SHIFT
+.int   xt_assertEq
+# FR
+.int xt_lit, flags_ENDWORD, xt_inc4, xt_FETCH, xt_lit, FR_TIME_IMM
+.int   xt_assertEq
+.int xt_lit, testFlagsStr, xt_countnt, xt_typeTestPass
+.int xt_EXIT
+testFlags:
+  callXt $xt_testFlags
+  ret
+
+.align 4
 xt_testCOLON:
 .int DOCOL
 .int xt_here, xt_FETCH, xt_rpush
@@ -2983,7 +3020,11 @@ xt_testCOLON:
 # Make sure xt
 .int xt_dup, xt_ntTOxt, xt_FETCH, xt_lit, DOCOL, xt_assertEq
 # Validate our manual compilation
-.int xt_ntTOxt, xt_inc4  # LIT (for 0x42)
+.int xt_ntTOxt, xt_dec4, xt_dec4 # get F0
+.int xt_dup, xt_FETCH, xt_lit, 14<<F0_NAMELEN_SHIFT, xt_assertEq
+.int xt_inc4 # get FR
+.int xt_dup, xt_FETCH, xt_lit, 0, xt_assertEq
+.int xt_inc4, xt_inc4 # back to xt -> first data
 .int xt_dup, xt_FETCH, xt_lit, xt_lit, xt_assertEq
 .int xt_inc4  # 0x42
 .int xt_dup, xt_FETCH, xt_lit, 0x42, xt_assertEq
@@ -3002,7 +3043,6 @@ testCOLON:
   call openNtEbx
   callXt $xt_testCOLON
   call closeKeyFd
-  
   callXt $xt_testCOLON_pnt
   ret
 
@@ -3053,6 +3093,78 @@ def_asmword "EXECUTE",   7,    0, execute
   call _callXt # expects %eax=xt
   NEXT
 
+
+# ( nt -- ??? ) \ Execute or compile a word based on runtime
+#            ascii, len, flag, label
+def_asmword "EXEC|COMP", 4, 0, execORcomp
+  movl $4, %eax
+  call checkStackSize
+  cmp $0, (%ebp) # if nt is 0 then error
+  je eorc_err_noword
+  callXt $xt_ntTOxt
+
+  # Check if state = 0 (executing)
+  cmpl $0, var_state
+  je eorc_exec
+  call dup
+  callXt $xt_xtTOfr # ( xt &FR )
+  dpop %ebx         # ( xt ) eax=&FR
+  movl (%ebx), %eax
+  andl $FR_TIME_MASK, %eax
+  movl $0x777, %edx
+  call dumpInfo     # TODO: remove
+  cmpl $FR_TIME_IMM, %eax
+  je eorc_exec
+  cmpl $FR_TIME_IMM_PART, %eax
+  je eorc_err_badflag  # not supported by this interpreter
+  cmpl $FR_TIME_RUN_PART, %eax
+  je eorc_err_badflag  # not supported by this interpreter
+  # Not executing and not immediate: compile word
+  callXt $xt_pushDict
+  NEXT
+eorc_exec:
+  dpop %eax
+  call _callXt
+  NEXT
+eorc_err_noword:
+  movl $ERR_WORD_NOT_FOUND, panicErr
+  call *(panic)
+eorc_err_badflag:
+  # TODO: remove
+  movl $xt_ENDWORD, %ebx
+  movl $flags_ENDWORD, %ecx
+  movl $0x666, %edx
+  call dumpInfo
+  call dup
+  subl $20, (%ebp)
+  dpush $44
+  call dump
+
+  movl $ERR_INVALID_FLAG, panicErr
+  call *(panic)
+
+#                       xt_END. F0_END.
+# Registers e(a-d)x: C0 804E774 804E76C 1 e[ds]i: 1 8049F88 
+# Stack< 1 > 804E774 
+# word: ;
+# DUMP 804E760 
+# 804E760 : 0804B014 
+# 804E764 : 0804E72C 
+# 804E768 : 03B01 
+# 804E76C : 01000000   F0_END
+# 804E770 : 040 
+# 804E774 : 08049EC8   xt_END
+# 804E778 : 0804BBD8 
+# 804E77C : 0804B014 
+# 804E780 : 0804E690 
+# 804E784 : 0804E6C4 
+# 804E788 : 0804B014 
+# Registers e(a-d)x: 804E774 4 804E76C 1 e[ds]i: 1 8049F88 
+# Stack< 1 > 804E774 
+# word: ;
+
+
+
 # ( -- ) \ Interpret bytes on the input stream until EOF
 # \ Basic design:
 # \ - call WORD
@@ -3066,50 +3178,63 @@ def_asmword "EXECUTE",   7,    0, execute
 def_asmword "INTERPRET",   9,    0, interpret
 interpret_loop:
   callXt $xt_word
-  cmp $0, (%ebp)  # see if count<=0
-  jle interpret_eof
-  call _2dup # keep track of word for error handling
-  callXt $xt_find # stack: ( addr count nt )
-  cmp $0, (%ebp)  # see if nt=0
-  je interpret_notfound
-  callXt $xt_ntTOxt  # ( addr count xt )
-  # if we are in runmode (STATE=0) then always execute the word
-  cmp $0, var_state
-  je interpret_execute_xt
-  # check if the word is IMMEDIATE, execute if so
-  call dup
-  callXt $xt_xtTOfr
-  dpop %eax  # eax=&FR stack: ( addr count xt )
-  andl $FR_TIME_MASK, %eax
-  cmp $FR_TIME_IMM, %eax
-  je interpret_execute_xt
-  cmp $FR_TIME_IMM_PART, %eax
-  je interpret_execute_xt
-  # else, compile the word into the dictionary
-  callXt $xt_pushDict 
-  call _2drop # drop ( addr count )
+  cmp $0, (%ebp) # if count == 0, exit
+  je interpret_next
+  callXt $xt_find
+  callXt $xt_execORcomp
   jmp interpret_loop
-interpret_execute_xt: # execute xt
-  dpop %eax     # eax=xt
-  addl $8, %ebp # 2drop, but we can't pollute %eax
-  call _callXt  # execute eax
-  jmp interpret_loop
-interpret_eof:
+interpret_next:
   call _2drop
   NEXT
-interpret_notfound:
-  call drop # drop nt=0
-  cmp $0, var_XTinterpret_unknown
-  jne interpret_unknown
-  # no means to handle unknown value, panic
-  dpush $unknownWordStr
-  call typent
-  callXt $xt_typeln
-  movl $ERR_UNKNOWN_WORD, panicErr
-  call *(panic)
-interpret_unknown:
-  callXt var_XTinterpret_unknown
-  jmp interpret_loop
+
+
+
+# interpret_loop:
+#   callXt $xt_word
+#   cmp $0, (%ebp)  # see if count<=0
+#   jle interpret_eof
+#   call _2dup # keep track of word for error handling
+#   callXt $xt_find # stack: ( addr count nt )
+#   cmp $0, (%ebp)  # see if nt=0
+#   je interpret_notfound
+#   callXt $xt_ntTOxt  # ( addr count xt )
+#   # if we are in runmode (STATE=0) then always execute the word
+#   cmp $0, var_state
+#   je interpret_execute_xt
+#   # check if the word is IMMEDIATE, execute if so
+#   call dup
+#   callXt $xt_xtTOfr
+#   dpop %eax  # eax=&FR stack: ( addr count xt )
+#   andl $FR_TIME_MASK, %eax
+#   cmp $FR_TIME_IMM, %eax
+#   je interpret_execute_xt
+#   cmp $FR_TIME_IMM_PART, %eax
+#   je interpret_execute_xt
+#   # else, compile the word into the dictionary
+#   callXt $xt_pushDict 
+#   call _2drop # drop ( addr count )
+#   jmp interpret_loop
+# interpret_execute_xt: # execute xt
+#   dpop %eax     # eax=xt
+#   addl $8, %ebp # 2drop, but we can't pollute %eax
+#   call _callXt  # execute eax
+#   jmp interpret_loop
+# interpret_eof:
+#   call _2drop
+#   NEXT
+# interpret_notfound:
+#   call drop # drop nt=0
+#   cmp $0, var_XTinterpret_unknown
+#   jne interpret_unknown
+#   # no means to handle unknown value, panic
+#   dpush $unknownWordStr
+#   call typent
+#   callXt $xt_typeln
+#   movl $ERR_UNKNOWN_WORD, panicErr
+#   call *(panic)
+# interpret_unknown:
+#   callXt var_XTinterpret_unknown
+#   jmp interpret_loop
 
 
 .align 4
@@ -3122,11 +3247,17 @@ xt_testInterpret_inputstream:
 xt_testInterpret_pnt:
 .int DOCOL, xt_lit, testInterpretStr, xt_countnt, xt_typeTestPass, xt_EXIT
 testInterpret:
+  dpush $testTheAnswerFile
+  call typentln
   movl $testTheAnswerFile, %ebx
   call openNtEbx
   callXt $xt_testInterpret_theAnswer
   call closeKeyFd
 
+  call testFlags
+
+  dpush $testSimpleMathFile
+  call typentln
   call openSimpleMathFile
   callXt $xt_testInterpret_inputstream
   call closeKeyFd
