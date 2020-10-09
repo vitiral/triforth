@@ -3142,22 +3142,18 @@ testCOLON:
   ret
 
 # ( -- ) \ tag currently compiling word as TIME_IMM(ediate)
+# \ This is traditionally called IMMEDIATE.
 #          ascii, len, flag, label
 def_doword "IMM",   3, FR_TIME_IMM, imm
   .int xt_REFlatest, xt_FETCH, xt_ntTOfr # ( &FR )
   # Clear TIME flags
   .int xt_dup, xt_dup, xt_FETCH # ( &FR &FR FR )
-  .int xt_FR_TIME_MASK, xt_invert, xt_and # ( &FR &FR FR&FR_TIME_MASK )
+  .int xt_FR_TIME_MASK, xt_invert, xt_and # ( &FR &FR (FR AND FR_TIME_MASK) )
   .int xt_swap, xt_STORE
   # Store TIME_IMM
   .int xt_dup, xt_FETCH # ( &FR FR )
   .int xt_FR_TIME_IMM, xt_or, xt_swap, xt_STORE
   .int xt_EXIT
-
-# ( -- ) \ forth compliance, same as IMM
-#          ascii, len, flag, label
-def_doword "IMMEDIATE",   9, FR_TIME_IMM, immediate
-  .int xt_imm, xt_EXIT
 
 # ( -- xt ) \ Put the xt of the next word onto the stack.
 #          ascii, len, flag, label
@@ -3191,10 +3187,7 @@ def_asmword "EXECUTE",   7,    0, execute
   call _callXt # expects %eax=xt
   NEXT
 
-
-# ( nt -- ??? ) \ Execute or compile a word based on STATE+FR_TIME
-#            ascii, len, flag, label
-def_asmword "EXEC|COMP", 4, 0, execORcomp
+execOrCompile: # ( nt -- ??? ) \ Execute or compile a word based on STATE+FR_TIME
   movl $4, %eax
   call checkStackSize
   cmp $0, (%ebp) # if nt is 0 then error
@@ -3217,11 +3210,11 @@ def_asmword "EXEC|COMP", 4, 0, execORcomp
   je eorc_err_badflag  # not supported by this interpreter
   # Not executing and not immediate: compile word
   callXt $xt_pushDict
-  NEXT
+  ret
 eorc_exec:
   dpop %eax
   call _callXt
-  NEXT
+  ret
 eorc_err_noword:
   movl $ERR_WORD_NOT_FOUND, panicErr
   call *(panic)
@@ -3244,7 +3237,7 @@ interpret_loop:
   cmp $0, (%ebp) # if count == 0, exit
   je interpret_next
   callXt $xt_find
-  callXt $xt_execORcomp
+  call execOrCompile
   jmp interpret_loop
 interpret_next:
   call _2drop
