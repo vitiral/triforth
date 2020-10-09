@@ -248,6 +248,7 @@ testInterpretStr: .ascii "testInterpret\0"
 testSimpleMathFile: .ascii "tests/simplemath.fs\0"
 testDefineFile: .ascii "tests/define.fs\0"
 testTheAnswerFile: .ascii "tests/theanswer.fs\0"
+triforthFile: .ascii "triforth.fs\0"
 
 # Test Inputs
 testWordWithSpaces: .ascii " spc    \0"
@@ -921,7 +922,7 @@ cSTORE: # ( c addr -- )
   movb %bl, (%eax)
   ret
 
-uPntX: # ( n -- ) \ emit the number as unsigned hex
+uPntX: # ( n -- ) \ emit an unsigned hex number
   movl $4, %eax
   call checkStackSize
   cmpl $0, (%ebp) # if number if 0 just print that
@@ -954,9 +955,11 @@ uPntX_ret:
   call emit
   ret
 uPntX_zero:
+  call drop
   dpush $'0'
   call emit
-  call _2drop
+  dpush $' '
+  call emit
   ret
 
 ebx_toascii: # ( u -- c )
@@ -3185,6 +3188,13 @@ testInterpret:
   dpush $testSimpleMathFile
   call typentln
   call openSimpleMathFile
+  callXt $xt_testInterpret_inputstream
+  call closeKeyFd
+
+  dpush $triforthFile
+  call typentln
+  movl $triforthFile, %ebx
+  call openNtEbx
   callXt $xt_testInterpret_inputstream
   call closeKeyFd
 
