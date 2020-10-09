@@ -188,9 +188,6 @@ ioBufferLen: .int 0  # number of chars in ioBuffer
 wordBuffer: .space MAX_WORD_LEN
 wordCount: .int 0 # for debugging only
 
-# Word info
-.equ FLAG_WORD_IMMEDIATE, 0x01 # whether the word is immediate or not
-
 # Address that should be called when panicing, can be redirected when testing.
 panic: .int defaultPanic
 # Specefic error code encountered when panicing.
@@ -2548,6 +2545,7 @@ test0x_str: # ( expected strnt -- )
 # HERE       Points to the next free byte of memory.  When compiling, compiled words go here.
 # RSTACK_MAX The maximum memory address of the return stack.
 
+# ( -- u )
 .macro def_var name, namelen, flags, label, initial
 def_asmword \name , \namelen , \flags , \label
   dpush $var_\label
@@ -2563,8 +2561,6 @@ def_var "STATE"   ,    5,    0, state  , 0
 def_var "HERE"    ,    4,    0, here   , 0
 def_var "LATEST"  ,    6,    0, latest , 0 # initialized in _start
 def_var "RSTACK_MAX", 10,    0, rstack_max , 0 # initialized in _start
-
-def_var "'INTERPRET_UNKNOWN", 18,    0, XTinterpret_unknown , 0
 
 ##############################
 # Builtin Constants
@@ -3067,10 +3063,12 @@ testCOLON:
 # ( -- ) \ tag currently compiling word as TIME_IMM(ediate)
 #          ascii, len, flag, label
 def_doword "IMM",   3, FR_TIME_IMM, imm
-  .int xt_latest, xt_ntTOfr, xt_dup
+  .int xt_latest, xt_ntTOfr
   # Clear TIME flags
+  .int xt_dup, xt_dup, xt_FETCH # ( &FR &FR FR )
   .int xt_FR_TIME_MASK, xt_invert, xt_and, xt_STORE
   # Store TIME_IMM
+  .int xt_dup, xt_FETCH # ( &FR FR )
   .int xt_FR_TIME_IMM, xt_or, xt_STORE
   .int xt_EXIT
 
@@ -3153,7 +3151,6 @@ eorc_err_badflag:
 # \ Basic design:
 # \ - call WORD
 # \ - call FIND
-# \ - if cannot be found, call 'INTERPRET_UNKNOWN if set or panic
 # \ - execute word (callXt)
 # \ - repeat until EOF
 # \ Note: we will create a more user-friendly interpreter in forth.

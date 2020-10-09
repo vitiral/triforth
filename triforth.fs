@@ -13,13 +13,13 @@ state @ 0x 0 assertEq
 
 : bl      0x 20 ;       \ BL (Blank) is std forth word for space
 : cr      '\n' emit ;   \ print carriage return a.k.a newline
-\ : space   bl emit ;     \ print space
-\ : negate  0x 0 SWAP - ; \ get negative of the number
-\ : true    0x -1 ;
-\ : false   0x 0 ;
-\ : LITERAL IMM  \ ( u -- ) take whatever is on stack and compile as a literal
-\   ' LIT , \ compile LIT
-\   , ;     \ compile the literal itself (from the stack)
+: space   bl emit ;     \ print space
+: negate  0x 0 SWAP - ; \ get negative of the number
+: true    0x FFFFFFFF ;
+: false   0x 0 ;
+: LITERAL IMM  \ ( u -- ) take whatever is on stack and compile as a literal
+  ' LIT , \ compile LIT
+  , ;     \ compile the literal itself (from the stack)
 \ : ':' \ ( -- c:colon ) the colon character code
 \   [ CHAR : ]  \ put the character ':' onto the stack at compile-time
 \   LITERAL ;   \ compile LIT 58 as the definition for ':' word
