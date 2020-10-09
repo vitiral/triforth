@@ -278,7 +278,7 @@ testSuite: # ( -- )
   call testIndirectCall
   call testPanicHandle
   call testDsPushPop
-  call testModDIV
+  call testDIVmod
   call testEbxStackSize
   call testDepth
   call testStackBasic
@@ -576,7 +576,7 @@ testing_overflow:
   dpush $4  # overflow
   call unreachable
 
-DIVmod: # ( u:a u:b -- u:quot u:rem )
+DIVmod: # ( u:a u:b -- u:rem u:quot )
   # Forth MOD/, unsigned divide a by b
   # returns: quotient remainder
   dpop %ebx # divisor
@@ -584,19 +584,20 @@ DIVmod: # ( u:a u:b -- u:quot u:rem )
   dpop %eax # %edx:%eax=number
 
   divl %ebx  # %edx:%eax / %ebx => %eax=quotient %edx=remainder
-  dpush %eax
-  dpush %edx
+  dpush %edx # remainder
+  dpush %eax # quotient
   ret
 
-testModDIV:
+testDIVmod:
   dpush $13
   dpush $5
   call DIVmod
-  dpop %ebx
-  movl $3, %eax # remainder
-  call assertEaxEbxEq
   dpop %eax
   movl $2, %ebx # quotient
+  call assertEaxEbxEq
+
+  dpop %eax
+  movl $3, %ebx # remainder
   call assertEaxEbxEq
   call assertEmpty
   ret
@@ -978,7 +979,6 @@ ebx_toascii: # ( u -- c )
   call *(panic)
   call unreachable
 
-
 testuPntX:
   dpush $1
   call uPntX
@@ -1066,7 +1066,6 @@ testPntStack:
   call countnt
   call typeTestPass
   ret
-
 
 cmove: # ( addr1 addr2 count -- )
   # Forth CMOVE, move count characters from addr1 -> addr2.
@@ -1170,7 +1169,7 @@ dumpInfo:
 
   # Stack
   call pntStack
-  # IO buffer
+  # current word
   dpush $wordStr
   call typent
   dpush $wordBuffer
@@ -1719,13 +1718,9 @@ def_asmword "C@" ,  2 ,  0 ,  cFETCH
   dpush %ebx
   NEXT
 
-# ( n -- ) \ prints a number to emitFd
+# ( n -- ) \ prints an unsigned integer as hex
 #           ascii, len, flag, label
 def_callword "UPNTX" ,  5 ,  0 ,  uPntX
-
-# ( -- ) \ asserts that stack is empty
-#                    ascii,len, flag, label
-def_callword "ASSERTEMPTY", 11,  0, assertEmpty
 
 # ( flag -- ) \ true or fail test
 #           ascii,        len, flag, label
@@ -1757,9 +1752,13 @@ def_asmword "ASSERTEQ",  8,    0, assertEq
   call assertEaxEbxEq
   NEXT
 
+# ( -- ) \ asserts that stack is empty
+#                    ascii,len, flag, label
+def_callword "ASSERTEMPTY", 11,  0, assertEmpty
+
 # ( addr -- ) \ assert the address is aligned by 4
 #                     ascii,     len, flag, label
-def_asmword "ASSERTALIGNED", 13, 0, assertAligned
+def_asmword "ASSERTALIGN4", 13, 0, assertAlign4
   dpop %eax
   andl $3, %eax
   movl $0, %ebx
@@ -1782,7 +1781,7 @@ assertCleanState:
   call assertEaxEbxEq
 
   callXt $xt_here
-  callXt $xt_assertAligned
+  callXt $xt_assertAlign4
   ret
 
 # ( -- ) \ assert the state is clean

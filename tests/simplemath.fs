@@ -11,9 +11,9 @@ simpleMathAnswer 0x 42 assertEq
 0x 4 quadruple 0x 10 assertEq
 
 \ Division
-0x A 0x 3 /mod   \ 10 / 3 -> ( quotient remainder )
-  0x 1 assertEq  \ remainder
+0x A 0x 3 /mod   \ 10 / 3 -> ( remainder quotient )
   0x 3 assertEq  \ quotient
+  0x 1 assertEq  \ remainder
 
 \ Multiplication
 0x 10 0x 10 * 0x 100 assertEq
