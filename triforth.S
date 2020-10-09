@@ -1780,7 +1780,7 @@ assertCleanState:
   movl $0, %ebx
   call assertEaxEbxEq
 
-  callXt $xt_here
+  callXt $xt_REFhere
   callXt $xt_assertAlign4
   ret
 
@@ -2561,10 +2561,14 @@ test0x_str: # ( expected strnt -- )
 # be fetched and stored.
 #
 # The built-in variables are:
-# &STATE     Interpreter executing code (0) or compiling (non-zero)?
-# LATEST     Points to the nt of the latest (most recently defined) word
-# HERE       Points to the next free byte of memory.
-# RSTACK_MAX The maximum memory address of the return stack.
+# &STATE      Pointer to cell, 0=runmode else=compiling
+# &LATEST     Pointer to nt of the latest (most recently defined) word
+# &HERE       Pointer to address of next free byte of memory.
+# &RSTACK_MAX The maximum memory address of the return stack.
+#
+# Unlike traditional FORTH I have put & in front of these to adhere to the standard:
+# These are ADDRESSES. They MUST be dereferenced '@' to read their value. They
+# can also be written to with '!'.
 
 # ( -- u )
 .macro def_var name, namelen, flags, label, initial
@@ -2579,7 +2583,7 @@ var_\label :
 
 #      ascii      ,  len, flag,  label , initial
 def_var "&STATE"   ,   6,    0, REFstate  , 0
-def_var "HERE"    ,    4,    0, here   , 0
+def_var "&HERE"    ,    4,    0, REFhere   , 0
 def_var "LATEST"  ,    6,    0, latest , 0 # initialized in _start
 def_var "RSTACK_MAX", 10,    0, rstack_max , 0 # initialized in _start
 
@@ -2911,23 +2915,23 @@ def_asmword "CREATE" ,  6 ,    0 , create
   call checkStackSize
   cmp $MAX_WORD_LEN, (%ebp) # check if namelen > max
   jg create_fail
-  movl var_here, %edi    # edi=here=nt of this word
-  movl var_latest, %eax  # latest=previous word
-  movl %eax, (%edi)      # dict: link to previous
-  movl %edi, var_latest  # dict: update LATEST to this word
-  dpush %edi             # add nt onto the stack (to return)
-  call rrot              # ( nt addr namelen )
-  addl $4, %edi          # go to where cstr is stored
-  movl (%ebp), %ecx      # ecx=namelen
-  movb %cl, (%edi)       # dict: namelen
+  movl var_REFhere, %edi  # edi=here=nt of this word
+  movl var_latest, %eax   # latest=previous word
+  movl %eax, (%edi)       # dict: link to previous
+  movl %edi, var_latest   # dict: update LATEST to this word
+  dpush %edi              # add nt onto the stack (to return)
+  call rrot               # ( nt addr namelen )
+  addl $4, %edi           # go to where cstr is stored
+  movl (%ebp), %ecx       # ecx=namelen
+  movb %cl, (%edi)        # dict: namelen
   inc %edi
   call tuck   # ( nt namelen addr namelen ) note: doesn't touch edi
-  movl %edi, var_here # store edi in HERE, as cmove will destroy
+  movl %edi, var_REFhere # store edi in HERE, as cmove will destroy
   dpush %edi  # addr2
   call swap           # stack: ( nt namelen addr addr2 namelen )
   call cmoveUpper     # dict: put name string
   dpop %ecx         # namelen. stack: ( nt )
-  movl var_here, %eax   # restore HERE into eax
+  movl var_REFhere, %eax   # restore HERE into eax
   addl %ecx, %eax       # add namelen to HERE and align
   call eax_align4
   shl $F0_NAMELEN_SHIFT, %ecx # shift namelen to use as F0
@@ -2937,7 +2941,7 @@ def_asmword "CREATE" ,  6 ,    0 , create
   addl $4, %eax               # increment eax to point to xt
   movl $DOCREATE, (%eax)      # dict: xt for CREATE-ed word
   addl $4, %eax               # increment eax to point to data space
-  movl %eax, var_here         # dict: update HERE
+  movl %eax, var_REFhere         # dict: update HERE
   NEXT                        # return ( nt )
 create_fail:
   movl $ERR_MAX_WORD_LEN, panicErr
@@ -2946,13 +2950,13 @@ create_fail:
 .align 4
 xt_testCreate:
 .int DOCOL
-.int xt_here, xt_FETCH, xt_rpush
+.int xt_REFhere, xt_FETCH, xt_rpush
 .int xt_lit, testCreatedWord, xt_countnt, xt_create # ( nt )
 .int xt_dup, xt_assertTrue # assert there is a name token
 # Assert HERE has changed
-.int xt_rpop, xt_here, xt_FETCH, xt_NEQ, xt_assertTrue
+.int xt_rpop, xt_REFhere, xt_FETCH, xt_NEQ, xt_assertTrue
 # Assert xt of latest = here - 4
-.int xt_dup, xt_ntTOxt, xt_here, xt_FETCH, xt_dec4, xt_assertEq
+.int xt_dup, xt_ntTOxt, xt_REFhere, xt_FETCH, xt_dec4, xt_assertEq
 # Find the word and assert nt is the same
 .int xt_dup, xt_lit, testCreatedWordUpper, xt_countnt, xt_find, xt_assertEq
 # stack: ( nt )
@@ -2972,9 +2976,9 @@ testCreate:
 #      ascii  , len, flag, label
 def_asmword ",",  1,    0, pushDict
   dpop %eax
-  movl var_here, %ebx
+  movl var_REFhere, %ebx
   movl %eax, (%ebx)  # move value into *here
-  addl $4, var_here  # increment here for next value
+  addl $4, var_REFhere  # increment here for next value
   NEXT
 
 # ( -- ) \ Set compilation STATE to false
@@ -3038,7 +3042,7 @@ testFlags:
 .align 4
 xt_testCOLON:
 .int DOCOL
-.int xt_here, xt_FETCH, xt_rpush
+.int xt_REFhere, xt_FETCH, xt_rpush
 # Make sure state=run
 .int xt_REFstate, xt_FETCH, xt_lit, FALSE, xt_assertEq
 # start compilation, mimicking INTERPRET
@@ -3247,7 +3251,7 @@ def_asmword "QUIT",   4,    0, quit
 # Main Entrypoint
 .globl _start
 _start:
-  movl $heapMin, var_here
+  movl $heapMin, var_REFhere
   movl $nt_quit, var_latest
   movl $rstackMax, var_rstack_max
   movl $rstackMax, %esp
@@ -3255,7 +3259,7 @@ _start:
   call testSuite
 
   # Reset here+latest to get rid of words defined during test.
-  movl $heapMin, var_here
+  movl $heapMin, var_REFhere
   movl $nt_quit, var_latest
   jmp exit0
 
