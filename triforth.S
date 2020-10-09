@@ -1721,7 +1721,7 @@ def_asmword "C@" ,  2 ,  0 ,  cFETCH
 
 # ( n -- ) \ prints a number to emitFd
 #           ascii, len, flag, label
-def_callword "." ,  1 ,  0 ,  uPntX
+def_callword "UPNTX" ,  5 ,  0 ,  uPntX
 
 # ( -- ) \ asserts that stack is empty
 #                    ascii,len, flag, label
@@ -1853,7 +1853,47 @@ def_asmword "-4"    , 2  ,  0 ,  SUB4
   subl $4, (%ebp)
   NEXT
 
-# ( u:a u:b -- u u ) \ divide a/b -> quotient remainder
+# ( u -- u ) \ divide a number by two (floor)
+#           ascii  , len, flag, label
+def_asmword "/2" , 2  ,  0 ,  DIV2
+  dpop %eax
+  shr $1, %eax
+  dpush %eax
+  NEXT
+
+# ( u -- u ) \ divide a number by four (floor)
+#           ascii  , len, flag, label
+def_asmword "/4" , 2  ,  0 ,  DIV4
+  dpop %eax
+  shr $2, %eax
+  dpush %eax
+  NEXT
+
+# ( u -- u ) \ divide a number by sixteen (floor)
+#           ascii  , len, flag, label
+def_asmword "/16" , 3  ,  0 ,  DIV16
+  dpop %eax
+  shr $4, %eax
+  dpush %eax
+  NEXT
+
+# ( u -- u ) \ multiply a number by 4
+#           ascii  , len, flag, label
+def_asmword "*4" , 2  ,  0 ,  MUL4
+  dpop %eax
+  shl $2, %eax
+  dpush %eax
+  NEXT
+
+# ( u -- u ) \ multiply a number by 16
+#           ascii  , len, flag, label
+def_asmword "*16" , 3  ,  0 ,  MUL16
+  dpop %eax
+  shl $4, %eax
+  dpush %eax
+  NEXT
+
+# ( u:a u:b -- u:quot u:rem ) \ divide a/b -> quotient remainder
 #           ascii  , len, flag, label
 def_asmword "/MOD" , 4  ,  0 ,  DIVmod
   call DIVmod

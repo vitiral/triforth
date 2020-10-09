@@ -17,5 +17,13 @@ simpleMathAnswer 0x 42 assertEq
 
 \ Multiplication
 0x 10 0x 10 * 0x 100 assertEq
-
 assertEmpty
+
+0x 4 *4   0x 10 assertEq
+0x 4 *16  0x 40 assertEq
+0x 4 /2   0x  2 assertEq
+0x 4 /4   0x  1 assertEq
+
+\ TODO: fix this
+\ CREATE simpleVar 0x 10 ,
+\ simpleVar @ 0x 10 assertEq
