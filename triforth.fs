@@ -17,7 +17,7 @@
 : negate  0x 0 SWAP - ; \ get negative of the number
 : true    0x FFFFFFFF ;
 : false   0x 0 ;
-LATEST nt>xt dumpInfo drop LATEST 0x 48 dump
+&latest nt>xt dumpInfo drop &latest 0x 48 dump
 : LITERAL IMM  \ ( u -- ) take whatever is on stack and compile as a literal
   ' LIT , \ compile xt of LIT
   , ;     \ compile the literal itself (from the stack)

@@ -2581,11 +2581,11 @@ var_\label :
   .int \initial
 .endm
 
-#      ascii      ,  len, flag,  label , initial
-def_var "&STATE"   ,   6,    0, REFstate  , 0
-def_var "&HERE"    ,    4,    0, REFhere   , 0
-def_var "LATEST"  ,    6,    0, latest , 0 # initialized in _start
-def_var "RSTACK_MAX", 10,    0, rstack_max , 0 # initialized in _start
+#      ascii         ,  len, flag,  label , initial
+def_var "&STATE"     ,   6,    0, REFstate  , 0
+def_var "&HERE"      ,   5,    0, REFhere   , 0
+def_var "&LATEST"    ,   7,    0, REFlatest , 0 # initialized in _start
+def_var  "RSTACK_MAX", 10,    0, rstack_max , 0 # initialized in _start
 
 ##############################
 # Builtin Constants
@@ -2853,7 +2853,7 @@ test_ntTOother_constructed: # ( nt -- )
 def_asmword "FIND" , 4 ,    0 , find
   movl $8, %eax
   call checkStackSize
-  movl var_latest, %eax
+  movl var_REFlatest, %eax
   dpush %eax    # points to the nt of word we are looking at
   call rrot     # Stack: ( nt addr count )
 find_loop:
@@ -2916,9 +2916,9 @@ def_asmword "CREATE" ,  6 ,    0 , create
   cmp $MAX_WORD_LEN, (%ebp) # check if namelen > max
   jg create_fail
   movl var_REFhere, %edi  # edi=here=nt of this word
-  movl var_latest, %eax   # latest=previous word
+  movl var_REFlatest, %eax   # latest=previous word
   movl %eax, (%edi)       # dict: link to previous
-  movl %edi, var_latest   # dict: update LATEST to this word
+  movl %edi, var_REFlatest   # dict: update LATEST to this word
   dpush %edi              # add nt onto the stack (to return)
   call rrot               # ( nt addr namelen )
   addl $4, %edi           # go to where cstr is stored
@@ -3099,7 +3099,7 @@ testCOLON:
 # ( -- ) \ tag currently compiling word as TIME_IMM(ediate)
 #          ascii, len, flag, label
 def_doword "IMM",   3, FR_TIME_IMM, imm
-  .int xt_latest, xt_FETCH, xt_ntTOfr # ( &FR )
+  .int xt_REFlatest, xt_FETCH, xt_ntTOfr # ( &FR )
   # Clear TIME flags
   .int xt_dup, xt_dup, xt_FETCH # ( &FR &FR FR )
   .int xt_FR_TIME_MASK, xt_invert, xt_and # ( &FR &FR FR&FR_TIME_MASK )
@@ -3238,7 +3238,7 @@ testInterpret:
   callXt $xt_testInterpret_pnt
   ret
 
-# !!! NOTE: this must be the last word (or update var_latest) !!!
+# !!! NOTE: this must be the last word (or update var_REFlatest) !!!
 # ( -- ) \ QUIT is the forth interpreter loop
 #            ascii, len, flag, label
 def_asmword "QUIT",   4,    0, quit
@@ -3252,7 +3252,7 @@ def_asmword "QUIT",   4,    0, quit
 .globl _start
 _start:
   movl $heapMin, var_REFhere
-  movl $nt_quit, var_latest
+  movl $nt_quit, var_REFlatest
   movl $rstackMax, var_rstack_max
   movl $rstackMax, %esp
   movl $dstackMax, %ebp
@@ -3260,7 +3260,7 @@ _start:
 
   # Reset here+latest to get rid of words defined during test.
   movl $heapMin, var_REFhere
-  movl $nt_quit, var_latest
+  movl $nt_quit, var_REFlatest
   jmp exit0
 
 .data
