@@ -38,7 +38,45 @@
 ';' 0x 3B assertEq  '(' 0x 28 assertEq  ')' 0x 29 assertEq \ test: yo'basic
 
 : [COMPILE] IMM \ ( -- ) immediately compile the next word
+  \ This allows you to easily compile IMM words into other words, or compile
+  \ words during [ runstate ]
   word find nt>xt \ get xt for next word
   , ;             \ and compile it
 
+
+\ MARK allows us to define words to be forgotten. It has many uses, but for
+\ us the main one is we can now define tests, execute them, and forget
+\ everything we learned.
+
+\ : MARK \ consume next WORD to create dictionary snapshot. When that word is
+\   \ called, return the dictionary to the previous state.
+\   WORD CREATE 
+
+\ ########################
+\ # Control Structures
+\ Using our BRANCH and 0BRANCH words we can create IF (ELSE?) THEN and LOOP
+\ control structures. We do this by putting HERE on the stack at compile time
+\ and using its value to branch backwards.
+
+: IF IMM  \ ( -- addr )
+  \ ( flag ) IF <ifblock> ELSE? <elseblock> THEN  is a conttrol structure. If flag<>0, the
+  \ <ifblock> is executed. If there is an ELSE block, it will otherwise be executed.
+  ' 0BRANCH , \ compile 0BRANCH, which branches to next literal if 0
+  &here @     \ preserve the current location for THEN to consume
+  0x 0 , ;       \ compile a dummy offset to be overriden by THEN
+
+: THEN IMM \ ( addr -- ) Follows from IF or ELSE
+  \ We want to replace the value IF jumps to to the current address.
+  \ 0BRANCH uses relative jumps, so we want it to jump to here-addr
+  dup &here @ swap \ ( addr here addr )
+  - swap ! ;       \ Store (here-addr) at addr
+
+: ELSE IMM \ ( addr -- addr )
+  ' BRANCH , \ compile definite branch. IF was nonzero this will execute after
+             \ its block
+  &here @ swap \ store the current location on the stack and move to 2nd item
+  0x 0 , \ put a dummy location for THEN to store to. Stack: ( elseaddr ifaddr )
+  [COMPILE] THEN ; \ THEN consumes ifaddr to jump right here IF 0
+
+\ BEGIN <block> ( flag ) UNTIL will execute <block> until flag<>0
 

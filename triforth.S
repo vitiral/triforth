@@ -3038,15 +3038,19 @@ def_asmword "]" ,  1 ,    0, statecompile
   movl $ERR_STATE_REDUNDANT, panicErr
   call *(panic)
 
-# ( -- ) \ The forth ":" to define a new word
-#      ascii  , len, flag, label
-def_doword ":",   1,    0, COLON
-  # Create the next word and set correct xt
+def_doword "CREATEWORD", 10, 0, createWord
   .int xt_word # ( addr count )
   .int xt_create, xt_ntTOxt # ( xt )
   # replace DOCREATE with DOCOL
   .int xt_lit, DOCOL, xt_swap # ( DOCOL xt )
   .int xt_STORE # compile DOCOl into xt
+  .int xt_EXIT
+
+# ( -- ) \ The forth ":" to define a new word
+#      ascii  , len, flag, label
+def_doword ":",   1,    0, COLON
+  # Create the next word and set correct xt
+  .int xt_createWord
   .int xt_statecompile # start compiling!
   .int xt_EXIT
 
