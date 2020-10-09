@@ -2581,11 +2581,11 @@ var_\label :
   .int \initial
 .endm
 
-#      ascii         ,  len, flag,  label , initial
+#      ascii         , len, flag,  label , initial
 def_var "&STATE"     ,   6,    0, REFstate  , 0
 def_var "&HERE"      ,   5,    0, REFhere   , 0
 def_var "&LATEST"    ,   7,    0, REFlatest , 0 # initialized in _start
-def_var  "RSTACK_MAX", 10,    0, rstack_max , 0 # initialized in _start
+def_var "&RSTACK_MAX",  10,    0, REFrstack_max , 0 # initialized in _start
 
 ##############################
 # Builtin Constants
@@ -3243,7 +3243,7 @@ testInterpret:
 #            ascii, len, flag, label
 def_asmword "QUIT",   4,    0, quit
   # set the return stack to rstackMax (clear it)
-  .int xt_rstack_max, xt_FETCH, xt_rstackSTORE # clear the rstack
+  .int xt_REFrstack_max, xt_FETCH, xt_rstackSTORE # clear the rstack
   .int xt_interpret    # interpreter loop
   .int xt_branch, -8   # loop interpret forever
 
@@ -3253,14 +3253,16 @@ def_asmword "QUIT",   4,    0, quit
 _start:
   movl $heapMin, var_REFhere
   movl $nt_quit, var_REFlatest
-  movl $rstackMax, var_rstack_max
-  movl $rstackMax, %esp
-  movl $dstackMax, %ebp
+  movl $rstackMax, var_REFrstack_max
+  movl $rstackMax, %esp  # clear rstack
+  movl $dstackMax, %ebp  # clear dstack
   call testSuite
 
-  # Reset here+latest to get rid of words defined during test.
+  # Reset everything to get rid of words/etc defined during test.
   movl $heapMin, var_REFhere
   movl $nt_quit, var_REFlatest
+  movl $rstackMax, %esp  # clear rstack
+  movl $dstackMax, %ebp  # clear dstack
   jmp exit0
 
 .data
