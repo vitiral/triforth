@@ -729,6 +729,12 @@ over: # ( a b -- a b a )
   dpush %eax
   ret
 
+nip: # ( a b -- b ) \ drops item below top of stack
+  dpop %ebx
+  dpop %eax
+  dpush %ebx
+  ret
+
 depth: # ( -- u )
   # returns the depth of the stack
   ebxStackSize
@@ -913,6 +919,50 @@ cSTORE: # ( c addr -- )
   dpop %ebx  # c
   movb %bl, (%eax)
   ret
+
+uPntX: # ( n -- ) \ emit the number as unsigned hex
+  movl $4, %eax
+  call checkStackSize
+  dpush $0
+  call swap
+uPntX_loop:
+  movl (%ebp), %ebx
+  cmpl $0, %ebx
+  je uPntX_ret
+  andl $15, %ebx  # ebx=ebx%16
+  shrl $4, (%ebp) # divide n by 16. Note: n>>4 == n/2^4
+  call ebx_toascii   # ( count n )
+  movl $emitBufferMax-1, %eax
+  subl 4(%ebp), %eax  # eax=bufferMax - 1 - count
+  dpush %ebx          # character to store
+  dpush %eax          # address to store character at
+  call cSTORE
+  addl $1, 4(%ebp)
+  jmp uPntX_loop
+uPntX_ret:
+  call nip # get rid of count
+  ret
+
+ebx_toascii: # ( u -- c )
+  # convert a number (typically 1-16) into ascii equivalent
+  # This is used with DOTbase (above)
+  cmp $9, %ebx
+  jg 1f
+  # number <= 9
+  addl $'0', %ebx
+  jmp 2f
+1: # number > 9
+  subl $10, %ebx
+  cmpl $23, %ebx
+  jg 3f
+  addl $'A', %ebx
+2: # push and return
+  ret
+3: # error
+  movl $ERR_ASCII_BOUNDS, panicErr
+  call *(panic)
+  call unreachable
+
 
 DOT: # ( n -- )
   # forth '.', emit the value on the stack.
@@ -1616,11 +1666,7 @@ def_callword "OVER" , 4 ,  0 ,   over
 
 # ( a b -- b ) \ drops item below top of stack
 #           ascii , len, flag, label
-def_asmword "NIP" , 3 ,  0   , nip
-  dpop %ebx
-  dpop %eax
-  dpush %ebx
-  NEXT
+def_callword "NIP" , 3 ,  0   , nip
 
 tuck:
   dpop %ebx
