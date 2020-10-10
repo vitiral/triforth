@@ -1964,9 +1964,9 @@ def_asmword "XOR" ,  3 ,   0 , xor
 # ( u -- u ) \ bitwise INVERT (switch all bits)
 #          ascii     , len, flag, label
 def_asmword "INVERT" ,  6 ,   0 , invert
-  movl $4, %eax
-  call checkStackSize
-  notl (%ebp)
+  dpop %eax
+  notl %eax
+  dpush %eax
   NEXT
 
 not:
@@ -2004,8 +2004,8 @@ def_callword "BOOL",   4,   0, bool
 # conditions.
 .macro def_asmcmp name, namelen, flags, label, jumpcondition
   def_asmword "\name" , \namelen , \flags , \label
-  dpop %eax
   dpop %ebx
+  dpop %eax
   cmp %ebx, %eax
   \jumpcondition 1f
   dpush $FALSE  # false
@@ -2015,27 +2015,27 @@ def_callword "BOOL",   4,   0, bool
   NEXT
 .endm
 
-# ( u u -- flag ) \ equal
+# ( u:a u:b -- flag:a=b ) \ equal
 #          ascii , len, flag, label, jumpcondition
 def_asmcmp "="   , 1  ,   0 , EQ   , je
 
-# ( u u -- flag ) \ not equal
+# ( u:a u:b -- flag:a<>b ) \ not equal
 #          ascii , len, flag, label, jumpcondition
 def_asmcmp "<>"   , 2 ,   0 , NEQ  , jne
 
-# ( u u -- flag ) \ less than
+# ( u:a u:b -- flag:a<b ) \ less than
 #          ascii , len, flag, label, jumpcondition
 def_asmcmp "<"   , 1 ,   0 , LT  , jl
 
-# ( u u -- flag ) \ less than or equal
+# ( u:a u:b -- flag:a<=b ) \ less than or equal
 #          ascii , len, flag, label, jumpcondition
 def_asmcmp "<="  , 2 ,   0 , LTE , jle
 
-# ( u u -- flag ) \ greater than
+# ( u:a u:b -- flag:a>b ) \ greater than
 #          ascii , len, flag, label, jumpcondition
 def_asmcmp ">"   , 1 ,   0 , GT  , jg
 
-# ( u u -- flag ) \ greater than or equal
+# ( u:a u:b -- flag:a>=b ) \ greater than or equal
 #          ascii , len, flag, label, jumpcondition
 def_asmcmp ">="  , 2 ,   0 , GTE , jge
 
@@ -2632,6 +2632,8 @@ def_asmword \name , \namelen , 0, \label
 .endm
 
 #         ascii  ,              len, label
+def_const "TRUE" ,                4, TRUE
+def_const "FALSE" ,               5, FALSE
 def_const "RMAX" ,                4, rstackMax
 def_const "DOCOL",                5, DOCOL
 def_const "F0_NAMELEN",          10, F0_NAMELEN_MASK

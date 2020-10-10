@@ -15,8 +15,6 @@
 : cr      '\n' emit ;   \ print carriage return a.k.a newline
 : space   bl emit ;     \ print space
 : negate  0x 0 SWAP - ; \ get negative of the number
-: true    0x FFFFFFFF ;
-: false   0x 0 ;
 &latest nt>xt dumpInfo drop &latest 0x 48 dump
 : LITERAL IMM  \ ( u -- ) take whatever is on stack and compile as a literal
   ' LIT , \ compile xt of LIT
@@ -121,8 +119,20 @@ testCache @1  &latest @ assertEq assertEmpty
   0x 0 , \ put a dummy location for THEN to store to. Stack: ( elseaddr ifaddr )
   [COMPILE] THEN ; \ THEN consumes ifaddr to jump right here IF 0
 
+MARK -test
+: testIF IF 0x 42 ELSE 0x 420 THEN ;
+false testIf 0x 420 assertEq    true testIf 0x 42 assertEq
+0x 42 testIf 0x 42 assertEq     assertEmpty
+: testIFIF IF IF 0x 42 THEN THEN ;
+false testIFIF assertEmpty      false true testIFIF assertEmpty
+true true testIFIF 0x 42 assertEq                   assertEmpty
+-test
+
 : BEGIN IMM \ BEGIN <block> ( flag ) UNTIL will execute <block> until flag<>0
   &here @ ; \ put the address of HERE on the stack for UNTIL to consume
 : UNTIL IMM  ' 0BRANCH &HERE @ - , ; \ 0BRANCH to the offset from BEGIN
 : AGAIN IMM  ' BRANCH &HERE @ - , ; \ Always branch back (infinite loop)
+: BREAK IMM 
+
 \ : WHILE IMM \ BEGIN ... ( flag ) WHILE ... REPEAT loop while flag<>0
+

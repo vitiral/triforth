@@ -24,6 +24,17 @@ assertEmpty
 0x 4 /2   0x  2 assertEq
 0x 4 /4   0x  1 assertEq
 
-\ TODO: fix this
-\ CREATE simpleVar 0x 10 ,
-\ simpleVar @ 0x 10 assertEq
+0x 4 0x 42 = assertFalse    0x 4 0x 4 = assertTrue
+0x 4 0x 42 <> assertTrue    0x 4 0x 4 <> assertFalse
+0x 4 0x 42 < assertTrue     0x 42 0x 4 > assertTrue
+0x 4 0x 42 <= assertTrue    0x 42 0x 4 >= assertTrue
+
+0x F000000F invert 0x 0FFFFFF0 assertEq
+0x 00FF00 0x F0F0F0 and 0x 00F000 assertEq
+0x 00FF00 0x F0F0F0 xor 0x F00FF0 assertEq
+0x 00FF00 0x F0F0F0 or  0x F0FFF0 assertEq
+0x   8FF1 0x   1008 or  0x 9FF9 assertEq
+true  bool true assertEq     false bool false assertEq
+0x 42 bool true assertEq     0x 0  bool false assertEq
+true not   false assertEq    false not  true assertEq
+true =0    false assertEq    false =0   true assertEq
