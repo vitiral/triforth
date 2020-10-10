@@ -132,19 +132,25 @@ true true testIFIF 0x 42 assertEq                   assertEmpty
 : AGAIN IMM  ' BRANCH , &here @ - , ; \ Always branch back (infinite loop)
 
 MARK -test
-
 : testBeginUntil \ ( u:a u:b -- u:a*2^b ) for b>0 using addition only
   BEGIN
-    dumpInfo
-    swap dup + swap 0x 1 -  \ ( (a+a) (b-1) )
-  dup dumpInfo UNTIL drop ;
+    swap dup + swap 1-  \ ( (a+a) (b-1) )
+  dup UNTIL drop ;
 0x 10 0x 1 testBeginUntil 0x 20 assertEq
 0x 10 0x 3 testBeginUntil 0x 80 assertEq
 assertEmpty -test
 
-\ : WHILE IMM \ BEGIN ... ( flag ) WHILE ... REPEAT loop while flag<>0
-\   [COMPILE] IF ; \ create a branch with dummy offset and push location on stack
-\ : REPEAT IMM swap  \ swap so beginaddr is top, followed by whileaddr
-\   [compile] AGAIN  \ if this is reached, unconditional jump to BEGIN
-\   [compile] THEN ; \ also, modify WHILE to branch outside loop IF 0
+: WHILE IMM \ BEGIN ... ( flag ) WHILE ... REPEAT loop while flag<>0
+  [compile] IF ; \ create a branch with dummy offset and push dummy addr under
+: REPEAT IMM swap  \ swap so beginaddr is top, followed by whileaddr
+  [compile] AGAIN  \ if this is reached, unconditional jump to BEGIN
+  [compile] THEN ; \ also, modify WHILE to branch outside loop IF 0
 
+MARK -test
+: testWhileRepeat \ same test as beginUntil
+  BEGIN 1- dup 0x 0 >= WHILE
+    swap dup + swap
+  REPEAT drop ;
+0x 10 0x 1 testWhileRepeat 0x 20 assertEq
+0x 10 0x 3 testWhileRepeat 0x 80 assertEq
+assertEmpty -test
