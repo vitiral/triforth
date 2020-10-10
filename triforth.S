@@ -1821,7 +1821,7 @@ def_asmword "+"    , 1  ,  0 ,  ADD
 
 # ( u -- u ) \ add 1
 #            ascii  , len, flag, label
-def_asmword "+1"    , 2  ,  0 ,  ADD1
+def_asmword "1+"    , 2  ,  0 ,  _1ADD
   movl $4, %eax
   call checkStackSize
   addl $1, (%ebp)
@@ -1829,7 +1829,7 @@ def_asmword "+1"    , 2  ,  0 ,  ADD1
 
 # ( u -- u ) \ add 4
 #            ascii  , len, flag, label
-def_asmword "+4"    , 2  ,  0 ,  ADD4
+def_asmword "4+"    , 2  ,  0 ,  _4ADD
   movl $4, %eax
   call checkStackSize
   addl $4, (%ebp)
@@ -1844,18 +1844,18 @@ def_asmword "-"    , 1  ,  0 ,  SUB
 
 # ( u -- u ) \ sub 1
 #            ascii  , len, flag, label
-def_asmword "-1"    , 2  ,  0 ,  SUB1
-  movl $4, %eax
-  call checkStackSize
-  subl $1, (%ebp)
+def_asmword "1-"    , 2  ,  0 ,  _1SUB
+  dpop %eax
+  subl $1, %eax
+  dpush %eax
   NEXT
 
 # ( u -- u ) \ sub 4
 #            ascii  , len, flag, label
-def_asmword "-4"    , 2  ,  0 ,  SUB4
-  movl $4, %eax
-  call checkStackSize
-  subl $4, (%ebp)
+def_asmword "4-"    , 2  ,  0 ,  _4SUB
+  dpop %eax
+  subl $4, %eax
+  dpush %eax
   NEXT
 
 # ( u -- u ) \ divide a number by two (floor)

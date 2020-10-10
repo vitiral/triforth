@@ -67,7 +67,6 @@ assertEmpty
   word find nt>xt \ get xt for next word
   , ;             \ and compile it
 
-
 \ MARK allows us to define words to be forgotten. It has many uses, but for
 \ us right now the main one is we can now define tests, execute them, and
 \ forget them, consuming no dictionary space.
@@ -80,7 +79,6 @@ assertEmpty
   ' lit , ,         \ Same with LATEST
   ' &latest ,   !xt , \ the word will set LATEST to previous value
   ' EXIT , ;
-
 
 &here @   testCache !
 &latest @ testCache !1
@@ -129,10 +127,24 @@ true true testIFIF 0x 42 assertEq                   assertEmpty
 -test
 
 : BEGIN IMM \ BEGIN <block> ( flag ) UNTIL will execute <block> until flag<>0
-  &here @ ; \ put the address of HERE on the stack for UNTIL to consume
-: UNTIL IMM  ' 0BRANCH &HERE @ - , ; \ 0BRANCH to the offset from BEGIN
-: AGAIN IMM  ' BRANCH &HERE @ - , ; \ Always branch back (infinite loop)
-: BREAK IMM 
+  &here @ ; \ put the address of HERE on the stack for UNTIL/AGAIN to consume
+: UNTIL IMM  ' NOT ,  ' 0BRANCH ,  &here @ - , ; \ 0BRANCH to the offset from BEGIN
+: AGAIN IMM  ' BRANCH , &here @ - , ; \ Always branch back (infinite loop)
+
+MARK -test
+
+: testBeginUntil \ ( u:a u:b -- u:a*2^b ) for b>0 using addition only
+  BEGIN
+    dumpInfo
+    swap dup + swap 0x 1 -  \ ( (a+a) (b-1) )
+  dup dumpInfo UNTIL drop ;
+0x 10 0x 1 testBeginUntil 0x 20 assertEq
+0x 10 0x 3 testBeginUntil 0x 80 assertEq
+assertEmpty -test
 
 \ : WHILE IMM \ BEGIN ... ( flag ) WHILE ... REPEAT loop while flag<>0
+\   [COMPILE] IF ; \ create a branch with dummy offset and push location on stack
+\ : REPEAT IMM swap  \ swap so beginaddr is top, followed by whileaddr
+\   [compile] AGAIN  \ if this is reached, unconditional jump to BEGIN
+\   [compile] THEN ; \ also, modify WHILE to branch outside loop IF 0
 
