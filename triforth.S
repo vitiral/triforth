@@ -1622,7 +1622,7 @@ tuck: # ( a b -- b a b ) \ copy the top stack item below the second stack item
 #            ascii  , len, flag, label
 def_callword "TUCK" , 4 ,  0 ,   tuck
 
-# ( i -- u ) \ return the index of the stack.
+# ( i -- u ) \ fetch the index of the stack.
 #            ascii  , len, flag, label
 def_asmword "PICK" , 4 ,  0 ,   pick
   dpop %eax   # index
@@ -1633,12 +1633,12 @@ def_asmword "PICK" , 4 ,  0 ,   pick
   dpush %eax
   NEXT
 
-# ( u i -- ) \ replace the index on the stack (below these two).
+# ( u i -- ) \ store value at the index on the stack (minus these params)
 #              ascii  , len, flag, label
 def_asmword "REPLACE" ,   7,    0 , replace
   dpop %eax   # index
   dpop %ecx   # value, don't use ebx because checkStackSize
-  shl  $2, %eax # multiply by 4
+  shl  $2, %eax # multiply by 4 (cell size)
   call checkStackSize # check that access is valid
   addl %ebp, %eax
   movl %ecx, (%eax)
