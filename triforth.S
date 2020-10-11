@@ -881,7 +881,7 @@ testCountNt:
   call drop
   ret
 
-type: # ( addr count -- )
+pnt: # ( addr count -- )
   # Forth TYPE. Writes count bytes at addr to emitFd
   movl emitFd, %ebx   # fd
   dpop %edx # bytesToWrite=count
@@ -889,26 +889,26 @@ type: # ( addr count -- )
   call syswrite
   ret
 
-typeTestPass: # ( addr count -- )
-  # types "TEST <addr count> PASS\n" to emitFd
+pntTestPass: # ( addr count -- )
+  # pnts "TEST <addr count> PASS\n" to emitFd
   dpush $testPrefixStr
   call countnt
-  call type
-  call type
+  call pnt
+  call pnt
   dpush $testPassStr
   call countnt
-  call type
+  call pnt
   ret
 
-typent: # ( addr -- )
+pntnt: # ( addr -- )
   # Type a null nerminated str
   call countnt
-  call type
+  call pnt
   ret
 
-typentln: # ( addr -- )
+pntntln: # ( addr -- )
   # Type a null nerminated str ending w/ newline
-  call typent
+  call pntnt
   dpush $'\n'
   call emit
   ret
@@ -916,7 +916,7 @@ typentln: # ( addr -- )
 testIoBuffer:
   dpush $testIoBufferStr
   call countnt
-  call typeTestPass
+  call pntTestPass
   ret
 
 bSTORE: # ( b addr -- )
@@ -954,7 +954,7 @@ uPntX_ret:
   subl (%ebp), %eax
   dpush %eax
   call swap
-  call type
+  call pnt
   dpush $' '
   call emit
   ret
@@ -998,7 +998,7 @@ testuPntX:
 
   dpush $testuPntXStr
   call countnt
-  call typeTestPass
+  call pntTestPass
   call assertEmpty
   ret
 
@@ -1023,7 +1023,7 @@ pntStack: # ( -- )
   # Forth .S, prints the current stack
   dpush $stackStr
   # "Stack< DEPTH > "
-  call typent
+  call pntnt
 
   call depth 
   call uPntX
@@ -1071,7 +1071,7 @@ testPntStack:
   call _2drop
   dpush $testPntStackStr
   call countnt
-  call typeTestPass
+  call pntTestPass
   ret
 
 bmove: # ( addr1 addr2 count -- )
@@ -1138,7 +1138,7 @@ dumpInfo:
 
   # Registers
   dpush $registersAdStr
-  call typent
+  call pntnt
   movl $registerSnapshot, %ebx
   movl (%ebx), %eax  # eax
   dpush %eax
@@ -1161,7 +1161,7 @@ dumpInfo:
 
   movl $registerSnapshot, %ebx
   dpush $registersDsStr
-  call typent
+  call pntnt
   movl $registerSnapshot, %ebx
   movl 16(%ebx), %eax # edi
   dpush %eax
@@ -1178,11 +1178,11 @@ dumpInfo:
   call pntStack
   # current word
   dpush $wordStr
-  call typent
+  call pntnt
   dpush $wordBuffer
   movl wordCount, %eax
   dpush %eax
-  call type
+  call pnt
   dpush $'\n'
   call emit
 
@@ -1215,7 +1215,7 @@ testDumpInfo:
   movl $0, wordCount
   dpush $testDumpInfoStr
   call countnt
-  call typeTestPass
+  call pntTestPass
   ret
 
 dbgexit: # ( -- )
@@ -1223,14 +1223,14 @@ dbgexit: # ( -- )
   # Mainly used in debugging.
   call dumpInfo
   dpush $dbgexitStr
-  call typent
+  call pntnt
   movl $RC_DBG, %ebx
   jmp sysexit
 
 defaultPanic: # ( -- )
   call dumpInfo
   dpush $panicStr
-  call typent
+  call pntnt
   movl panicErr, %eax
   dpush %eax
   call uPntX
@@ -1325,7 +1325,7 @@ testNEXT_cont:
   call assertEaxEbxEq
   dpush $testNEXTStr
   call countnt
-  call typeTestPass
+  call pntTestPass
   ret
 
 word_pushI2:
@@ -1381,13 +1381,13 @@ testEXIT:
 
   dpush $testEXITStr
   call countnt
-  call typeTestPass
+  call pntTestPass
   ret
 
 dump: # ( addr count -- ) \ Dump the contents of the address onto emitFd
   call snapshotRegisters
   dpush $dumpAddrStr
-  call typent
+  call pntnt
   call over
   call uPntX
   dpush $'\n'
@@ -1422,7 +1422,7 @@ dump_addr: # ( addr -- ) \ print "<addr>: "
   call dup
   call uPntX
   dpush $colonSpaceStr
-  call typent
+  call pntnt
   callXt $xt_FETCH
   call uPntX
   dpush $'\n'
@@ -1520,7 +1520,7 @@ testDictSimple:
   call assertEaxEbxEq
   dpush $testDictSimpleStr
   call countnt
-  call typeTestPass
+  call pntTestPass
   ret
 
 ##############################
@@ -1816,8 +1816,8 @@ assertCleanState:
 def_callword "ASSERTCLEANSTATE", 16, 0, assertCleanState
 
 # ( n u -- ) \ prints a number with the given base to emitFd
-#            ascii          , len, flag, label
-def_callword "TYPETESTPASS" ,  12 ,  0 ,  typeTestPass
+#           ascii          , len, flag, label
+def_callword "PNTTESTPASS" ,  11 ,  0 ,  pntTestPass
 
 # ( -- ) \ prints the current stack
 #           ascii , len, flag, label
@@ -2107,7 +2107,7 @@ testLitBytes_str:
 # ( addr count )
 testLitBytes_cont:
 .int xt__2dup, xt_lit, testLitBytes_str, xt_lit, 15, xt_ceq, xt_assertTrue
-.int xt_typeTestPass
+.int xt_pntTestPass
 .int xt_EXIT
 testLitbytes:
   callXt $xt_testLitBytes
@@ -2214,14 +2214,14 @@ SUBtrailing_done:
 #           ascii   , len, flag, label
 def_callword "EMIT" , 4  ,   0 , emit
 
-# ( addr count -- ) \ types a string to emitFd
+# ( addr count -- ) \ prints bytes to emitFd
 #           ascii   , len, flag, label
-def_callword "TYPE" ,  4 ,  0 ,  type
+def_callword "PNT" ,  3 ,  0 ,  pnt
 
-# ( addr count -- ) \ types a string to emitFd with newline
-#            ascii   , len, flag, label
-def_asmword "TYPELN" ,  6 ,  0 ,  typeln
-  callXt $xt_type
+# ( addr count -- ) \ pnts a string to emitFd with newline
+#            ascii , len, flag, label
+def_asmword "PNTLN",   5,    0, pntln
+  callXt $xt_pnt
   dpush $'\n'
   call emit
   NEXT
@@ -2274,7 +2274,7 @@ testDictBuiltinCompare:
   .int xt_EXIT
 testDictBuiltinType:
   # : <annon> 32 10 + 42 assertEq ;
-  .int DOCOL, xt_lit, testDictBuiltinStr, xt_countnt, xt_typeTestPass, xt_EXIT
+  .int DOCOL, xt_lit, testDictBuiltinStr, xt_countnt, xt_pntTestPass, xt_EXIT
 testDictBuiltin:
   # The bare minimum to make sure we are actually calling "real" code.
   callXt $testDictBuiltinLit
@@ -2372,7 +2372,7 @@ testKey:
   call closeKeyFd
   dpush $testKeyStr
   call countnt
-  call typeTestPass
+  call pntTestPass
   ret
 
 bl_toupper: # %bl:b ( -- ) %bl:b
@@ -2442,7 +2442,7 @@ word_eof: # (in case of EOF we still push the count)
   NEXT
 word_err:
   dpush $maxWordLenErrorStr
-  call typent
+  call pntnt
   movl $ERR_MAX_WORD_LEN, panicErr
   call *(panic)
 
@@ -2468,7 +2468,7 @@ testWord:
   call closeKeyFd
   dpush $testWordStr
   call countnt
-  call typeTestPass
+  call pntTestPass
   ret
 testWord_assert0x: # ( addr count )
   dpush $2
@@ -2576,15 +2576,15 @@ _0x_done:
 _0x_noword:
   dpush $_0xWordNeededStr
   call countnt
-  callXt $xt_typeln
+  callXt $xt_pntln
   movl $ERR_WORD_MISSING, panicErr
   call *(panic)
 _0x_notnumber:
   dpush $_0xNotNumberStr
-  call typent
+  call pntnt
   # addr count still contains the word, simply use that
   call _2dup
-  callXt $xt_typeln
+  callXt $xt_pntln
   movl $ERR_NUMBER_INVALID, panicErr
   call *(panic)
 
@@ -2597,7 +2597,7 @@ xt_test0x:
 .int xt_word, xt__2drop  # ignore "0x"
 .int xt__0x
 .int xt_lit, 0x03, xt_assertEq
-.int xt_lit, test0xStr, xt_countnt, xt_typeTestPass
+.int xt_lit, test0xStr, xt_countnt, xt_pntTestPass
 .int xt_EXIT
 test0x:
   dpush $0x3
@@ -2744,7 +2744,7 @@ testAlign4_5:
 .byte 0
 .align 4
 xt_testAlign4:
-.int DOCOL, xt_lit, testAlign4Str, xt_countnt, xt_typeTestPass, xt_EXIT
+.int DOCOL, xt_lit, testAlign4Str, xt_countnt, xt_pntTestPass, xt_EXIT
 testAlign4:
   movl $testAlign4_0, %eax
   call eax_align4
@@ -2870,7 +2870,7 @@ flags:
 .int xt_lit, nt_word, xt_ntTOxt, xt_lit, xt_word, xt_assertEq
 # Test this because I've hit issues
 .int xt_lit, nt_SEMICOLON, xt_ntTOfr, xt_FETCH, xt_lit, FR_TIME_IMM, xt_assertEq
-.int xt_assertEmpty, xt_lit, test_ntTOotherStr, xt_countnt, xt_typeTestPass
+.int xt_assertEmpty, xt_lit, test_ntTOotherStr, xt_countnt, xt_pntTestPass
 .int xt_EXIT
 test_ntTOother:
   # demonstration of dump
@@ -2967,7 +2967,7 @@ xt_testFind:
 .int xt_lit, cstr_EXIT, xt_count, xt_find, xt_lit, nt_EXIT, xt_assertEq
 # Find 0x
 .int xt_lit, cstr__0x, xt_count, xt_find, xt_lit, nt__0x, xt_assertEq
-.int xt_lit, testFindStr, xt_countnt, xt_typeTestPass
+.int xt_lit, testFindStr, xt_countnt, xt_pntTestPass
 .int xt_EXIT
 .align 4
 testFind:
@@ -3038,7 +3038,7 @@ xt_testCreate:
 # Stored name is uppercased
 .int xt_ntTOname, xt_lit, testCreatedWordUpper, xt_countnt
 .int xt_ceq, xt_assertTrue
-.int xt_lit, testCreateStr, xt_countnt, xt_typeTestPass
+.int xt_lit, testCreateStr, xt_countnt, xt_pntTestPass
 .int xt_EXIT
 testCreate:
   callXt $xt_testCreate
@@ -3123,7 +3123,7 @@ xt_testFlags:
 # FR
 .int xt_lit, flags_SEMICOLON, xt_inc4, xt_FETCH, xt_lit, FR_TIME_IMM
 .int   xt_assertEq
-.int xt_lit, testFlagsStr, xt_countnt, xt_typeTestPass
+.int xt_lit, testFlagsStr, xt_countnt, xt_pntTestPass
 .int xt_EXIT
 testFlags:
   callXt $xt_testFlags
@@ -3178,7 +3178,7 @@ xt_testCOLON:
 # drop addr, set state back to run and exit
 .int xt_EXIT
 xt_testCOLON_pnt:
-.int DOCOL, xt_lit, testCOLONStr, xt_countnt, xt_typeTestPass, xt_EXIT
+.int DOCOL, xt_lit, testCOLONStr, xt_countnt, xt_pntTestPass, xt_EXIT
 testCOLON:
   movl $testDefineFile, %ebx
   call openNtEbx
@@ -3297,23 +3297,23 @@ xt_testInterpret_theAnswer:
 xt_testInterpret_inputstream:
 .int DOCOL, xt_interpret, xt_assertEmpty, xt_EXIT
 xt_testInterpret_pnt:
-.int DOCOL, xt_lit, testInterpretStr, xt_countnt, xt_typeTestPass, xt_EXIT
+.int DOCOL, xt_lit, testInterpretStr, xt_countnt, xt_pntTestPass, xt_EXIT
 testInterpret:
   dpush $testTheAnswerFile
-  call typentln
+  call pntntln
   movl $testTheAnswerFile, %ebx
   call openNtEbx
   callXt $xt_testInterpret_theAnswer
   call closeKeyFd
 
   dpush $testSimpleMathFile
-  call typentln
+  call pntntln
   call openSimpleMathFile
   callXt $xt_testInterpret_inputstream
   call closeKeyFd
 
   dpush $triforthFile
-  call typentln
+  call pntntln
   movl $triforthFile, %ebx
   call openNtEbx
   callXt $xt_testInterpret_inputstream

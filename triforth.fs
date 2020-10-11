@@ -237,7 +237,7 @@ aligned    &HERE @ 4-   testCache @ assertEq \ test: alignment moves here +4
       ELSE dup '\' = IF ( '\' already on stack ) b,   true
       \ TODO: \x
       \ Unknown escape, panic with error message
-      ELSE _STRERROR type '\' emit emit '\n' emit ERR_SEE_MSG panic
+      ELSE _STRERROR pnt '\' emit emit '\n' emit ERR_SEE_MSG panic
       THEN THEN THEN THEN
     ELSE dup '\n' = IF drop true \ ignore newlines
     ELSE dup '\r' = IF drop true \ also ignore line-feeds
