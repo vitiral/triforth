@@ -1596,11 +1596,11 @@ def_callword "2DROP" , 5 ,  0 ,   _2drop
 
 # ( a b c -- b c a ) \ rotates left
 #           ascii ,  len, flag, label
-def_callword "ROT" , 3 ,  0 ,   lrot
+def_callword "LROT" , 4 ,  0 ,   lrot
 
 # ( a b c -- c a b ) \ rotates right
 #           ascii  , len, flag, label
-def_callword "-ROT" , 4 ,  0 ,   rrot
+def_callword "RROT" , 4 ,  0 ,   rrot
 
 # ( a b -- a b a )
 #           ascii  , len, flag, label
@@ -1621,6 +1621,28 @@ tuck: # ( a b -- b a b ) \ copy the top stack item below the second stack item
 # ( a b -- b a b ) \ copy the top stack item below the second stack item
 #            ascii  , len, flag, label
 def_callword "TUCK" , 4 ,  0 ,   tuck
+
+# ( i -- u ) \ return the index of the stack.
+#            ascii  , len, flag, label
+def_asmword "PICK" , 4 ,  0 ,   pick
+  dpop %eax   # index
+  shl  $2, %eax # multiply by 4
+  call checkStackSize # check that access is valid
+  addl %ebp, %eax
+  movl (%eax), %eax
+  dpush %eax
+  NEXT
+
+# ( u i -- ) \ replace the index on the stack (below these two).
+#              ascii  , len, flag, label
+def_asmword "REPLACE" ,   7,    0 , replace
+  dpop %eax   # index
+  dpop %ecx   # value, don't use ebx because checkStackSize
+  shl  $2, %eax # multiply by 4
+  call checkStackSize # check that access is valid
+  addl %ebp, %eax
+  movl %ecx, (%eax)
+  NEXT
 
 # ( a -- a a? ) \ duplicate top of stack if non-zero
 #           ascii  , len, flag, label
@@ -1860,7 +1882,7 @@ def_asmword "4-"    , 2  ,  0 ,  _4SUB
 
 # ( u -- u ) \ divide a number by two (floor)
 #           ascii  , len, flag, label
-def_asmword "/2" , 2  ,  0 ,  DIV2
+def_asmword "2/" , 2  ,  0 ,  _2DIV
   dpop %eax
   shr $1, %eax
   dpush %eax
@@ -1868,7 +1890,7 @@ def_asmword "/2" , 2  ,  0 ,  DIV2
 
 # ( u -- u ) \ divide a number by four (floor)
 #           ascii  , len, flag, label
-def_asmword "/4" , 2  ,  0 ,  DIV4
+def_asmword "4/" , 2  ,  0 ,  _4DIV
   dpop %eax
   shr $2, %eax
   dpush %eax
@@ -1876,7 +1898,7 @@ def_asmword "/4" , 2  ,  0 ,  DIV4
 
 # ( u -- u ) \ divide a number by sixteen (floor)
 #           ascii  , len, flag, label
-def_asmword "/16" , 3  ,  0 ,  DIV16
+def_asmword "16/" , 3  ,  0 ,  _16DIV
   dpop %eax
   shr $4, %eax
   dpush %eax
@@ -1884,7 +1906,7 @@ def_asmword "/16" , 3  ,  0 ,  DIV16
 
 # ( u -- u ) \ multiply a number by 4
 #           ascii  , len, flag, label
-def_asmword "*4" , 2  ,  0 ,  MUL4
+def_asmword "4*" , 2  ,  0 ,  _4MUL
   dpop %eax
   shl $2, %eax
   dpush %eax
@@ -1892,7 +1914,7 @@ def_asmword "*4" , 2  ,  0 ,  MUL4
 
 # ( u -- u ) \ multiply a number by 16
 #           ascii  , len, flag, label
-def_asmword "*16" , 3  ,  0 ,  MUL16
+def_asmword "16*" , 3  ,  0 ,  _16MUL
   dpop %eax
   shl $4, %eax
   dpush %eax
