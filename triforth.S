@@ -2402,20 +2402,6 @@ word_loop:
   cmp $0, %eax # check for EOF
   je word_eof
   movb keyBuffer, %bl
-  cmpb $'\\', %bl  # is it a comment?
-  jne word_not_comment_line
-word_comment_loop:
-  # if a comment char, first check if we are within a word
-  cmpl $0, (%ebp) # count
-  jg word_not_comment_line
-  # read till \n then keep looping
-  call readKey
-  cmp $0, %eax # check for EOF
-  je word_eof
-  cmpb $'\n', keyBuffer
-  je word_loop
-  jmp word_comment_loop
-word_not_comment_line:
   # check for whitespace: all characters > space are not whitespace. This means
   # utf8 is supported out of the box, since all non-ascii utf8 bytes are > 127
   cmpb $' ', %bl 
@@ -2423,8 +2409,6 @@ word_not_comment_line:
   # move character uppercased into buffer
   call bl_toupper
   movl (%ebp), %eax  # count
-  # TODO: fix this
-  # movb %al, wordBuffer(,%eax,1) # indexed addressing mode
   addl $wordBuffer, %eax
   movb %bl, (%eax)
   addl $1, (%ebp)  # increment count
@@ -2501,6 +2485,17 @@ ebx_ctou_err:
   addl $1, %ebx
   neg %ebx
   ret
+
+# ( --  ) \ Line comment using "\"
+#          ascii, len, flag, label
+def_asmword "\\",   1, FR_TIME_IMM, linecomment
+  call readKey
+  cmp $0, %eax # check for EOF
+  je 1f
+  cmpb $'\n', keyBuffer
+  jne word_linecomment # loop
+1:
+  NEXT
 
 # ( -- c ) \ Convert the single-character "word" to it's ASCII representation
 #   \ panics if the next word has len > 1
@@ -3122,6 +3117,7 @@ xt_testCOLON:
 # Make sure state=run
 .int xt_REFstate, xt_FETCH, xt_lit, FALSE, xt_assertEq
 # start compilation, mimicking INTERPRET
+.int xt_word, xt_find, xt_ntTOxt, xt_execute  # \
 .int xt_word, xt_find, xt_ntTOxt, xt_execute  # :
 # Make sure state=compile
 .int xt_REFstate, xt_FETCH, xt_lit, TRUE, xt_assertEq
