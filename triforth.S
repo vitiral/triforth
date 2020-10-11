@@ -185,7 +185,7 @@ dstackMin: .space DSTACK_SIZE # data stack
 dstackMax:
 .equ IO_BUFFER_SIZE, 128
 ioBuffer: .space 128
-ioBufferLen: .int 0  # number of chars in ioBuffer
+ioBufferLen: .int 0  # number of bytes in ioBuffer
 .equ MAX_WORD_LEN,32
 wordBuffer: .space MAX_WORD_LEN
 wordCount: .int 0 # for debugging only
@@ -818,7 +818,7 @@ testStackBasic:
 # of them.
 
 emit: # ( c -- )
-  # emits a single character to emitFd
+  # emits a single byte to emitFd
   dpop %eax
   movb %al, emitBuffer
   movl emitFd, %ebx   # fd
@@ -879,7 +879,7 @@ testCountNt:
   ret
 
 type: # ( addr count -- )
-  # Forth TYPE. Writes count characters at addr to emitFd
+  # Forth TYPE. Writes count bytes at addr to emitFd
   movl emitFd, %ebx   # fd
   dpop %edx # bytesToWrite=count
   dpop %ecx # &buf
@@ -917,7 +917,7 @@ testIoBuffer:
   ret
 
 bSTORE: # ( c addr -- )
-  # forth C!. Store character at address
+  # forth C!. Store byte at address
   dpop %eax  # addr
   dpop %ebx  # c
   movb %bl, (%eax)
@@ -940,8 +940,8 @@ uPntX_loop:
   # eax=emitBufferMax - 1 - count
   movl $emitBufferMax-1, %eax 
   subl 4(%ebp), %eax
-  dpush %ebx          # character to store
-  dpush %eax          # address to store character at
+  dpush %ebx          # byte to store
+  dpush %eax          # address to store byte at
   call bSTORE
   addl $1, 4(%ebp)    # increment count
   jmp uPntX_loop
@@ -1072,7 +1072,7 @@ testPntStack:
   ret
 
 cmove: # ( addr1 addr2 count -- )
-  # Forth CMOVE, move count characters from addr1 -> addr2.
+  # Forth CMOVE, move count bytes from addr1 -> addr2.
   dpop %eax # count
   dpop %ecx # addr2
   dpop %ebx # addr1
@@ -1088,7 +1088,7 @@ cmove: # ( addr1 addr2 count -- )
   ret
 
 cmoveUpper: # ( addr1 addr2 count -- )
-  # Move count chars from addr1 -> addr2 as uppercase
+  # Move count bytes from addr1 -> addr2 as uppercase
   dpop %ecx # count
   dpop %edx # addr2
   dpop %eax # addr1
@@ -1733,7 +1733,7 @@ def_asmword "-!" ,  2 ,  0 ,  SUBSTORE
 #           ascii , len, flag, label
 def_callword "B!" ,  2 ,  0 ,  bSTORE
 
-# ( addr -- c ) \ fetches a character at address
+# ( addr -- c ) \ fetches a byte at address
 #           ascii , len, flag, label
 def_asmword "B@" ,  2 ,  0 ,  bFETCH
   dpop %eax # addr
@@ -2107,11 +2107,11 @@ testLitbytes:
 # Strings and Input / Output
 # Some of these we have already defined, but we 
 
-# ( src dst count -- ) \ Moves characters from src to dst
+# ( src dst count -- ) \ Moves bytes from src to dst
 #           ascii    , len, flag, label
 def_callword "CMOVE" ,  5 ,  0 ,  cmove
 
-# ( src dst count -- ) \ Moves characters from src to dst
+# ( src dst count -- ) \ Moves bytes from src to dst
 #                ascii    , len, flag, label
 def_callword "CMOVEUPPER" , 10 ,    0, cmoveUpper
 
@@ -2200,7 +2200,7 @@ SUBtrailing_done:
   movl %ebx, (%ebp)   # update count
   NEXT
 
-# ( c -- ) \ emit a character
+# ( c -- ) \ emit a byte
 #           ascii   , len, flag, label
 def_callword "EMIT" , 4  ,   0 , emit
 
@@ -2279,7 +2279,7 @@ sysread: # %ebx:fd %ecx:&buff %edx:maxLength ( -- ) %eax:numRead
   int $0x80
   ret
 
-readKey: # ( -- ) \ reads a character into keyBuffer
+readKey: # ( -- ) \ reads a byte into keyBuffer
   movl keyFd, %ebx
   movl $keyBuffer, %ecx
   movl $1, %edx
@@ -2358,9 +2358,9 @@ testKey:
   call typeTestPass
   ret
 
-bl_toupper: # %bl:c ( -- ) %bl:c
-  # toupper: Convert character from lower->upper case.
-  # input: %bl character to convert
+bl_toupper: # %bl:b ( -- ) %bl:b
+  # toupper: Convert ascii byte from lower->upper case.
+  # input: %bl byte to convert
   # return: %bl return value
   #
   # Notes: 'A'=0x41 or 65 'Z'=0x5A or 90
@@ -2402,11 +2402,12 @@ word_loop:
   cmp $0, %eax # check for EOF
   je word_eof
   movb keyBuffer, %bl
-  # check for whitespace: all characters > space are not whitespace. This means
-  # utf8 is supported out of the box, since all non-ascii utf8 bytes are > 127
+  # check for whitespace: all bytes > ascii-space are not whitespace. This
+  # means utf8 is supported out of the box, since all non-ascii utf8 bytes are
+  # > 127
   cmpb $' ', %bl 
   jle word_ret_maybe
-  # move character uppercased into buffer
+  # move byte uppercased into buffer
   call bl_toupper
   movl (%ebp), %eax  # count
   addl $wordBuffer, %eax
@@ -2414,7 +2415,7 @@ word_loop:
   addl $1, (%ebp)  # increment count
   jmp word_loop
 word_ret_maybe:   # possibly return a word... or keep looping if count=0
-  cmp $0, (%ebp)  # are there any characters in the buffer?
+  cmp $0, (%ebp)  # are there any bytes in the buffer?
   je word_loop    # word not yet encountered, keep looping
 word_eof: # (in case of EOF we still push the count)
   movl (%ebp), %eax
@@ -2465,23 +2466,23 @@ testWord_assert0x: # ( addr count )
   callXt $xt_assertEq # 2
   ret
 
-ebx_ctou: # %ebx ( -- ) %ebx \ convert from a character to an integer
+ebx_asciitou: # %ebx ( -- ) %ebx \ convert from a ascii to an integer
   cmpb $'0', %bl # Check if < 0 (invalid)
-  jl ebx_ctou_err
+  jl ebx_asciitou_err
   cmpb $'9', %bl # Check if <= 9 (valid 0-9)
-  jle ebx_ctou_0to9
+  jle ebx_asciitou_0to9
   call bl_toupper
   cmpb $'A', %bl # Check if ['A', 'Z']
-  jl ebx_ctou_err
+  jl ebx_asciitou_err
   cmpb $'Z', %bl
-  jg ebx_ctou_err
+  jg ebx_asciitou_err
   subb $'A', %bl  # convert A->10, B->11, etc
   addb $10, %bl
   ret
-ebx_ctou_0to9:
+ebx_asciitou_0to9:
   subb $'0', %bl
   ret
-ebx_ctou_err:
+ebx_asciitou_err:
   addl $1, %ebx
   neg %ebx
   ret
@@ -2497,18 +2498,18 @@ def_asmword "\\",   1, FR_TIME_IMM, linecomment
 1:
   NEXT
 
-# ( -- c ) \ Convert the single-character "word" to it's ASCII representation
+# ( -- c ) \ Convert the single-byte "word" to it's ASCII representation
 #   \ panics if the next word has len > 1
 #            ascii, len, flag, label
-def_asmword "CHAR",   4,    0, char
+def_asmword "ASCII",   5,    0, ascii
   callXt $xt_word # ( addr count )
   dpop %eax
   cmp $1, %eax  # see if length <> 1
   jne 1f
   dpop %eax  # get the address
-  movl $0, %ebx  # zero ebx and move char into bl
+  movl $0, %ebx  # zero ebx and move ascii into bl
   movb (%eax), %bl
-  dpush %ebx     # push character on stack
+  dpush %ebx     # push byte on stack
   NEXT
 1:
   movl $ERR_INVALID_CHAR, panicErr
@@ -2536,13 +2537,13 @@ strTOhex: # ( addr count -- u )
   je _0x_noword       # word returned a count of 0=no word so panic
   movl $0, %edi       # index
   movl $0, %eax       # cumulative value
-  movl $0, %ebx       # character value
+  movl $0, %ebx       # byte value
   movl 4(%ebp), %ecx  # address of word
 _0x_loop:
   cmp %edi, (%ebp)  # cmp count with index
   je _0x_done
-  movb (%ecx,%edi,1), %bl # get the char and convert to int
-  call ebx_ctou
+  movb (%ecx,%edi,1), %bl # get the ascii and convert to int
+  call ebx_asciitou
   cmpl $0, %ebx  # check that it is between [0,15]
   jl _0x_notnumber
   cmpl $15, %ebx
@@ -2699,7 +2700,7 @@ def_asmword "NT>STR",   6,    0, ntTOstr
   addl $4, %eax        # address of name as cstr
   movb (%eax), %bl     # get either cstr count or left-most F0 byte
   andl $F0_NAMELEN_BYTE_MASK, %ebx  # clear other flags
-  addl $1, %eax        # addr=addr+1 (next character)
+  addl $1, %eax        # addr=addr+1 (next byte)
   dpush %eax
   dpush %ebx           # push count
   NEXT

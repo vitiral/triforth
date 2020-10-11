@@ -16,18 +16,19 @@
   ' LIT , \ compile xt of LIT
   , ;     \ compile the literal itself (from the stack)
 : ':' \ ( -- c) the colon character code
-  [ CHAR : ]  \ put the character ':' onto the stack at compile-time
+  [ ascii : ]  \ put the character ':' onto the stack at compile-time
   LITERAL ;   \ compile LIT 58 as the definition for ':' word
 ':' 0x 3A assertEq assertEmpty  \ test: ':' works, therefore LITERAL, etc works
 
-: ';' [ CHAR ; ] LITERAL ; \ ;
-: '(' [ CHAR ( ] LITERAL ; \ (
-: ')' [ CHAR ) ] LITERAL ; \ )
-: '"' [ CHAR " ] LITERAL ; \ "
-: 'A' [ CHAR A ] LITERAL ; \ A
-: '0' [ CHAR 0 ] LITERAL ; \ 0
-: '-' [ CHAR - ] LITERAL ; \ -
-: '.' [ CHAR . ] LITERAL ; \ .
+: ';' [ ascii ; ] LITERAL ; \ ;
+: '(' [ ascii ( ] LITERAL ; \ (
+: ')' [ ascii ) ] LITERAL ; \ )
+: '"' [ ascii " ] LITERAL ; \ "
+: 'A' [ ascii A ] LITERAL ; \ A
+: '0' [ ascii 0 ] LITERAL ; \ 0
+: '-' [ ascii - ] LITERAL ; \ -
+: '.' [ ascii . ] LITERAL ; \ .
+: '\' [ ascii \ ] LITERAL ; \ \
 ';' 0x 3B assertEq  '(' 0x 28 assertEq  ')' 0x 29 assertEq \ test: yo'basic
 
 \ The xt's of "!@," repsectively. these are especially hard to read since
@@ -192,17 +193,26 @@ assertEmpty -test
 \ \t the tab character, \\ is the '\' character, \0 the 0 byte, \xF2 the
 \ hexidecimal byte F2, etc.  However, unlike most c-style languages, \" is the
 \ start of the string and \" is also the END of the string. This means you
-\ don't have to escape inner quotes, you  \" this "string" has inner quotes, it
-\ will only end when I type \\", like this:\". This is superior to many languages
-\ since it is extremely common that you want to write  "  but rare that you
-\ need to write \"  explicitly.
+\ don't have to escape inner quotes. The string will ONLY end when you type
+\ \". This is superior to many languages since it is extremely common
+\ that you want to write  "  but rare that you need to write \"  explicitly.
 
-: \" ( -- addr count ) 
-  \ return the multiline escapled string. The string can span multiple lines,
-  \ but only explicit escaped newlines (\n) will insert newlines into the string.
-  \ Indentation is not handled specially, so \" this string
-  \     has four spaces\" is the same as \" this string    has four spaces\"
-  ;
+\ : B, ( b -- ) \ append the byte onto the dictionary
+  
+
+\ : \" ( -- addr count ) 
+\   \ Return the literal multiline escapled string. The string can span multiple
+\   \ lines, but only explicit escaped newlines (\n) will insert newlines into
+\   \ the string.  Indentation is not handled specially. Example:
+\   \ \" this string
+\   \     has four spaces\" 
+\   \ is the same as: 
+\   \ \" this string    has four spaces\"
+\   BEGIN key dup '\' = IF \ If the key is \ handle it special
+\ 
+\   ELSE C, THEN \ else append the character
+\   UNTIL
+\   ;
 
 \ #########################
 \ # Character Printing helpers
