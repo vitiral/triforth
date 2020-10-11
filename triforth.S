@@ -100,8 +100,10 @@
 .equ RC_PANIC,104
 .equ RC_STACK_UNDERFLOW,105
 .equ RC_STACK_OVERFLOW,106
+.equ RC_STACK_OVERFLOW,106
 
 # Our Panic Error Codes
+.equ ERR_SEE_MSG,0x001
 .equ ERR_DSTACK_OVERFLOW,0x300
 .equ ERR_DSTACK_UNDERFLOW,0x301
 .equ ERR_ASCII_BOUNDS,0x302
@@ -221,6 +223,7 @@ _0xNotNumberStr: .ascii "Not a valid hex number: \0"
 unknownWordStr: .ascii "Unknown word: \0"
 dumpAddrStr: .ascii "DUMP \0"
 colonSpaceStr: .ascii ": \0"
+errorUnknownEscape: .ascii "ERROR unknown escape: \0"
 
 
 # Test Names
@@ -916,8 +919,8 @@ testIoBuffer:
   call typeTestPass
   ret
 
-bSTORE: # ( c addr -- )
-  # forth C!. Store byte at address
+bSTORE: # ( b addr -- )
+  # Store byte at address
   dpop %eax  # addr
   dpop %ebx  # c
   movb %bl, (%eax)
@@ -1071,8 +1074,8 @@ testPntStack:
   call typeTestPass
   ret
 
-cmove: # ( addr1 addr2 count -- )
-  # Forth CMOVE, move count bytes from addr1 -> addr2.
+bmove: # ( addr1 addr2 count -- )
+  # Forth BMOVE, move count bytes from addr1 -> addr2.
   dpop %eax # count
   dpop %ecx # addr2
   dpop %ebx # addr1
@@ -1087,7 +1090,7 @@ cmove: # ( addr1 addr2 count -- )
 2:
   ret
 
-cmoveUpper: # ( addr1 addr2 count -- )
+bmoveUpper: # ( addr1 addr2 count -- )
   # Move count bytes from addr1 -> addr2 as uppercase
   dpop %ecx # count
   dpop %edx # addr2
@@ -1194,7 +1197,7 @@ testDumpInfo:
   movl %eax, wordCount
   dpush $wordBuffer
   call swap # ( addr1 addr2 count )
-  call cmove
+  call bmove
 
   # push some values onto the stack
   dpush $0xAB
@@ -2086,6 +2089,13 @@ def_asmword "LITBYTES",   8,    0, litbytes
   movl $testLitBytes_cont, %ebx
   NEXT
 
+# ( -- addr count ) \ _\"error, needed in definition of \"
+#           ascii , len, flag, label
+def_asmword "_STRERROR",   9,    0, _STRerror
+  dpush $errorUnknownEscape
+  call countnt
+  NEXT
+
 .align 4
 xt_testLitBytes:
 .int DOCOL
@@ -2109,11 +2119,11 @@ testLitbytes:
 
 # ( src dst count -- ) \ Moves bytes from src to dst
 #           ascii    , len, flag, label
-def_callword "CMOVE" ,  5 ,  0 ,  cmove
+def_callword "BMOVE" ,  5 ,  0 ,  bmove
 
 # ( src dst count -- ) \ Moves bytes from src to dst
 #                ascii    , len, flag, label
-def_callword "CMOVEUPPER" , 10 ,    0, cmoveUpper
+def_callword "BMOVEUPPER" , 10 ,    0, bmoveUpper
 
 # ( addr -- addr count ) \ counts a null-terminated (c-style) string.
 #           ascii      , len, flag, label
@@ -2215,6 +2225,13 @@ def_asmword "TYPELN" ,  6 ,  0 ,  typeln
   dpush $'\n'
   call emit
   NEXT
+
+# ( errno -- ) \ panics immediately with the given errno
+#            ascii   , len, flag, label
+def_asmword "PANIC" ,  5 ,  0 ,  panic
+  dpop %eax
+  movl %eax, panicErr
+  call *(panic)
 
 ####
 # Builtin Test
@@ -2660,6 +2677,7 @@ def_const "FR_TIME_RUN",         11, FR_TIME_RUN
 def_const "FR_TIME_IMM",         11, FR_TIME_IMM
 def_const "FR_TIME_IMM_PART",    16, FR_TIME_IMM_PART
 def_const "FR_TIME_RUN_PART",    16, FR_TIME_RUN_PART
+def_const "ERR_SEE_MSG",         11, ERR_SEE_MSG
 
 testConst:
   callXt $xt_FR_TIME_IMM
@@ -2981,10 +2999,10 @@ def_asmword "CREATE" ,  6 ,    0 , create
   movb %cl, (%edi)        # dict: namelen
   inc %edi
   call tuck   # ( nt namelen addr namelen ) note: doesn't touch edi
-  movl %edi, var_REFhere # store edi in HERE, as cmove will destroy
+  movl %edi, var_REFhere # store edi in HERE, as bmove will destroy
   dpush %edi  # addr2
   call swap           # stack: ( nt namelen addr addr2 namelen )
-  call cmoveUpper     # dict: put name string
+  call bmoveUpper     # dict: put name string
   dpop %ecx         # namelen. stack: ( nt )
   movl var_REFhere, %eax   # restore HERE into eax
   addl %ecx, %eax       # add namelen to HERE and align

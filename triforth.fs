@@ -9,9 +9,10 @@
 \ # Literals
 \ We need some basic character literals to help us. We will define a few
 \ words to help us as well.
-: '\n'    0x A ;
-: bl      0x 20 ;       \ BL (Blank) is std forth word for space
-'\n' 0x A assertEq \ test: '\n' works, nostack
+: '\t' 0x 9 ;     : '\n'  0x A ;    : '\r' 0x D ;
+: bl      0x 20 ; \ BL (Blank) is std forth word for space
+'\n' 0x A assertEq \ test: '\n' works
+
 : LITERAL IMM  \ ( u -- ) take whatever is on stack and compile as a literal
   ' LIT , \ compile xt of LIT
   , ;     \ compile the literal itself (from the stack)
@@ -53,12 +54,22 @@ VARIABLE testCache 0x 0 , 0x 0 , 0x 0 , \ temp storage for tests
 : !i     cells + ! ; \ ( u addr i -- ) store u at index=i of addr
 : !1     cell+ ! ; \ ( u addr -- u ) store u at index=1 of addr
 : !2     [ 0x 2 CELLS ] LITERAL + ! ; \ ( u addr -- u ) store u at index=2 of addr
+: +!     dup @ 1+ swap ! ; \ ( addr -- ) increment value inside address by 1
+: +4!    dup @ 4+ swap ! ; \ ( addr -- ) increment value inside address by 4
+: align \ ( addr -- addr ) align address by four bytes
+  0x 3 +   [ 0x 3 invert ] LITERAL and ;
+: aligned  &here @ align &here ! ; \ ( -- ) align HERE by four bytes
 
 0x 42 testCache !         testCache @ 0x 42 assertEq
 0x 43 testCache !1        testCache @1 0x 43 assertEq
 0x 51 testCache !2        testCache @2 0x 51 assertEq
 0x 50 testCache 0x 1 !i   testCache 0x 1 @i 0x 50 assertEq
+0x 20 testCache !   testCache +!   testcache @ 0x 21 assertEq
+0x 20 testCache !   testCache +4!  testcache @ 0x 24 assertEq
+0x 2 align 0x 4 assertEq     0x 4 align 0x 4 assertEq
+0x 11 align 0x 14 assertEq   0x 7 align 0x 8 assertEq
 assertEmpty
+
 
 \ MARKER allows us to define a checkpoint to forget dictionary items. It has
 \ many uses, but for us right now the main one is we can now define tests,
@@ -197,24 +208,44 @@ assertEmpty -test
 \ \". This is superior to many languages since it is extremely common
 \ that you want to write  "  but rare that you need to write \"  explicitly.
 
-\ : B, ( b -- ) \ append the byte onto the dictionary
-  
+: b, ( b -- ) \ append the byte onto the dictionary
+  &here @ b! ( store byte to HERE) &here +! ( increment HERE) ;
 
-\ : \" ( -- addr count ) 
-\   \ Return the literal multiline escapled string. The string can span multiple
-\   \ lines, but only explicit escaped newlines (\n) will insert newlines into
-\   \ the string.  Indentation is not handled specially. Example:
-\   \ \" this string
-\   \     has four spaces\" 
-\   \ is the same as: 
-\   \ \" this string    has four spaces\"
-\   BEGIN key dup '\' = IF \ If the key is \ handle it special
-\ 
-\   ELSE C, THEN \ else append the character
-\   UNTIL
-\   ;
+MARKER -test
+&HERE @ testCache !
+0x 32 B,  ( add a byte, misaligning HERE ) 
+testCache @ @ ( value at previous here) 0x 32  assertEq
+&here @ 1-   testCache @ assertEq \ test: here has moved forward 1
+aligned    &HERE @ 4-   testCache @ assertEq \ test: alignment moves here +4
+-test
+
+: \" ( -- addr count ) 
+  \ Return the literal multiline escapled string. The string can span multiple
+  \ lines, but only explicit escaped newlines (\n) will insert newlines into
+  \ the string.  Indentation is not handled specially. Example:
+  \ \" this string
+  \     has four spaces\" 
+  \ is the same as: 
+  \ \" this string    has four spaces\"
+  BEGIN 
+    \ Call KEY in a loop repeatedly, leaving TRUE for UNTIL to consume in
+    \ every branch except \"
+    key dup '\' = IF drop ( drop '\' ) key ( get new key )
+      dup '"' = IF drop ( \" == END LOOP )            false
+      ELSE dup [ ascii n ] LITERAL = IF drop '\n' b,  true
+      ELSE dup [ ascii t ] LITERAL = IF drop '\t' b,  true
+      ELSE dup '\' = IF ( '\' already on stack ) b,   true
+      \ TODO: \x
+      \ Unknown escape, panic with error message
+      ELSE _STRERROR type '\' emit emit '\n' emit ERR_SEE_MSG panic
+      THEN THEN THEN THEN
+    ELSE dup '\n' = IF drop true \ ignore newlines
+    ELSE dup '\r' = IF drop true \ also ignore line-feeds
+    ELSE b, \ else append the character directly
+    THEN THEN THEN
+  UNTIL ;
 
 \ #########################
 \ # Character Printing helpers
-: cr      '\n' emit ;   \ print carriage return a.k.a newline
-: space   bl emit ;     \ print space
+\ : cr      '\n' emit ;   \ print carriage return a.k.a newline
+\ : space   bl emit ;     \ print space
