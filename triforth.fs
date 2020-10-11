@@ -219,14 +219,16 @@ testCache @ @ ( value at previous here) 0x 32  assertEq
 aligned    &HERE @ 4-   testCache @ assertEq \ test: alignment moves here +4
 -test
 
-: \" ( -- addr count ) 
-  \ Return the literal multiline escapled string. The string can span multiple
+: \" IMM ( -- addr count ) 
+  \ Return the literal multiline escaped string. The string can span multiple
   \ lines, but only explicit escaped newlines (\n) will insert newlines into
   \ the string.  Indentation is not handled specially. Example:
   \ \" this string
   \     has four spaces\" 
   \ is the same as: 
   \ \" this string    has four spaces\"
+  ' litbytes ,   &here @    0x 0 ,  \ compile litbytes with dummy length
+  0x 0 \ count bytes written
   BEGIN 
     \ Call KEY in a loop repeatedly, leaving TRUE for UNTIL to consume in
     \ every branch except \"
@@ -241,9 +243,17 @@ aligned    &HERE @ 4-   testCache @ assertEq \ test: alignment moves here +4
       THEN THEN THEN THEN
     ELSE dup '\n' = IF drop true \ ignore newlines
     ELSE dup '\r' = IF drop true \ also ignore line-feeds
-    ELSE b, \ else append the character directly
+    ELSE b,    true \ else append the character directly
     THEN THEN THEN
-  UNTIL ;
+    swap 1+ ( increment count) swap
+  UNTIL 
+  swap !   aligned ; \ update dummy count, align HERE
+
+MARKER -test
+: myTestPrint \" This is a string It has a newline and a tab.\"    \ "
+  pnt ;
+myTestPrint
+-test
 
 \ #########################
 \ # Character Printing helpers
