@@ -916,7 +916,7 @@ testIoBuffer:
   call typeTestPass
   ret
 
-cSTORE: # ( c addr -- )
+bSTORE: # ( c addr -- )
   # forth C!. Store character at address
   dpop %eax  # addr
   dpop %ebx  # c
@@ -942,7 +942,7 @@ uPntX_loop:
   subl 4(%ebp), %eax
   dpush %ebx          # character to store
   dpush %eax          # address to store character at
-  call cSTORE
+  call bSTORE
   addl $1, 4(%ebp)    # increment count
   jmp uPntX_loop
 uPntX_ret:
@@ -1729,13 +1729,13 @@ def_asmword "-!" ,  2 ,  0 ,  SUBSTORE
   subl $1, (%eax)
   NEXT
 
-# ( c addr -- ) \ stores a character at address
+# ( c addr -- ) \ stores a byte at address
 #           ascii , len, flag, label
-def_callword "C!" ,  2 ,  0 ,  cSTORE
+def_callword "B!" ,  2 ,  0 ,  bSTORE
 
 # ( addr -- c ) \ fetches a character at address
 #           ascii , len, flag, label
-def_asmword "C@" ,  2 ,  0 ,  cFETCH
+def_asmword "B@" ,  2 ,  0 ,  bFETCH
   dpop %eax # addr
   movl $0, %ebx
   movb (%eax), %bl
@@ -2437,11 +2437,11 @@ testWord:
   dpush $2
   callXt $xt_assertEq # len
   callXt $xt_dup
-  callXt $xt_cFETCH
+  callXt $xt_bFETCH
   dpush $'1'
   callXt $xt_assertEq
   addl $1, (%ebp) # add 1 to addr since count=2
-  callXt $xt_cFETCH
+  callXt $xt_bFETCH
   dpush $'2'
   callXt $xt_assertEq
 
@@ -2456,11 +2456,11 @@ testWord_assert0x: # ( addr count )
   dpush $2
   callXt $xt_assertEq # count
   callXt $xt_dup
-  callXt $xt_cFETCH
+  callXt $xt_bFETCH
   dpush $'0'
   callXt $xt_assertEq # 1
   addl $1, (%ebp) # add 1 to addr since count=2
-  callXt $xt_cFETCH
+  callXt $xt_bFETCH
   dpush $'X'
   callXt $xt_assertEq # 2
   ret
@@ -3134,9 +3134,9 @@ xt_testCOLON:
 .int xt_dup, xt_ntTOstr, xt_lit, testNewDefinedWordStr, xt_countnt
 .int   xt_ceq, xt_assertTrue
 # Make sure str len is as expected in cstr
-.int xt_dup, xt_inc4, xt_cFETCH, xt_lit, 14, xt_assertEq
+.int xt_dup, xt_inc4, xt_bFETCH, xt_lit, 14, xt_assertEq
 # Make sure str len is as expected in F0
-.int xt_dup, xt_ntTOf0, xt_inc4, xt_dec, xt_cFETCH, xt_lit, 14, xt_assertEq
+.int xt_dup, xt_ntTOf0, xt_inc4, xt_dec, xt_bFETCH, xt_lit, 14, xt_assertEq
 # Make sure FR
 .int xt_dup, xt_ntTOfr, xt_FETCH, xt_lit, 0, xt_assertEq
 # Make sure xt
