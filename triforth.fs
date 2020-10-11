@@ -184,6 +184,25 @@ assertEmpty -test
 : r@1 ( -- u ) rsp@ cell+ @ ;
 \ : lroll ( u:x@N u:x@n-1 ... u:x@0 u:N -- u:x@N-1 ... u:x@0 u:x@N )
 
+\ #########################
+\ # Strings
+\ This forth uses a unique way to specify strings that is often superior to
+\ many other languages. Like many c-style languages, the `\` character "escapes"
+\ the next character to be processed. For instance \n means the newline character,
+\ \t the tab character, \\ is the '\' character, \0 the 0 byte, \xF2 the
+\ hexidecimal byte F2, etc.  However, unlike most c-style languages, \" is the
+\ start of the string and \" is also the END of the string. This means you
+\ don't have to escape inner quotes, you  \" this "string" has inner quotes, it
+\ will only end when I type \\", like this:\". This is superior to many languages
+\ since it is extremely common that you want to write  "  but rare that you
+\ need to write \"  explicitly.
+
+: \" ( -- addr count ) 
+  \ return the multiline escapled string. The string can span multiple lines,
+  \ but only explicit escaped newlines (\n) will insert newlines into the string.
+  \ Indentation is not handled specially, so \" this string
+  \     has four spaces\" is the same as \" this string    has four spaces\"
+  ;
 
 \ #########################
 \ # Character Printing helpers
