@@ -2590,7 +2590,6 @@ def_asmword "ASCII",   5,    0, ascii
   movl $0, %ebx  # zero ebx and move ascii into bl
   movb (%eax), %bl
   dpush %ebx     # push byte on stack
-  call dumpInfo
   NEXT
 1:
   movl $ERR_INVALID_CHAR, panicErr
@@ -3265,8 +3264,8 @@ def_doword "IMM",   3, FR_TIME_IMM, imm
   .int xt_FR_TIME_IMM, xt_or, xt_swap, xt_STORE
   .int xt_EXIT
 
-# ( -- xt ) \ Put the xt of the next word onto the stack.
-#          ascii, len, flag, label
+# ( -- xt ) \ Instead of executing the next xt, put it on the stack.
+#         ascii, len, flag, label
 def_asmword "'",   1,    0, xt
   lodsl  # %eax=(%esi) %esi+=4 -- see NEXT
   dpush %eax  # but push xt on stack instead of jmp *(...)
