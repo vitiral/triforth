@@ -247,10 +247,10 @@ testCOLONStr: .ascii "testCOLON\0"
 testInterpretStr: .ascii "testInterpret\0"
 
 # Test Files
-testSimpleMathFile: .ascii "tests/simplemath.fs\0"
-testDefineFile: .ascii "tests/define.fs\0"
-testTheAnswerFile: .ascii "tests/theanswer.fs\0"
-triforthFile: .ascii "triforth.fs\0"
+testSimpleMathFile: .ascii "tests/simplemath.tf\0"
+testDefineFile: .ascii "tests/define.tf\0"
+testTheAnswerFile: .ascii "tests/theanswer.tf\0"
+triforthFile: .ascii "triforth.tf\0"
 
 # Test Inputs
 testWordWithSpaces: .ascii " spc    \0"
