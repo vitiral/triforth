@@ -180,18 +180,18 @@ assertEmpty -test
 
 \ #########################
 \ # Stack Functions
-: R@ ( -- u ) rsp@ @ ;
-: R@1 ( -- u ) rsp@ cell+ @ ;
+\ The R@N functions must NEVER be exected at runtime since
+\ the return stack is corrupted by executing them.
+: R@ ( -- u ) IMM ' rsp@ ,   xt@ , ;
+: R@1 ( -- u ) IMM ' rsp@ ,  ' cell+ ,   xt@ , ;
 \ : lroll ( u:x@N u:x@n-1 ... u:x@0 u:N -- u:x@N-1 ... u:x@0 u:x@N )
 
-\ TODO: don't trust rstack till I figure this out...
-\ MARKER -test
-\ : testRstack 0x 42 0x 43 0x 44 >R >R
-\   R> 0x 43 assertEq    R> 0x 44 assertEq
-\   0x 44 >R   0x 43 >R   R@ 0x 43 assertEq    R@1 0x 44 assertEq
-\   dbgexit
-\   0x 42 assertEq ;
-\ testRstack -test assertEmpty
+MARKER -test
+assertEmpty
+: testR@ 0x 42 >R   r@ 0x 42 assertEq    R> 0x 42 assertEq ;
+: testR@1 0x 42 >R 0x 43 >R  r@ 0x 43 assertEq    r@1 0x 42 assertEq
+  R> 0x 43 assertEq   R> 0x 42 assertEq ;
+testR@ testR@1 assertEmpty -test
 
 \ #########################
 \ # Strings
@@ -210,8 +210,8 @@ assertEmpty -test
 
 MARKER -test
 &HERE @ testCache !
-0x 32 B,  ( add a byte, misaligning HERE ) 
-testCache @ @ ( value at previous here) 0x 32  assertEq
+0x 32 b,  ( add a byte, misaligning HERE ) 
+testCache @ b@ ( byte at previous here) 0x 32  assertEq
 &here @ 1-   testCache @ assertEq \ test: here has moved forward 1
 aligned    &HERE @ 4-   testCache @ assertEq \ test: alignment moves here +4
 -test

@@ -47,6 +47,6 @@ true =0    false assertEq    false =0   true assertEq
 2drop 2drop 2drop
 
 : testRstack 
-  0x 42 0x 50 dumpInfo >R     0x 42 assertEq
+  0x 42 0x 50 >R      0x 42 assertEq
   R> 0x 50 assertEq   assertEmpty ;
 testRstack
