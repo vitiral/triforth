@@ -250,7 +250,7 @@ aligned    &HERE @ 4-   testCache @ assertEq \ test: alignment moves here +4
   swap !   aligned ; \ update dummy count, align HERE
 
 MARKER -test
-: myTestPrint \" This is a string It has a newline and a tab.\"    \ "
+: myTestPrint \" This is a string.\"
   dumpInfo
   pnt ;
 myTestPrint
