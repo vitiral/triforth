@@ -59,6 +59,9 @@ VARIABLE testCache 0x 0 , 0x 0 , 0x 0 , \ temp storage for tests
 : align \ ( addr -- addr ) align address by four bytes
   0x 3 +   [ 0x 3 invert ] LITERAL and ;
 : aligned  &here @ align &here ! ; \ ( -- ) align HERE by four bytes
+: b@i     + b@ ;  \ ( addr i -- b ) fetch byte at index=i of addr
+: b@1     1+ b@ ;  \ ( addr -- b ) fetch byte at index=1 of addr
+: b@2     0x 2 + b@ ; \ ( addr -- u ) fetch byte at index=2 of addr
 
 0x 42 testCache !         testCache @ 0x 42 assertEq
 0x 43 testCache !1        testCache @1 0x 43 assertEq
@@ -221,12 +224,13 @@ aligned    &HERE @ 4-   testCache @ assertEq \ test: alignment moves here +4
   \ This is the core function used to define strings of various kinds in
   \ typeforth.
   \ A string can span multiple lines, but only explicit escaped newlines (\n)
-  \ will insert newlines into the string.  Indentation is not handled specially.
+  \ will insert newlines into the string. Indentation is NOT handled specially.
   \ Example:
   \ \" this string
   \     has four spaces\" 
   \ is the same as: 
   \ \" this string    has four spaces\"
+  \ See the tests for more examples.
   >R BEGIN \ put xt on rstack and start loop
     \ Call KEY in a loop repeatedly, leaving TRUE for UNTIL to consume in
     \ every branch except \"
@@ -255,11 +259,16 @@ aligned    &HERE @ 4-   testCache @ assertEq \ test: alignment moves here +4
   swap !   aligned ; \ update dummy count, align HERE
 
 MARKER -test
-: myTestPrint \" This is a string.\" pnt ;                  myTestPrint
-: myTestTab \" This has a\ttab.\" pnt ;                     myTestTab
-: myTestNewline \"   This has a newline.\n\" pnt ;          myTestNewline
-: myTestComplex \" This "has" \\" lots \\"\\" of stuff.\n\" pnt ;  myTestcomplex
-: myTest \" **TEST \\" string\\" complete\n\"   pnt ;         myTest assertEmpty
+: strTest \" str\"          0x 3 assertEq ( count) 
+  dup b@ [ascii] s  assertEq      dup b@1  [ascii] t assertEq
+  b@2 [ascii] r assertEq ;                           ( run it) strTest
+: quoteTest \" "q"\"        0x 3 assertEq ( count) 
+  dup b@ '"'  assertEq      dup b@1  [ascii] q assertEq
+  b@2 '"' assertEq ;                                ( run it) quoteTest
+: escapeTest \" \\\n\t\"    0x 3 assertEq ( count) 
+  dup b@ '\'  assertEq      dup b@1  '\n' assertEq
+  b@2 '\t' assertEq ;                               ( run it) escapeTest
+: pntTest \" **TEST \\" string\\" complete\n\"   pnt ;         pntTest assertEmpty
 -test
 
 \ #########################
