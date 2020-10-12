@@ -6,38 +6,35 @@
 &state @ 0x 0 assertEq assertEmpty  \ test: we are in runmode, nostack
 
 \ ########################
+\ # Compilation Helpers: these help us create words which compile other words.
+: [compile] IMM \ ( -- ) immediately compile the next word
+  \ This allows you to easily compile IMM words into other words, or compile
+  \ words during [ runstate ]
+  word find nt>xt \ get xt for next word
+  , ;             \ and compile it
+
+\ ########################
 \ # Literals
 \ We need some basic character literals to help us. We will define a few
 \ words to help us as well.
-: '\t' 0x 9 ;     : '\n'  0x A ;    : '\r' 0x D ;
-: bl      0x 20 ; \ BL (Blank) is std forth word for space
-'\n' 0x A assertEq \ test: '\n' works
-
-: LITERAL IMM  \ ( u -- ) take whatever is on stack and compile as a literal
-  ' LIT , \ compile xt of LIT
+: literal IMM  \ ( u -- ) take whatever is on stack and compile as a literal
+  ' lit , \ compile xt of LIT
   , ;     \ compile the literal itself (from the stack)
-: ':' \ ( -- c) the colon character code
-  [ ascii : ]  \ put the character ':' onto the stack at compile-time
-  LITERAL ;   \ compile LIT 58 as the definition for ':' word
-':' 0x 3A assertEq assertEmpty  \ test: ':' works, therefore LITERAL, etc works
+: [ascii] IMM \ ( -- b ) compile next single-letter word as ascii literal
+  ascii [compile] literal ; \ note: ascii reads from _input stream_
 
-: ';' [ ascii ; ] LITERAL ; \ ;
-: '(' [ ascii ( ] LITERAL ; \ (
-: ')' [ ascii ) ] LITERAL ; \ )
-: '"' [ ascii " ] LITERAL ; \ "
-: 'A' [ ascii A ] LITERAL ; \ A
-: 'Z' [ ascii Z ] LITERAL ; \ A
-: 'a' [ ascii a ] LITERAL ; \ A
-: 'z' [ ascii z ] LITERAL ; \ A
-: '0' [ ascii 0 ] LITERAL ; \ 0
-: '-' [ ascii - ] LITERAL ; \ -
-: '.' [ ascii . ] LITERAL ; \ .
-: '\' [ ascii \ ] LITERAL ; \ \
-';' 0x 3B assertEq  '(' 0x 28 assertEq  ')' 0x 29 assertEq \ test: yo'basic
+\ Can't be gotten with [ascii]
+: '\t' 0x 9 ;     : '\n'  0x A ;    : '\r' 0x D ;
+: bl   0x 20 ; \ "blank" i.e. space
+\ Mess with syntax highlighters and can be hard to read
+: ':' [ascii] : ;      : ';' [ascii] ; ;
+: '(' [ascii] ( ;      : ')' [ascii] ) ;
+: '\' [ascii] \ ;      : '"' [ascii] " ;
+\ The xt's of "!@," repsectively.
+: xt! ' ! ;     : xt@ ' @ ;    : xt, ' , ;
 
-\ The xt's of "!@," repsectively. these are especially hard to read since
-\ there are so many symobls.
-: !xt ' ! ;     : @xt ' @ ;    : ,xt ' , ;
+':' 0x 3A assertEq  '(' 0x 28 assertEq  ')' 0x 29 assertEq
+';' 0x 3B assertEq  '\' 0x 5C assertEq  '"' 0x 22 assertEq
 
 \ ########################
 \ # Variables: allow defining variables and constants
@@ -81,9 +78,8 @@ assertEmpty
   &latest @ &here @  \ get the current HERE
   CREATEWORD          \ create the word to act as a marker
   ' lit , ,         \ compile literal HERE directly
-  ' &here ,   !xt , \ which the code will store into HERE
-  ' lit , ,         \ Same with LATEST
-  ' &latest ,   !xt ,
+  ' &here ,   xt! , \ which the code will store into HERE
+  ' lit , ,   ' &latest ,    xt! ,  \ same as HERE with LATEST
   ' EXIT , ;        \ then the word should exit
 
 &here @   testCache !    &latest @ testCache !1 \ store here and latest
@@ -95,15 +91,6 @@ thisWillNotExist 0x 42 assertEq -test
 MARKER -test  -test \ test mark+unmark works
 testCache @   &here @ assertEq \ test: dict restored
 testCache @1  &latest @ assertEq assertEmpty
-
-\ ########################
-\ # Compilation Helpers: these help us create words which compile other words.
-: [compile] IMM \ ( -- ) immediately compile the next word
-  \ This allows you to easily compile IMM words into other words, or compile
-  \ words during [ runstate ]
-  word find nt>xt \ get xt for next word
-  , ;             \ and compile it
-
 
 \ ########################
 \ # Control Structures
@@ -185,7 +172,6 @@ assertEmpty -test
   dup UNTIL drop ; \ loop until depth=0, then drop depth and exit
 ( test: this is (now a ) comment )
 
-
 \ #########################
 \ # Mathematical functions
 : /       /mod swap drop ; \ ( a b -- a/b )
@@ -235,9 +221,9 @@ aligned    &HERE @ 4-   testCache @ assertEq \ test: alignment moves here +4
     \ Call KEY in a loop repeatedly, leaving TRUE for UNTIL to consume in
     \ every branch except \"
     key dup '\' = IF drop ( drop '\' ) key ( get new key )
-      dup '"' = IF drop ( \" == END LOOP )            false
-      ELSE dup [ ascii n ] LITERAL = IF drop '\n' b,  true
-      ELSE dup [ ascii t ] LITERAL = IF drop '\t' b,  true
+      dup '"' = IF drop ( \" == END LOOP ) 1- ( don't count) false
+      ELSE dup [ascii] n = IF drop '\n' b,  true
+      ELSE dup [ascii] t = IF drop '\t' b,  true
       ELSE dup '\' = IF ( '\' already on stack )  b,  true
       \ TODO: \x
       \ Unknown escape, panic with error message
@@ -252,9 +238,14 @@ aligned    &HERE @ 4-   testCache @ assertEq \ test: alignment moves here +4
   swap !   aligned ; \ update dummy count, align HERE
 
 MARKER -test
-: myTestPrint \" This is a string.\" pnt ;            myTestPrint
-\ : myTestNewline \"   This has a newline.\n\" pnt ;    myTestNewline
+: myTestPrint \" This is a string.\" pnt ;                  myTestPrint
+: myTestTab \" This has a\ttab.\" pnt ;                     myTestTab
+: myTestTab \" This has a\ttab.\" pnt ;                     myTestTab
+: myTestNewline \"   This has a newline.\n\" pnt ;          myTestNewline
+: myTestComplex \" This "has" \\" lots \\"\\" of stuff.\n\" pnt ;  myTestcomplex
+: myTest \" **TEST \\" string\\" complete\n\"   pnt ;         myTest assertEmpty
 -test
+
 
 \ #########################
 \ # Character Printing helpers
