@@ -244,7 +244,7 @@ aligned    &HERE @ 4-   testCache @ assertEq \ test: alignment moves here +4
       ELSE dup '\' = IF ( '\' already on stack ) R@ execute  true
       \ TODO: \x
       \ Unknown escape, panic with error message
-      ELSE >R drop _STRERROR pnt '\' emit emit '\n' emit ERR_SEE_MSG panic
+      ELSE >R drop _SERR pnt '\' emit emit '\n' emit panic
       THEN THEN THEN THEN
     ELSE dup '\n' = IF drop    true \ ignore newlines
     ELSE dup '\r' = IF drop    true \ also ignore line-feeds
@@ -256,10 +256,13 @@ aligned    &HERE @ 4-   testCache @ assertEq \ test: alignment moves here +4
   \ just compile into dict with b, and keep track of count.
   b, 1+ ;
 : \" IMM 
-  ' litbytes ,   &here @ ( =count-addr)  0x 0 ,
-  0x 0 ( stack: count-addr count )
+  \ compile litcarru8 and a dummy byte-count, keep track of
+  \ ( count-addr count )
+  ' litcarru8 ,   &here @ ( =count-addr)  0 b,  0
   ' _lits [compile] map\"  \ map\" does the string processing
-  swap !   aligned ; \ update dummy count, align HERE
+  \ TODO: support count [256,u16MAX] with litc2arru8
+  dup 0x 255 > IF _SCERR pntln panic THEN
+  swap b!   aligned ; \ update dummy count, align HERE
 
 MARKER -test
 : strTest \" str\"          0x 3 assertEq ( count) 

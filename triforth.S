@@ -239,6 +239,7 @@ unknownWordStr: .ascii "Unknown word: \0"
 dumpAddrStr: .ascii "DUMP \0"
 colonSpaceStr: .ascii ": \0"
 errorUnknownEscape: .ascii "ERROR unknown escape: \0"
+errorCountExceeded: .ascii "ERROR literal strings must be <255 bytes\0"
 
 
 # Test Names
@@ -2166,10 +2167,17 @@ def_asmword "LITCARRU8",   9,    0, litcarru8
 #   andl $~3, %esi
 #   NEXT
 
-# ( -- addr count ) \ _\"error, needed in definition of \"
+# ( -- addr count ) \ needed in definition of map\"
 #           ascii , len, flag, label
-def_asmword "_STRERROR",   9,    0, _STRerror
+def_asmword "_SERR",   5,    0, _STRerror
   dpush $errorUnknownEscape
+  call countnt
+  NEXT
+
+# ( -- addr count ) \ needed in definition of \"
+#           ascii , len, flag, label
+def_asmword "_SCERR",   6,    0, _STRcounterror
+  dpush $errorCountExceeded
   call countnt
   NEXT
 
