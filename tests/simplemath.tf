@@ -50,3 +50,11 @@ true =0    false assertEq    false =0   true assertEq
   0x 42 0x 50 >R      0x 42 assertEq
   R> 0x 50 assertEq   assertEmpty ;
 testRstack
+
+: tval 0x 12345678 ;
+\ Test DSP@ with cell and u16 size access
+0              DSP@ @              0 assertEq drop
+0x 123456      DSP@ @    0x   123456 assertEq drop
+0              DSP@ u16@           0 assertEq drop
+tval           DSP@ u16@ 0x     5678 assertEq drop
+tval        DSP@ 2+ u16@ 0x 1234     assertEq drop

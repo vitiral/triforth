@@ -65,18 +65,22 @@
 #           %eflags: we won't deal with this
 #
 # Basic types:
-#   byte: 8 bits of data, typically an unsigned number between [0, 255]
-#   ascii: a byte intended to represent an ASCII character
-#   bytes: some number of bytes arranged next to eachother, forming an "array"
-#   c8bytes: an array of bytes, first byte contains the 8bit count
-#   c16bytes: an array of bytes, the first two bytes contains the 16bit count
-#   c32bytes: an array of bytes, the first four bytes contains the 32bit count
-#   cell: 32bit (4byte) value, primary datatype for rstack and dstack
+#   SN: N bits data. S is either 'u' for unsigned data or 'i' for a
+#     signed integer data. Example: u8 is 8 bits of data, i.e. a "byte" 
+#   cell: same as u32, core datatype of rstack and dstack operations.
+#   arrSN: some type of array. For example arru8 is an array of u8 values,
+#     arru16 is u16 values, etc.
+#   carrSN: a counted array. The count value is always in the same type as unsigned type
+#     up to the size of a cell (i.e. carru16 has a 16 bit count but carru64
+#     still has a 32 bit count) 
+#   c2arrS8: an carrS8 that is counted with two bytes instead of 1.
+#   c4arrS8: an carrS8 that is counted with four bytes instead of 1.
+#   c2arrS16: an carrS16 that is counted with four bytes instead of 2.
 #   nt: name token, the POINTER to the first item in the dictionary (link)
 #   xt: execution token, the POINTER to the item in a dictionary which itself
 #       points to the code to run
-#   &XXX: reference (a.k.a pointer) to type XXX
-#   'XXX: xt of word XXX, intended to be executed
+#   &T: reference (a.k.a pointer) to type T
+#   'W: xt of word W, intended to be executed
 #
 # TODO: add addressing modes and critical instructions
 #
@@ -1700,16 +1704,16 @@ def_asmword "RSP!",   4,    0,  rstackSTORE
 # ( -- addr ) \ get the data stack pointer
 #         ascii   , len, flag, label
 def_asmword "DSP@",   4,    0, dstackFETCH
-  dpush %ebp
-  RET
+  movl %ebp, %eax
+  dpush %eax
+  NEXT
 
 # ( addr -- * ) \ set the data stack pointer
 #         ascii   , len, flag, label
 def_asmword "DSP!",   4,    0, dstackSTORE
-  movl $4, %eax
-  call checkStackSize
-  movl (%ebp), %ebp
-  RET
+  dpop %eax
+  movl %eax, %ebp
+  NEXT
 
 # ( -- u ) \ depth of the stack
 #           ascii   , len, flag, label
@@ -1745,16 +1749,33 @@ def_asmword "-!" ,  2 ,  0 ,  SUBSTORE
   subl $1, (%eax)
   NEXT
 
-# ( c addr -- ) \ stores a byte at address
+# ( u8 addr -- ) \ stores a byte at address
 #           ascii , len, flag, label
 def_callword "B!" ,  2 ,  0 ,  bSTORE
 
-# ( addr -- c ) \ fetches a byte at address
+# ( u16 addr -- ) \ store 16bit value at address
+#         ascii , len, flag, label
+def_asmword "U16!" ,  4 ,  0 ,  u16STORE
+  dpop %eax # addr
+  dpop %ebx # value
+  mov %bx, (%eax)
+  NEXT
+
+# ( addr -- u8 ) \ fetches a byte at address
 #           ascii , len, flag, label
 def_asmword "B@" ,  2 ,  0 ,  bFETCH
   dpop %eax # addr
   movl $0, %ebx
   movb (%eax), %bl
+  dpush %ebx
+  NEXT
+
+# ( addr -- u16 ) \ fetches 16bit value at address
+#         ascii , len, flag, label
+def_asmword "U16@" ,  4 ,  0 ,  u16FETCH
+  dpop %eax
+  movl $0, %ebx
+  mov (%eax), %bx
   dpush %ebx
   NEXT
 
@@ -1860,17 +1881,25 @@ def_asmword "+"    , 1  ,  0 ,  ADD
 # ( u -- u ) \ add 1
 #            ascii  , len, flag, label
 def_asmword "1+"    , 2  ,  0 ,  _1ADD
-  movl $4, %eax
-  call checkStackSize
-  addl $1, (%ebp)
+  dpop %eax
+  inc %eax
+  dpush %eax
+  NEXT
+
+# ( u -- u ) \ add 2
+#            ascii  , len, flag, label
+def_asmword "2+"    , 2  ,  0 ,  _2ADD
+  dpop %eax
+  addl $2, %eax
+  dpush %eax
   NEXT
 
 # ( u -- u ) \ add 4
 #            ascii  , len, flag, label
 def_asmword "4+"    , 2  ,  0 ,  _4ADD
-  movl $4, %eax
-  call checkStackSize
-  addl $4, (%ebp)
+  dpop %eax
+  addl $4, %eax
+  dpush %eax
   NEXT
 
 # ( a b -- a-b ) \ subtract values
@@ -1885,6 +1914,14 @@ def_asmword "-"    , 1  ,  0 ,  SUB
 def_asmword "1-"    , 2  ,  0 ,  _1SUB
   dpop %eax
   subl $1, %eax
+  dpush %eax
+  NEXT
+
+# ( u -- u ) \ sub 2
+#            ascii  , len, flag, label
+def_asmword "2-"    , 2  ,  0 ,  _2SUB
+  dpop %eax
+  subl $2, %eax
   dpush %eax
   NEXT
 
@@ -2100,6 +2137,34 @@ def_asmword "LITBYTES",   8,    0, litbytes
   andl $~3, %esi
   NEXT
 
+# ( -- arru8 count ) \ used to construct strings and other literal data, similar
+# \ to LIT above. The memory looks like this:
+# \    xt_litcarru8 | u8:count | u8 | u8 | u8 | ... | cellN
+#                 ascii, len, flag, label
+def_asmword "LITCARRU8",   9,    0, litcarru8
+  movl $0, %eax
+  movb (%esi), %al # count
+  inc %esi
+  dpush %esi  # arru8
+  dpush %eax  # count
+  addl %eax, %esi
+  addl $3, %esi  # see eax_align4 for explanation
+  andl $~3, %esi
+  NEXT
+
+# # ( -- arru8 count ) \ Same as litcarru8 except uses 16bit count.
+# # \    xt_litcarru8 | u16:count | u8 | u8 | u8 | ... | cellN
+# #                 ascii , len, flag, label
+# def_asmword "LITC2ARRU8",  10,    0, litc2arru8
+#   lodsl  # %eax=(%esi) %esi+=4, see NEXT
+#   dpush %esi  # address
+#   dpush %eax  # count
+#   # start execution after the literal bytes (aligned)
+#   addl %eax, %esi
+#   addl $3, %esi  # see eax_align4 for explanation
+#   andl $~3, %esi
+#   NEXT
+
 # ( -- addr count ) \ _\"error, needed in definition of \"
 #           ascii , len, flag, label
 def_asmword "_STRERROR",   9,    0, _STRerror
@@ -2301,11 +2366,10 @@ def_asmword "PNTLN",   5,    0, pntln
   call emit
   NEXT
 
-# ( errno -- ) \ panics immediately with the given errno
+# ( -- ) \ panics immediately with ERR_SEE_MSG
 #            ascii   , len, flag, label
 def_asmword "PANIC" ,  5 ,  0 ,  panic
-  dpop %eax
-  movl %eax, panicErr
+  movl $ERR_SEE_MSG, panicErr
   call *(panic)
 
 ####
@@ -2746,6 +2810,7 @@ def_asmword \name , \namelen , 0, \label
 .endm
 
 #         ascii  ,              len, label
+def_const "0",                    1, 0
 def_const "TRUE" ,                4, TRUE
 def_const "FALSE" ,               5, FALSE
 def_const "RMAX" ,                4, rstackMax
