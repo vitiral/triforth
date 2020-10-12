@@ -1758,7 +1758,8 @@ def_callword "B!" ,  2 ,  0 ,  bSTORE
 def_asmword "U16!" ,  4 ,  0 ,  u16STORE
   dpop %eax # addr
   dpop %ebx # value
-  mov %bx, (%eax)
+  movl %ebp, %edx # TODO: remove
+  movw %bx, (%eax)
   NEXT
 
 # ( addr -- u8 ) \ fetches a byte at address

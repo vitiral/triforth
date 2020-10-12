@@ -57,4 +57,5 @@ testRstack
 0x 123456      DSP@ @    0x   123456 assertEq drop
 0              DSP@ u16@           0 assertEq drop
 tval           DSP@ u16@ 0x     5678 assertEq drop
-tval        DSP@ 2+ u16@ 0x 1234     assertEq drop
+tval         DSP@ 2+ u16@ 0x 1234     assertEq drop
+tval DSP@ 0x F0F0 swap 2+ u16! 0x F0F05678 assertEq
