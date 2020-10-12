@@ -45,3 +45,8 @@ true =0    false assertEq    false =0   true assertEq
 0x 1 pick 0x 10 assertEq   0x 0 pick 0x 01 assertEq
 0x 42 0x 5 replace         0x 5 pick 0x 42 assertEq
 2drop 2drop 2drop
+
+: testRstack 
+  0x 42 0x 50 dumpInfo >R     0x 42 assertEq
+  R> 0x 50 assertEq   assertEmpty ;
+testRstack

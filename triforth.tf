@@ -180,9 +180,18 @@ assertEmpty -test
 
 \ #########################
 \ # Stack Functions
-: r@ ( -- u ) rsp@ @ ;
-: r@1 ( -- u ) rsp@ cell+ @ ;
+: R@ ( -- u ) rsp@ @ ;
+: R@1 ( -- u ) rsp@ cell+ @ ;
 \ : lroll ( u:x@N u:x@n-1 ... u:x@0 u:N -- u:x@N-1 ... u:x@0 u:x@N )
+
+\ TODO: don't trust rstack till I figure this out...
+\ MARKER -test
+\ : testRstack 0x 42 0x 43 0x 44 >R >R
+\   R> 0x 43 assertEq    R> 0x 44 assertEq
+\   0x 44 >R   0x 43 >R   R@ 0x 43 assertEq    R@1 0x 44 assertEq
+\   dbgexit
+\   0x 42 assertEq ;
+\ testRstack -test assertEmpty
 
 \ #########################
 \ # Strings
@@ -207,45 +216,51 @@ testCache @ @ ( value at previous here) 0x 32  assertEq
 aligned    &HERE @ 4-   testCache @ assertEq \ test: alignment moves here +4
 -test
 
-: \" IMM ( -- addr count ) 
-  \ Return the literal multiline escaped string. The string can span multiple
-  \ lines, but only explicit escaped newlines (\n) will insert newlines into
-  \ the string.  Indentation is not handled specially. Example:
+: map\" IMM ( xt -- ) \ Call an xt for each byte in a literal escaped string.
+  \ The xt needs to be of this type: ( ... b -- ... )
+  \ This is the core function used to define strings of various kinds in
+  \ typeforth.
+  \ A string can span multiple lines, but only explicit escaped newlines (\n)
+  \ will insert newlines into the string.  Indentation is not handled specially.
+  \ Example:
   \ \" this string
   \     has four spaces\" 
   \ is the same as: 
   \ \" this string    has four spaces\"
-  ' litbytes ,   &here @ ( =count-addr)  0x 0 ,
-  0x 0 \ count bytes written
-  BEGIN ( stack: count-addr count )
+  >R BEGIN \ put xt on rstack and start loop
     \ Call KEY in a loop repeatedly, leaving TRUE for UNTIL to consume in
     \ every branch except \"
     key dup '\' = IF drop ( drop '\' ) key ( get new key )
-      dup '"' = IF drop ( \" == END LOOP ) 1- ( don't count) false
-      ELSE dup [ascii] n = IF drop '\n' b,  true
-      ELSE dup [ascii] t = IF drop '\t' b,  true
-      ELSE dup '\' = IF ( '\' already on stack )  b,  true
+      dup '"' = IF drop ( \" == END LOOP )  false
+      ELSE dup [ascii] n = IF drop '\n' R> dup >R execute true
+      ELSE dup [ascii] t = IF drop '\t' R> dup >R execute true
+      ELSE dup '\' = IF ( '\' already on stack ) R> dup >R execute  true
       \ TODO: \x
       \ Unknown escape, panic with error message
-      ELSE _STRERROR pnt '\' emit emit '\n' emit ERR_SEE_MSG panic
+      ELSE >R drop _STRERROR pnt '\' emit emit '\n' emit ERR_SEE_MSG panic
       THEN THEN THEN THEN
-    ELSE dup '\n' = IF drop 1- true \ ignore newlines, don't count
-    ELSE dup '\r' = IF drop 1- true \ also ignore line-feeds
-    ELSE b,    true \ else append the character directly
+    ELSE dup '\n' = IF drop    true \ ignore newlines
+    ELSE dup '\r' = IF drop    true \ also ignore line-feeds
+    ELSE R> dup >R execute    true   \ else use byte directly
     THEN THEN THEN ( stack: count-addr count flag )
-    swap 1+ ( increment count) swap
-  UNTIL  ( stack: count-addr count )
+  UNTIL R> drop ;
+
+: _litstr ( count b -- count ) \ handle bytes from map\"
+  \ just compile into dict with b, and keep track of count.
+  b, 1+ ;
+: \" IMM 
+  ' litbytes ,   &here @ ( =count-addr)  0x 0 ,
+  0x 0 ( stack: count-addr count )
+  ' _litstr [compile] map\"  \ map\" does the string processing
   swap !   aligned ; \ update dummy count, align HERE
 
 MARKER -test
 : myTestPrint \" This is a string.\" pnt ;                  myTestPrint
 : myTestTab \" This has a\ttab.\" pnt ;                     myTestTab
-: myTestTab \" This has a\ttab.\" pnt ;                     myTestTab
 : myTestNewline \"   This has a newline.\n\" pnt ;          myTestNewline
 : myTestComplex \" This "has" \\" lots \\"\\" of stuff.\n\" pnt ;  myTestcomplex
 : myTest \" **TEST \\" string\\" complete\n\"   pnt ;         myTest assertEmpty
 -test
-
 
 \ #########################
 \ # Character Printing helpers

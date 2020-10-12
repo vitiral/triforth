@@ -60,7 +60,8 @@
 # from above 8bit: al ah  bl bh  cl ch  dl dh  none  none
 # special:  %esp: stack ptr, our return stack
 #           %ebp: base ptr, our data stack
-#           %eip: inst ptr
+#           %eip: cpu inst ptr
+#           %esi: our forth xt-inst ptr
 #           %eflags: we won't deal with this
 #
 # TODO: add addressing modes and critical instructions
