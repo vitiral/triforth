@@ -21,19 +21,19 @@
 
 # Why does this language exist?
 #
-# The first reason is because programming languages are built on too much complexity
-# today. So much complexity that most students cannot imagine how it all started. How
-# DID people program the first C compilers? Modern C compilers are written in C and
-# are so complicated (with their complex preprocessor and the amount of standards they
-# must adhere to) that they require a binary to bootstrap them, a binary which
-# is completely obtuse and immune to understanding from naive students of
-# computers like ourselves.
+# The first reason is because most useful programming languages are built on
+# too much complexity. So much complexity that most students cannot imagine how
+# it all started. How DID people program the first C compilers?  Modern C
+# compilers are written in C and are so complicated (with their complex
+# preprocessor and the amount of standards they must adhere to) that they
+# require a binary to bootstrap them, a binary which is completely obtuse and
+# immune to understanding from naive students of computers like ourselves.
 #
 # Understanding doesn't have to be so HARD. The forth compiler has a peculiar ability
-# to walk VERY early, after only a few lines of assembly.  In this tutorial we
-# will use x86 assembly to bootstrap our own forth language, called triforth
-# which is a pun from the "triforce" from the legend of Zelda. Like the
-# triforce, triforth will give us the Power to write scalable type-safe
+# to walk VERY early, after only a few hundred-ish lines of assembly.  In this
+# tutorial we will use x86 assembly to bootstrap our own forth language, called
+# triforth which is a pun from the "triforce" from the legend of Zelda. Like
+# the triforce, triforth will give us the Power to write scalable type-safe
 # computer programs, the Knowledge of the inner workings of our language and
 # the Courage to deal with the nitty-gritty low level details.
 
@@ -64,12 +64,22 @@
 #           %esi: our forth xt-inst ptr
 #           %eflags: we won't deal with this
 #
+# Basic types:
+#   byte: 8 bits of data, typically an unsigned number between [0, 255]
+#   ascii: a byte intended to represent an ASCII character
+#   bytes: some number of bytes arranged next to eachother, forming an "array"
+#   c8bytes: an array of bytes, first byte contains the 8bit count
+#   c16bytes: an array of bytes, the first two bytes contains the 16bit count
+#   c32bytes: an array of bytes, the first four bytes contains the 32bit count
+#   cell: 32bit (4byte) value, primary datatype for rstack and dstack
+#   nt: name token, the POINTER to the first item in the dictionary (link)
+#   xt: execution token, the POINTER to the item in a dictionary which itself
+#       points to the code to run
+#   &XXX: reference (a.k.a pointer) to type XXX
+#   'XXX: xt of word XXX, intended to be executed
+#
 # TODO: add addressing modes and critical instructions
 #
-# Token Types: these are the token types. See "Forth Dictionary" for more details
-# nt: name token, the POINTER to the first item in the dictionary (link)
-# xt: execution token, the POINTER to the item in a dictionary which itself
-#     points to the code to run
 
 ##############################
 # Constants

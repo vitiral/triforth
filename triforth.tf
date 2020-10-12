@@ -219,6 +219,9 @@ testCache @ b@ ( byte at previous here) 0x 32  assertEq
 aligned    &HERE @ 4-   testCache @ assertEq \ test: alignment moves here +4
 -test
 
+\ : litc8bytes ( -- addr count ) \ literal bytes with an 8bit count (<=255 bytes)
+\   R@ \ addr of next xt to "run". We will not run it as it contains our cbytes
+
 : map\" IMM ( xt -- ) \ Call an xt for each byte in a literal escaped string.
   \ The xt needs to be of this type: ( ... b -- ... )
   \ This is the core function used to define strings of various kinds in
@@ -249,13 +252,13 @@ aligned    &HERE @ 4-   testCache @ assertEq \ test: alignment moves here +4
     THEN THEN THEN ( stack: count-addr count flag )
   UNTIL R> drop ;
 
-: _litstr ( count b -- count ) \ handle bytes from map\"
+: _lits ( count b -- count ) \ handle bytes from map\"
   \ just compile into dict with b, and keep track of count.
   b, 1+ ;
 : \" IMM 
   ' litbytes ,   &here @ ( =count-addr)  0x 0 ,
   0x 0 ( stack: count-addr count )
-  ' _litstr [compile] map\"  \ map\" does the string processing
+  ' _lits [compile] map\"  \ map\" does the string processing
   swap !   aligned ; \ update dummy count, align HERE
 
 MARKER -test
@@ -268,8 +271,41 @@ MARKER -test
 : escapeTest \" \\\n\t\"    0x 3 assertEq ( count) 
   dup b@ '\'  assertEq      dup b@1  '\n' assertEq
   b@2 '\t' assertEq ;                               ( run it) escapeTest
-: pntTest \" **TEST \\" string\\" complete\n\"   pnt ;         pntTest assertEmpty
+: pntTest \" **TEST \\" string\\" complete\n\"   pnt ;        pntTest assertEmpty
 -test
+
+\ : _pntf \ ( ... b -- <character dependent> )
+\   \ consumes values on the 
+\   dup [ascii] % = IF drop key \ If % handle special
+\     dup [ascii] % IF emit     \ %% = emit %
+\   ELSE dup [ascii] s IF drop pnt  \ %s = pnt a string
+\   ELSE dup [ascii] c IF drop emit \ %c = emit a char
+\   ;
+
+: pntf\" ( ... -- ) \ Format the string to emitFd.
+  \ Format is specified using %*, where * is one of the following.
+  \ Items are consumed from the stack in the order they appear in
+  \ the string.
+  \ 
+  \   % a % character. example: %% emits %
+  \   UNIMPLEMENTED: d or i  Signed decimal integer  392
+  \   UNIMPLEMENTED: u Unsigned decimal integer  7235
+  \   UNIMPLEMENTED: o Unsigned octal  610
+  \   UNIMPLEMENTED: x Unsigned hexadecimal integer  7fa
+  \   X Unsigned hexadecimal integer (uppercase)  7FA
+  \   UNIMPLEMENTED: f Decimal floating point, lowercase 392.65
+  \   UNIMPLEMENTED: F Decimal floating point, uppercase 392.65
+  \   UNIMPLEMENTED: e Scientific notation (mantissa/exponent), lowercase  3.9265e+2
+  \   UNIMPLEMENTED: E Scientific notation (mantissa/exponent), uppercase  3.9265E+2
+  \   UNIMPLEMENTED: g Use the shortest representation: %e or %f 392.65
+  \   UNIMPLEMENTED: G Use the shortest representation: %E or %F 392.65
+  \   UNIMPLEMENTED: a Hexadecimal floating point, lowercase -0xc.90fep-2
+  \   UNIMPLEMENTED: A Hexadecimal floating point, uppercase -0XC.90FEP-2
+  \   c Character a
+  \   s String of characters  sample
+  \   UNIMPLEMENTED: p Pointer address b8000000
+  ;
+
 
 \ #########################
 \ # Character Printing helpers
