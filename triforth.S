@@ -1476,7 +1476,7 @@ dump_addr: # ( addr -- ) \ print "<addr>: "
 nt_EXIT:
   .int LINK           # link to previous (in this case 0)
   .set LINK, nt_EXIT  # set link for next word to be defined
-cstr_EXIT:
+c8bytes_EXIT:
   .byte 4       # name length
   .ascii "EXIT" # the word name
   .align 4
@@ -1490,7 +1490,7 @@ xt_EXIT:
 nt_MUL:
   .int LINK            # link to previous (in this case 0)
   .set LINK, nt_MUL  # set link for next word to be defined
-cstr_MUL:
+c8bytes_MUL:
   .byte 1       # name length
   .ascii "*"    # the word name
   .align 4
@@ -1540,7 +1540,7 @@ testDictSimple:
 nt_\label :
   .int LINK            # link to previous
   .set LINK,nt_\label  # update link to self
-cstr_\label :
+c8bytes_\label :
   .byte \namelen       # the length of the name
   .ascii "\name"       # the ascii name itself
   .align 4             # padding to next 4 byte boundary
@@ -1568,7 +1568,7 @@ def_asmword \name , \namelen , \flags , \label
 nt_\label :
   .int LINK             # link to previous
   .set LINK,nt_\label   # update link to self
-cstr_\label :
+c8bytes_\label :
   .byte \namelen        # the length of the name
   .ascii "\name"        # the ascii name itself
   .align 4              # padding to next 4 byte boundary
@@ -2130,9 +2130,9 @@ def_callword "BMOVEUPPER" , 10 ,    0, bmoveUpper
 #           ascii      , len, flag, label
 def_callword "COUNTNT" ,  7 ,  0 ,  countnt
 
-# ( addr -- addr count ) \ convert cstr (counted str) to addr count
+# ( addr -- addr count ) \ convert c8bytes (8bit counted bytes) to addr count
 #           ascii  , len, flag, label
-def_asmword "COUNT",   5,   0 , count
+def_asmword "COUNT8",   6,   0 , count8
   dpop %eax        # addr
   movl $0, %ebx
   movb (%eax), %bl # count
@@ -2377,8 +2377,13 @@ readKeyErr:
 #           ascii , len, flag, label
 def_asmword "KEY" ,   3,    0, key
   call readKey
+  cmpl $0, %eax
+  je 1f # EOF reached, interpret as "0"
   movl keyBuffer, %eax
   dpush %eax
+  NEXT
+1:
+  dpush $0
   NEXT
 
 sysopen: # %ebx:&fnameNt %ecx:intention %edx:permissions ( -- ) %eax:fd
@@ -2779,8 +2784,8 @@ testConst:
 #              ascii, len, flag, label
 def_asmword "NT>STR",   6,    0, ntTOstr
   dpop %eax            # address
-  addl $4, %eax        # address of name as cstr
-  movb (%eax), %bl     # get either cstr count or left-most F0 byte
+  addl $4, %eax        # address of name as c8bytes
+  movb (%eax), %bl     # get either c8bytes count or left-most F0 byte
   andl $F0_NAMELEN_BYTE_MASK, %ebx  # clear other flags
   addl $1, %eax        # addr=addr+1 (next byte)
   dpush %eax
@@ -2850,7 +2855,7 @@ def_asmword "ALIGN4",  6,    0, align4
 #            ascii  , len, flag, label
 def_asmword "NT>&F0",   6,    0, ntTOf0
   dpop %eax           # address of nt
-  addl $4, %eax       # start of cstr (count)
+  addl $4, %eax       # start of c8bytes (count)
   movb (%eax), %bl    # ebx=count
   andl $F0_NAMELEN_BYTE_MASK, %ebx
   # TODO: this actually DOESN'T work with F0 strategy.
@@ -2880,7 +2885,7 @@ def_asmword "NT>XT",   5,    0, ntTOxt
 #             ascii  , len, flag, label
 def_asmword "NT>NAME",   9,    0, ntTOname
   addl $4, (%ebp) # name is directly after nt
-  callXt $xt_count
+  callXt $xt_count8
   NEXT
 
 # ( nt -- xt ) \ get "code field address" (xt) from nt
@@ -2924,9 +2929,9 @@ xt_test_ntTOother_constructed1: # aligned name
 xt_test_ntTOother:
 .int DOCOL
 flags:
-# already aligned, cstr=4bytes
+# already aligned, c8bytes=4bytes
 .int xt_lit, nt_lit, xt_ntTOf0, xt_lit, flags_lit, xt_assertEq
-# flags: not aligned, cstr=5bytes
+# flags: not aligned, c8bytes=5bytes
 .int xt_lit, nt_word, xt_ntTOf0, xt_lit, flags_word, xt_assertEq
 # nt>xt: already aligned
 .int xt_lit, nt_lit, xt_ntTOxt, xt_lit, xt_lit, xt_assertEq
@@ -3026,11 +3031,11 @@ xt_testFind:
 # Cannot find word which DNE
 .int xt_lit, testAbcStr, xt_countnt, xt_find, xt_lit, 0, xt_assertEq
 # Find SWAP
-.int xt_lit, cstr_swap, xt_count, xt_find, xt_lit, nt_swap, xt_assertEq
+.int xt_lit, c8bytes_swap, xt_count8, xt_find, xt_lit, nt_swap, xt_assertEq
 # Find EXIT
-.int xt_lit, cstr_EXIT, xt_count, xt_find, xt_lit, nt_EXIT, xt_assertEq
+.int xt_lit, c8bytes_EXIT, xt_count8, xt_find, xt_lit, nt_EXIT, xt_assertEq
 # Find 0x
-.int xt_lit, cstr__0x, xt_count, xt_find, xt_lit, nt__0x, xt_assertEq
+.int xt_lit, c8bytes__0x, xt_count8, xt_find, xt_lit, nt__0x, xt_assertEq
 .int xt_lit, testFindStr, xt_countnt, xt_pntTestPass
 .int xt_EXIT
 .align 4
@@ -3058,7 +3063,7 @@ def_asmword "CREATE" ,  6 ,    0 , create
   movl %edi, var_REFlatest   # dict: update LATEST to this word
   dpush %edi              # add nt onto the stack (to return)
   call rrot               # ( nt addr namelen )
-  addl $4, %edi           # go to where cstr is stored
+  addl $4, %edi           # go to where c8bytes is stored
   movl (%ebp), %ecx       # ecx=namelen
   movb %cl, (%edi)        # dict: namelen
   inc %edi
@@ -3216,7 +3221,7 @@ xt_testCOLON:
 # Make sure the nt strings match
 .int xt_dup, xt_ntTOstr, xt_lit, testNewDefinedWordStr, xt_countnt
 .int   xt_ceq, xt_assertTrue
-# Make sure str len is as expected in cstr
+# Make sure str len is as expected in c8bytes
 .int xt_dup, xt_inc4, xt_bFETCH, xt_lit, 14, xt_assertEq
 # Make sure str len is as expected in F0
 .int xt_dup, xt_ntTOf0, xt_inc4, xt_dec, xt_bFETCH, xt_lit, 14, xt_assertEq
