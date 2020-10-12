@@ -232,16 +232,16 @@ aligned    &HERE @ 4-   testCache @ assertEq \ test: alignment moves here +4
     \ every branch except \"
     key dup '\' = IF drop ( drop '\' ) key ( get new key )
       dup '"' = IF drop ( \" == END LOOP )  false
-      ELSE dup [ascii] n = IF drop '\n' R> dup >R execute true
-      ELSE dup [ascii] t = IF drop '\t' R> dup >R execute true
-      ELSE dup '\' = IF ( '\' already on stack ) R> dup >R execute  true
+      ELSE dup [ascii] n = IF drop '\n' R@ execute true
+      ELSE dup [ascii] t = IF drop '\t' R@ execute true
+      ELSE dup '\' = IF ( '\' already on stack ) R@ execute  true
       \ TODO: \x
       \ Unknown escape, panic with error message
       ELSE >R drop _STRERROR pnt '\' emit emit '\n' emit ERR_SEE_MSG panic
       THEN THEN THEN THEN
     ELSE dup '\n' = IF drop    true \ ignore newlines
     ELSE dup '\r' = IF drop    true \ also ignore line-feeds
-    ELSE R> dup >R execute    true   \ else use byte directly
+    ELSE R@ execute    true   \ else use byte directly
     THEN THEN THEN ( stack: count-addr count flag )
   UNTIL R> drop ;
 
