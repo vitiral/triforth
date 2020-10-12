@@ -2078,7 +2078,6 @@ def_asmword "LIT",    3,   0,    lit
 # \    xt_litbytes | len | cell0 | cell1 | cell2 | ... | cellN
 #               ascii , len, flag, label
 def_asmword "LITBYTES",   8,    0, litbytes
-  call dumpInfo  # TODO: remove
   lodsl  # %eax=(%esi) %esi+=4, see NEXT
   dpush %esi  # address
   dpush %eax  # count
@@ -2086,7 +2085,6 @@ def_asmword "LITBYTES",   8,    0, litbytes
   addl %eax, %esi
   addl $3, %esi  # see eax_align4 for explanation
   andl $~3, %esi
-  movl $testLitBytes_cont, %ebx
   NEXT
 
 # ( -- addr count ) \ _\"error, needed in definition of \"

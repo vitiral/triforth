@@ -227,30 +227,31 @@ aligned    &HERE @ 4-   testCache @ assertEq \ test: alignment moves here +4
   \     has four spaces\" 
   \ is the same as: 
   \ \" this string    has four spaces\"
-  ' litbytes ,   &here @    0x 0 ,  \ compile litbytes with dummy length
+  ' litbytes ,   &here @ ( =count-addr)  0x 0 ,
   0x 0 \ count bytes written
-  BEGIN 
+  BEGIN ( stack: count-addr count )
     \ Call KEY in a loop repeatedly, leaving TRUE for UNTIL to consume in
     \ every branch except \"
     key dup '\' = IF drop ( drop '\' ) key ( get new key )
       dup '"' = IF drop ( \" == END LOOP )            false
       ELSE dup [ ascii n ] LITERAL = IF drop '\n' b,  true
       ELSE dup [ ascii t ] LITERAL = IF drop '\t' b,  true
-      ELSE dup '\' = IF ( '\' already on stack ) b,   true
+      ELSE dup '\' = IF ( '\' already on stack )  b,  true
       \ TODO: \x
       \ Unknown escape, panic with error message
       ELSE _STRERROR pnt '\' emit emit '\n' emit ERR_SEE_MSG panic
       THEN THEN THEN THEN
-    ELSE dup '\n' = IF drop true \ ignore newlines
-    ELSE dup '\r' = IF drop true \ also ignore line-feeds
+    ELSE dup '\n' = IF drop 1- true \ ignore newlines, don't count
+    ELSE dup '\r' = IF drop 1- true \ also ignore line-feeds
     ELSE b,    true \ else append the character directly
-    THEN THEN THEN
+    THEN THEN THEN ( stack: count-addr count flag )
     swap 1+ ( increment count) swap
-  UNTIL 
+  UNTIL  ( stack: count-addr count )
   swap !   aligned ; \ update dummy count, align HERE
 
 MARKER -test
 : myTestPrint \" This is a string It has a newline and a tab.\"    \ "
+  dumpInfo
   pnt ;
 myTestPrint
 -test
