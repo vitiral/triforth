@@ -26,6 +26,9 @@
 : ')' [ ascii ) ] LITERAL ; \ )
 : '"' [ ascii " ] LITERAL ; \ "
 : 'A' [ ascii A ] LITERAL ; \ A
+: 'Z' [ ascii Z ] LITERAL ; \ A
+: 'a' [ ascii a ] LITERAL ; \ A
+: 'z' [ ascii z ] LITERAL ; \ A
 : '0' [ ascii 0 ] LITERAL ; \ 0
 : '-' [ ascii - ] LITERAL ; \ -
 : '.' [ ascii . ] LITERAL ; \ .
@@ -69,7 +72,6 @@ VARIABLE testCache 0x 0 , 0x 0 , 0x 0 , \ temp storage for tests
 0x 2 align 0x 4 assertEq     0x 4 align 0x 4 assertEq
 0x 11 align 0x 14 assertEq   0x 7 align 0x 8 assertEq
 assertEmpty
-
 
 \ MARKER allows us to define a checkpoint to forget dictionary items. It has
 \ many uses, but for us right now the main one is we can now define tests,
@@ -250,10 +252,8 @@ aligned    &HERE @ 4-   testCache @ assertEq \ test: alignment moves here +4
   swap !   aligned ; \ update dummy count, align HERE
 
 MARKER -test
-: myTestPrint \" This is a string.\"
-  dumpInfo
-  pnt ;
-myTestPrint
+: myTestPrint \" This is a string.\" pnt ;            myTestPrint
+\ : myTestNewline \"   This has a newline.\n\" pnt ;    myTestNewline
 -test
 
 \ #########################

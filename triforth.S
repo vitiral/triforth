@@ -258,6 +258,7 @@ testAbcStr: .ascii "abc\0"
 testBcdStr: .ascii "bcd\0"
 testCreatedWord: .ascii "createdword\0"
 testCreatedWordUpper: .ascii "CREATEDWORD\0"
+testCreatedWordDifferent: .ascii "creat3dword\0"
 test3Str: .ascii "3\0"
 test3CStr: .ascii "3C\0"
 test42Str: .ascii "42\0"
@@ -299,6 +300,7 @@ testSuite: # ( -- )
   call testNEXT
   call testEXIT
   call testDictSimple
+  call testBytesEqNoCase
   call assertCleanState
 
   call testDictBuiltin
@@ -2179,6 +2181,8 @@ compare_done:
 # ( addr1 count1 addr2 count2 -- flag ) \ return whether bytes1==bytes2
 #         ascii  , len, flag, label
 def_asmword "CEQ",   3,   0 , ceq
+  movl $16, %eax
+  call checkStackSize
   movl (%ebp), %eax
   cmp %eax, 8(%ebp)  # cmp count1 to count2
   jne ceq_ne
@@ -2189,6 +2193,68 @@ ceq_ne:
   call _4drop
   dpush $FALSE
   NEXT
+
+# ( addr1 count1 addr2 count2 -- flag )
+# \ return whether bytes1==bytes2 with case ignored
+#         ascii  , len, flag, label
+def_asmword "BYTESEQNOCASE", 9, 0, bytesEqNoCase
+  movl $16, %eax
+  call checkStackSize
+  movl (%ebp), %eax
+  cmp %eax, 8(%ebp)  # cmp count1 to count2
+  jne byteseq_igcase_ne
+  movl 4(%ebp), %ecx  # addr2
+  movl 12(%ebp), %eax # addr1
+  movl $0, %edi  # index
+byteseq_igcase_loop:
+  cmpl %edi, (%ebp)
+  je byteseq_igcase_eq # reached count bytes, equal
+  movb (%eax,%edi,1), %bl # move to bl, convert>upper, move to bh
+  call bl_toupper
+  movb %bl, %bh
+  movb (%ecx,%edi,1), %bl # move to bl, convert>upper, cmp w/bh
+  call bl_toupper
+  cmpb %bl, %bh
+  jne byteseq_igcase_ne
+  inc %edi
+  jmp byteseq_igcase_loop
+byteseq_igcase_ne:
+  call _4drop
+  dpush $FALSE
+  NEXT
+byteseq_igcase_eq:
+  call _4drop
+  dpush $TRUE
+  NEXT
+
+testBytesEqNoCase:
+  dpush $testCreatedWord
+  call countnt
+  call _2dup
+  callXt $xt_bytesEqNoCase
+  dpop %eax
+  movl $TRUE, %ebx
+  call assertEaxEbxEq
+
+  dpush $testCreatedWord
+  call countnt
+  dpush $testCreatedWordUpper
+  call countnt
+  callXt $xt_bytesEqNoCase
+  dpop %eax
+  movl $TRUE, %ebx
+  call assertEaxEbxEq
+
+  dpush $testCreatedWord
+  call countnt
+  dpush $testCreatedWordDifferent
+  call countnt
+  callXt $xt_bytesEqNoCase
+  dpop %eax
+  movl $FALSE, %ebx
+  call assertEaxEbxEq
+  
+  ret
 
 # ( addr count -- addr count ) \ remove trailing spaces
 #               ascii  , len, flag, label
@@ -2423,7 +2489,6 @@ word_loop:
   cmpb $' ', %bl 
   jle word_ret_maybe
   # move byte uppercased into buffer
-  call bl_toupper
   movl (%ebp), %eax  # count
   addl $wordBuffer, %eax
   movb %bl, (%eax)
@@ -2477,7 +2542,7 @@ testWord_assert0x: # ( addr count )
   callXt $xt_assertEq # 1
   addl $1, (%ebp) # add 1 to addr since count=2
   callXt $xt_bFETCH
-  dpush $'X'
+  dpush $'x'
   callXt $xt_assertEq # 2
   ret
 
@@ -2525,6 +2590,7 @@ def_asmword "ASCII",   5,    0, ascii
   movl $0, %ebx  # zero ebx and move ascii into bl
   movb (%eax), %bl
   dpush %ebx     # push byte on stack
+  call dumpInfo
   NEXT
 1:
   movl $ERR_INVALID_CHAR, panicErr
@@ -2933,9 +2999,9 @@ find_loop:
   dpush %ebx # ( nt addrf countf addrf countf nt )
   callXt $xt_ntTOstr   # ( nt -- addr count )
 
-  callXt $xt_ceq       # find if strings are equal
-  dpop %eax            # if equal, return nt
-  cmp $TRUE, %eax      # stack: ( nt addrf countf )
+  callXt $xt_bytesEqNoCase  # find if strings are equal
+  dpop %eax                 # if equal, return nt
+  cmp $TRUE, %eax           # stack: ( nt addrf countf )
   je find_found
   jmp find_next
 find_found:
@@ -3202,7 +3268,7 @@ def_doword "IMM",   3, FR_TIME_IMM, imm
 # ( -- xt ) \ Put the xt of the next word onto the stack.
 #          ascii, len, flag, label
 def_asmword "'",   1,    0, xt
-  lodsl       # do what is in NEXT
+  lodsl  # %eax=(%esi) %esi+=4 -- see NEXT
   dpush %eax  # but push xt on stack instead of jmp *(...)
   NEXT
 
