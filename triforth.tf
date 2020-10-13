@@ -7,11 +7,11 @@
 
 \ ########################
 \ # Compilation Helpers: these help us create words which compile other words.
+: ['] IMM \ immediately get the xt of the next word and put on stack
+  word find nt>xt ;
 : [compile] IMM \ ( -- ) immediately compile the next word
-  \ This allows you to easily compile IMM words into other words, or compile
-  \ words during [ runstate ]
-  word find nt>xt \ get xt for next word
-  , ;             \ and compile it
+  word find nt>xt , ;
+
 
 \ ########################
 \ # Literals
@@ -105,7 +105,7 @@ testCache @1  &latest @ assertEq assertEmpty
   \ <ifblock> is executed. If there is an ELSE block, it will otherwise be executed.
   ' 0BRANCH , \ compile 0BRANCH, which branches to next literal if 0
   &here @     \ preserve the current location for THEN to consume
-  0x 0 , ;       \ compile a dummy offset to be overriden by THEN
+  0x 0 , ;       \ compile a tmp offset to be overriden by THEN
 : UNLESS IMM ' not ,   [compile] IF ; \ opposite of IF
 
 : THEN IMM \ ( addr -- ) Follows from IF or ELSE
@@ -118,7 +118,7 @@ testCache @1  &latest @ assertEq assertEmpty
   ' BRANCH , \ compile definite branch. IF was nonzero this will execute after
              \ its block
   &here @ swap \ store the current location on the stack and move to 2nd item
-  0x 0 , \ put a dummy location for THEN to store to. Stack: ( elseaddr ifaddr )
+  0x 0 , \ put a tmp location for THEN to store to. Stack: ( elseaddr ifaddr )
   [COMPILE] THEN ; \ THEN consumes ifaddr to jump right here IF 0
 
 MARKER -test
@@ -149,7 +149,7 @@ MARKER -test
 assertEmpty -test
 
 : WHILE IMM \ BEGIN ... ( flag ) WHILE ... REPEAT loop while flag<>0
-  [compile] IF ; \ create a branch with dummy offset and push dummy addr under
+  [compile] IF ; \ create a branch with tmp offset and push tmp addr under
 : REPEAT IMM swap  \ swap so beginaddr is top, followed by whileaddr
   [compile] AGAIN  \ if this is reached, unconditional jump to BEGIN
   [compile] THEN ; \ also, modify WHILE to branch outside loop IF 0
@@ -222,8 +222,10 @@ aligned    &HERE @ 4-   testCache @ assertEq \ test: alignment moves here +4
 \ : litc8bytes ( -- addr count ) \ literal bytes with an 8bit count (<=255 bytes)
 \   R@ \ addr of next xt to "run". We will not run it as it contains our cbytes
 
-: map\" IMM ( xt -- ) \ Call an xt for each byte in a literal escaped string.
-  \ The xt needs to be of this type: ( ... b -- ... )
+: map\" ( xt -- ) \ Call an xt for each byte in a literal escaped string.
+  \ The xt needs to be of this type: ( ... u8 bool:escaped -- ... )
+  \ where "escaped" lets the xt know if the character was escaped or not.
+  \
   \ This is the core function used to define strings of various kinds in
   \ typeforth.
   \ A string can span multiple lines, but only explicit escaped newlines (\n)
@@ -239,30 +241,28 @@ aligned    &HERE @ 4-   testCache @ assertEq \ test: alignment moves here +4
     \ every branch except \"
     key dup '\' = IF drop ( drop '\' ) key ( get new key )
       dup '"' = IF drop ( \" == END LOOP )  false
-      ELSE dup [ascii] n = IF drop '\n' R@ execute true
-      ELSE dup [ascii] t = IF drop '\t' R@ execute true
-      ELSE dup '\' = IF ( '\' already on stack ) R@ execute  true
-      \ TODO: \x
-      \ Unknown escape, panic with error message
-      ELSE >R drop _SERR pnt '\' emit emit '\n' emit panic
+      ELSE dup [ascii] n = IF drop '\n' false R@ execute  true
+      ELSE dup [ascii] t = IF drop '\t' false R@ execute  true
+      ELSE dup '\' = IF ( '\' already on stack ) false R@ execute  true
+      ELSE ( unknown escape: pass to function) true R@ execute  true
       THEN THEN THEN THEN
     ELSE dup '\n' = IF drop    true \ ignore newlines
     ELSE dup '\r' = IF drop    true \ also ignore line-feeds
-    ELSE R@ execute    true   \ else use byte directly
+    ELSE false R@ execute    true   \ else use byte directly
     THEN THEN THEN ( stack: count-addr count flag )
   UNTIL R> drop ;
 
+: _litsStart ( -- addr-count count ) \ Create tmp string literal
+  ' litcarru8 ,   &here @ ( =count-addr) 0 b, ( =tmp-count) 0 ( =count) ;
+: _litsFinish ( addr-count count ) \ update tmp count, align HERE
+  \ TODO: support count [256,u16MAX] with litc2arru8
+  dup 0x 255 > IF _SCERR pntln panic THEN 
+  swap b! ( update tmpcount)  aligned ;
 : _lits ( count b -- count ) \ handle bytes from map\"
   \ just compile into dict with b, and keep track of count.
+  IF ( unknown escape) _SERR pnt '\' emit emit '\n' emit panic THEN
   b, 1+ ;
-: \" IMM 
-  \ compile litcarru8 and a dummy byte-count, keep track of
-  \ ( count-addr count )
-  ' litcarru8 ,   &here @ ( =count-addr)  0 b,  0
-  ' _lits [compile] map\"  \ map\" does the string processing
-  \ TODO: support count [256,u16MAX] with litc2arru8
-  dup 0x 255 > IF _SCERR pntln panic THEN
-  swap b!   aligned ; \ update dummy count, align HERE
+: \" IMM    _litsStart   ' _lits map\"    _litsFinish ; 
 
 MARKER -test
 : strTest \" str\"          0x 3 assertEq ( count) 
@@ -277,37 +277,41 @@ MARKER -test
 : pntTest \" **TEST \\" string\\" complete\n\"   pnt ;        pntTest assertEmpty
 -test
 
-\ : _pntf \ ( ... b -- <character dependent> )
-\   \ consumes values on the 
-\   dup [ascii] % = IF drop key \ If % handle special
-\     dup [ascii] % IF emit     \ %% = emit %
-\   ELSE dup [ascii] s IF drop pnt  \ %s = pnt a string
-\   ELSE dup [ascii] c IF drop emit \ %c = emit a char
-\   ;
+\ exec\" function allows executing words in the context of strings. Each string
+\ will be executed given the provided xt and any included "$NAME " will be executed
+\ in this context. This allows for arbitrary behavior like printing to stdout or
+\ writing to a file, etc.
+\ Note: the space (or other whitespace) at the end of "$NAME " is consumed and
+\ is necessary. When this function encounters a $ it
+\ simply does  WORD FIND NT>XT  to get the xt. WORD consumes the extra space.
+\ Note: $ can be escaped with \$
 
-: pntf\" ( ... -- ) \ Format the string to emitFd.
-  \ Format is specified using %*, where * is one of the following.
-  \ Items are consumed from the stack in the order they appear in
-  \ the string.
-  \ 
-  \   % a % character. example: %% emits %
-  \   UNIMPLEMENTED: d or i  Signed decimal integer  392
-  \   UNIMPLEMENTED: u Unsigned decimal integer  7235
-  \   UNIMPLEMENTED: o Unsigned octal  610
-  \   UNIMPLEMENTED: x Unsigned hexadecimal integer  7fa
-  \   X Unsigned hexadecimal integer (uppercase)  7FA
-  \   UNIMPLEMENTED: f Decimal floating point, lowercase 392.65
-  \   UNIMPLEMENTED: F Decimal floating point, uppercase 392.65
-  \   UNIMPLEMENTED: e Scientific notation (mantissa/exponent), lowercase  3.9265e+2
-  \   UNIMPLEMENTED: E Scientific notation (mantissa/exponent), uppercase  3.9265E+2
-  \   UNIMPLEMENTED: g Use the shortest representation: %e or %f 392.65
-  \   UNIMPLEMENTED: G Use the shortest representation: %E or %F 392.65
-  \   UNIMPLEMENTED: a Hexadecimal floating point, lowercase -0xc.90fep-2
-  \   UNIMPLEMENTED: A Hexadecimal floating point, uppercase -0XC.90FEP-2
-  \   c Character a
-  \   s String of characters  sample
-  \   UNIMPLEMENTED: p Pointer address b8000000
-  ;
+\ The exec functions Consume the values from map\" and behaves appropriately.
+\ most values will call _lits, since we just want to compile them and inc
+\ count. However, formatting calls require: 
+
+: _exec \ ( xtStr addr-count count u8 unknown-escaped -- xtStr addr-count count )
+  IF ( handle unknown escape) 
+    dup [ascii] $ = IF false _lits \ if \$ pass as known $
+    ELSE true _lits \ else pass to _lits as unknown, which panics
+    THEN EXIT
+  THEN 
+  dup [ascii] $ = IF
+    \ - Finsh the previous litstr
+    \ - Compile the xt to run on litstrings into the word
+    \ - exec|compile the xt specified in the string
+    \ - start a new litstr
+    drop ( drop key) _litsFinish    dup ( =xtStr) exec|compile
+    word ( word from STRING) find nt>xt exec|compile   _litsStart ( xtStr addr-count count)
+    \ TODO: support "$( any arbitrary forth code ) "
+  ELSE false _lits THEN ;
+
+: exec\" IMM ( xtStr -- )
+  _litsStart   ' _exec    map\"  _litsFinish   ( xtStr) ,  ;
+
+
+: testExec \" World\"   ['] pnt exec\" Hello $pnt !\n\"  ;
+testExec
 
 
 \ #########################

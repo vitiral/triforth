@@ -132,6 +132,7 @@
 .equ ERR_INVALID_FLAG,0x310
 .equ ERR_INVALID_CHAR,0x311
 .equ ERR_STACK_NOT_EMPTY,0x312
+.equ ERR_EMIT_ERR,0x313
 
 .equ FALSE, 0
 .equ TRUE, -1
@@ -1570,7 +1571,7 @@ word_\label :
 # Since we have already written so many of the funcitons we need, we will write
 # a second macro. All it does is call the function we have already written.
 
-.macro def_callword name, namelen, flags=0, label
+.macro def_callword name, namelen, flags, label
 def_asmword \name , \namelen , \flags , \label
   call \label
   NEXT
@@ -2206,6 +2207,24 @@ testLitbytes:
 #           ascii    , len, flag, label
 def_callword "BMOVE" ,  5 ,  0 ,  bmove
 
+# ( src dst count -- ) \ Moves bytes from src to dst starting at right-most bytes
+#           ascii    , len, flag, label
+def_asmword "BMOVE>",   6,   0 , bmoveRIGHT
+  # Forth BMOVE, move count bytes from addr1 -> addr2.
+  dpop %edi # count/index
+  dpop %ecx # addr2
+  movl %eax, %edi  # index
+  cmp $0, %edi # if count=0 exit
+  je 2f
+  dec %edi
+1:
+  movb (%ebx,%edi,1), %dl
+  movb %dl, (%ecx,%edi,1)
+  dec %edi
+  jnz 1b
+2:
+  ret
+
 # ( src dst count -- ) \ Moves bytes from src to dst
 #                ascii    , len, flag, label
 def_callword "BMOVEUPPER" , 10 ,    0, bmoveUpper
@@ -2454,6 +2473,7 @@ readKey: # ( -- ) \ reads a byte into keyBuffer
   ret
 readKeyErr:
   movl %eax, panicErr
+  movl $ERR_EMIT_ERR, panicErr
   call *(panic)
   jmp unreachable
 
@@ -3256,14 +3276,15 @@ def_asmword "REQUIREEMPTY",  12,    0, requireEmpty
   jne 1f
   NEXT
 1:
+  call dbgexit
   movl $ERR_STACK_NOT_EMPTY, panicErr
   call *(panic)
 
 # ( -- ) \ end compilation from ":"
 #      ascii  , len,        flag, label
 def_doword ";",   1, FR_TIME_IMM, SEMICOLON
-  .int xt_lit, xt_EXIT, xt_pushDict  # compile EXIT
   .int xt_requireEmpty
+  .int xt_lit, xt_EXIT, xt_pushDict  # compile EXIT
   .int xt_staterun # [ go back to runmode
   .int xt_EXIT
 
@@ -3386,13 +3407,12 @@ def_asmword "EXECUTE",   7,    0, execute
   call _callXt # expects %eax=xt
   NEXT
 
-execOrCompile: # ( nt -- ??? ) \ Execute or compile a word based on STATE+FR_TIME
+# ( xt -- ??? ) \ exec or compile the given xt given STATE and the xt's TIME_IMM
+#                ascii, len, flag, label
+def_callword "EXEC|COMPILE",   12,    0, execORcompile
+execORcompile:
   movl $4, %eax
   call checkStackSize
-  cmp $0, (%ebp) # if nt is 0 then error
-  je eorc_err_noword
-  callXt $xt_ntTOxt
-
   # Check if state = 0 (executing)
   cmpl $0, var_REFstate
   je eorc_exec
@@ -3414,9 +3434,6 @@ eorc_exec:
   dpop %eax
   call _callXt
   ret
-eorc_err_noword:
-  movl $ERR_WORD_NOT_FOUND, panicErr
-  call *(panic)
 eorc_err_badflag:
   movl $ERR_INVALID_FLAG, panicErr
   call *(panic)
@@ -3436,11 +3453,17 @@ interpret_loop:
   cmp $0, (%ebp) # if count == 0, exit
   je interpret_next
   callXt $xt_find
-  call execOrCompile
+  cmp $0, (%ebp) # if nt is 0 then error
+  je interpret_err_noword
+  callXt $xt_ntTOxt
+  call execORcompile
   jmp interpret_loop
 interpret_next:
   call _2drop
   NEXT
+interpret_err_noword:
+  movl $ERR_WORD_NOT_FOUND, panicErr
+  call *(panic)
 
 .align 4
 xt_testInterpret_theAnswer:
