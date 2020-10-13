@@ -318,3 +318,13 @@ testExec
 \ # Character Printing helpers
 \ : cr      '\n' emit ;   \ print carriage return a.k.a newline
 \ : space   bl emit ;     \ print space
+
+\ TODO next: 
+\ - create indirection for (syswrite, sysread, emit, readKey)
+\ - create &'NAME variables to modify the above in forth, as well as &'PANIC
+\ - Allow core XXX\" types to operate at runtime. \" will write to ioBuffer
+\   (rename iob, iobPush, etc), pnt\" will directly emit characters, etc
+\ - have readKey keep track of current line. Add &LINENO, &FNAME, and &MODID 
+\   variables.
+\ - create better panic: rstack printer with name lookup, etc
+
