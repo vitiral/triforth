@@ -225,7 +225,7 @@ aligned    &HERE @ 4-   testCache @ assertEq \ test: alignment moves here +4
 : map\" ( xt -- ) \ Call an xt for each byte in a literal escaped string.
   \ The xt needs to be of this type: ( ... u8 bool:escaped -- ... )
   \ where "escaped" lets the xt know if the character was escaped or not.
-  \
+  \ 
   \ This is the core function used to define strings of various kinds in
   \ typeforth.
   \ A string can span multiple lines, but only explicit escaped newlines (\n)
@@ -237,19 +237,13 @@ aligned    &HERE @ 4-   testCache @ assertEq \ test: alignment moves here +4
   \ \" this string    has four spaces\"
   \ See the tests for more examples.
   >R BEGIN \ put xt on rstack and start loop
-    \ Call KEY in a loop repeatedly, leaving TRUE for UNTIL to consume in
-    \ every branch except \"
-    key dup '\' = IF drop ( drop '\' ) key ( get new key )
-      dup '"' = IF drop ( \" == END LOOP )  false
-      ELSE dup [ascii] n = IF drop '\n' false R@ execute  true
-      ELSE dup [ascii] t = IF drop '\t' false R@ execute  true
-      ELSE dup '\' = IF ( '\' already on stack ) false R@ execute  true
-      ELSE ( unknown escape: pass to function) true R@ execute  true
-      THEN THEN THEN THEN
-    ELSE dup '\n' = IF drop    true \ ignore newlines
-    ELSE dup '\r' = IF drop    true \ also ignore line-feeds
-    ELSE false R@ execute    true   \ else use byte directly
-    THEN THEN THEN ( stack: count-addr count flag )
+    \ Call KEY in a loop repeatedly until \" -- passing each character onto xt
+    key dup '\' = IF drop key ( drop '\' and get new)
+      dup '"' = IF drop false ( =end loop)
+      ELSE true ( =escaped) R@ execute  true
+      THEN
+    ELSE false ( =escaped) R@ execute   true
+    THEN ( stack: count-addr count flag )
   UNTIL R> drop ;
 
 : _litsStart ( -- addr-count count ) \ Create tmp string literal
@@ -258,10 +252,18 @@ aligned    &HERE @ 4-   testCache @ assertEq \ test: alignment moves here +4
   \ TODO: support count [256,u16MAX] with litc2arru8
   dup 0x 255 > IF _SCERR pntln panic THEN 
   swap b! ( update tmpcount)  aligned ;
-: _lits ( count b -- count ) \ handle bytes from map\"
-  \ just compile into dict with b, and keep track of count.
-  IF ( unknown escape) _SERR pnt '\' emit emit '\n' emit panic THEN
-  b, 1+ ;
+: _lits ( count b bool:escape -- count ) \ handle bytes from map\"
+  \ Compiles relevant characters, checks escape validity.
+  swap \ check for ignored characters
+  dup '\n' = IF 2drop EXIT THEN    \ ignore newlines and "\\\n"
+  dup '\r' = IF 2drop EXIT THEN    \ ignore line-feeds and "\\\r"
+  swap IF \ escaped character, convert to known character or panic
+      dup [ascii] n =       IF drop '\n'
+      ELSE dup [ascii] t =  IF drop '\t'
+      ELSE dup '\' =        IF ( '\' literal)
+      ELSE ( unknown escape) _SERR pnt '\' emit emit '\n' emit panic
+      THEN THEN THEN
+  THEN   b, ( <-compile byte) 1+ ( <-inc count) ;
 : \" IMM    _litsStart   ' _lits map\"    _litsFinish ; 
 
 MARKER -test
@@ -310,8 +312,8 @@ MARKER -test
   _litsStart   ' _exec    map\"  _litsFinish   ( xtStr) ,  ;
 
 
-: testExec \" World\"   ['] pnt exec\" Hello $pnt !\n\"  ;
-testExec
+MARKER -test
+: testExec \" World\"   ['] pnt exec\" Hello $pnt !\n\"  ; testExec -test
 
 
 \ #########################
