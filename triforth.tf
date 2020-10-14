@@ -189,8 +189,8 @@ assertEmpty -test
 \ the return stack is corrupted by executing them.
 : R@ ( -- u ) IMM  compile, rsp@   compile, @ ;
 : R@1 ( -- u ) IMM compile, rsp@   compile, cell+   compile, @ ;
-: >2R ( u:a u:b -- ) IMM compile, swap  compile, >R  compile, >R ;
-: 2R> ( -- u:a u:b ) IMM compile, R>  compile, R>  compile, swap ;
+: >2R ( u:a u:b -- ) IMM compile, swap  compile, >R  compile, >R ; \ R: ( -- a b)
+: 2R> ( -- u:a u:b ) IMM compile, R>  compile, R>  compile, swap ; \ R: ( a b -- )
 \ : lroll ( u:x@N u:x@n-1 ... u:x@0 u:N -- u:x@N-1 ... u:x@0 u:x@N )
 
 MARKER -test
@@ -198,8 +198,9 @@ assertEmpty
 : testR@ 0x 42 >R   r@ 0x 42 assertEq    R> 0x 42 assertEq ;
 : testR@1 0x 42 >R 0x 43 >R  r@ 0x 43 assertEq    r@1 0x 42 assertEq
   R> 0x 43 assertEq   R> 0x 42 assertEq ;
-: test>2R 0x 42 0 >2R   R@ 0x 42 assertEq  R@1 0 assertEq
-testR@ testR@1 assertEmpty -test
+: test>2R 0x 42 0  >2R   R@ 0 assertEq  R@1 0x 42 assertEq
+          2R>   0 asserteq   0x 42 assertEq ;
+testR@ testR@1 test>2R assertEmpty -test
 
 \ #########################
 \ # Strings

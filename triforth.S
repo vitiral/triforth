@@ -132,7 +132,8 @@
 .equ ERR_INVALID_FLAG,0x310
 .equ ERR_INVALID_CHAR,0x311
 .equ ERR_STACK_NOT_EMPTY,0x312
-.equ ERR_EMIT_ERR,0x313
+.equ ERR_STATE_INCORRECT,0x313
+.equ ERR_EMIT_ERR,0x314
 
 .equ FALSE, 0
 .equ TRUE, -1
@@ -3242,10 +3243,31 @@ def_doword "CREATEWORD",  10,    0, createWord
   .int xt_STORE # compile DOCOl into xt
   .int xt_EXIT
 
+# ( -- ) \ require the state to be in run mode
+#                ascii  , len, flag, label
+def_asmword "REQUIRERUN",  10,    0, requireRun
+  cmp $0, var_REFstate
+  jne 1f
+  NEXT
+1:
+  movl $ERR_STATE_INCORRECT, panicErr
+  call *(panic)
+
+# ( -- ) \ require the state to be in compile mode
+#                 ascii  , len, flag, label
+def_asmword "REQUIRECOMP",  11,    0, requireComp
+  cmp $0, var_REFstate
+  je 1f
+  NEXT
+1:
+  movl $ERR_STATE_INCORRECT, panicErr
+  call *(panic)
+
 # ( -- ) \ The forth ":" to define a new word
 #      ascii  , len, flag, label
 def_doword ":",   1,    0, COLON
   # Create the next word and set correct xt
+  .int xt_requireRun
   .int xt_createWord
   .int xt_statecompile # start compiling!
   .int xt_EXIT
@@ -3265,6 +3287,7 @@ def_asmword "REQUIREEMPTY",  12,    0, requireEmpty
 # ( -- ) \ end compilation from ":"
 #      ascii  , len,        flag, label
 def_doword ";",   1, FR_TIME_IMM, SEMICOLON
+  .int xt_requireComp
   .int xt_requireEmpty
   .int xt_lit, xt_EXIT, xt_pushDict  # compile EXIT
   .int xt_staterun # [ go back to runmode
