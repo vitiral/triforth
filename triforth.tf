@@ -191,7 +191,8 @@ assertEmpty -test
 \ # Mathematical functions
 : /       /mod swap drop ; \ ( a b -- a/b )
 : mod     /mod drop ;   \ ( a b -- a%b )
-: negate  0x 0 SWAP - ; \ get negative of the number
+: negate  0 SWAP - ; \ get negative of the number
+: u8 ( u -- u8 ) 0x FF AND ; \ mask upper bits
 
 \ #########################
 \ # Stack Functions
@@ -394,15 +395,28 @@ MARKER -test
   ; test?
 -test
 
+: joinErr ( u24 u8:err -- u24|err ) u8 swap 8shl + ; \ combine a value with an error
+: splitErr ( u24|err -- u24 u8:err) dup u8 swap 8shr swap ;
+: ignoreErr IMM ( u24|err -- u24 ) compile, 8shr ; \ simply ignore the error
+0x F00F 0x 82 joinErr dup 0x F00F82 assertEq   splitErr 0x 82 assertEq  0x F00F assertEq
+
 \ Now that we understand how our error handling works, we can define our basic
 \ write functions.
 
-\ : syswrite ( addr count fd -- eax )
-\   SYS_WRITE
-\ : write ( addr count fd -- count|err? )
-\   >R ( fd) BEGIN
-\ 
-\   REPEAT
+: syswrite ( count addr fd -- eax ) SYS_WRITE SYSCALL3 ;
+: write ( addr count fd -- count|err? )
+  rrot swap lrot ( count addr fd )
+  3dup syswrite dup 0 < IF negate ( positive error <255)
+  ELSE 0 joinErr \ return count|err=0
+  THEN ;
+\ : writeall ( addr count fd -- numWritten|err ) \ attempt to write all bytes.
+\   \ Note: If \ error is encountered numWritten will always be 0 since it is
+\   \ never valid anyway.
+\   over 0x 3 roll ( count addr count fd )
+\   BEGIN  swap dup R@ <= WHILE \ while count<=numWritten
+\     3dup write ? { >R 4drop R> } \ on error drop values and numWritten, preserve count
+\     ignoreErr ( =count) R> + >R ( <- increment numWritten)
+\   REPEAT 3drop ;
 
 
 \ \ Maniuplating "IOB" buffer defined in assembly. Useful for small formatting
@@ -449,3 +463,5 @@ MARKER -test
 \   variables.
 \ - create better panic: rstack printer with name lookup, etc
 
+
+\ : requireEqual ( u u -- u ) 2dup <> IF .fln\" !! $.ux  != $.ux \" panic THEN drop ;

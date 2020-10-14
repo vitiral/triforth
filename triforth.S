@@ -217,7 +217,7 @@ rstackCheckpoint: .int 0
 
 emitFd: .int STDERR # where to EMIT and TYPE to
 .equ EMIT_BUFFER_SIZE,16
-emitBuffer: .space EMIT_BUFFER_SIZE # scratch space for emit and uPntX
+emitBuffer: .space EMIT_BUFFER_SIZE # scratch space for emit and pntUx
 emitBufferMax:
 keyFd: .int STDIN   # where KEY/etc gets input from
 keyBuffer: .int 0
@@ -245,7 +245,7 @@ errorCountExceeded: .ascii "ERROR literal strings must be <255 bytes\0"
 
 # Test Names
 testIoBufferStr: .ascii "testIoBuffer\0"
-testuPntXStr: .ascii "testuPntX\0"
+testpntUxStr: .ascii "testpntUx\0"
 testPntStackStr: .ascii "testPntStack\0"
 testDumpInfoStr: .ascii "testDumpInfo\0"
 testNEXTStr: .ascii "testNEXT\0"
@@ -308,7 +308,7 @@ testSuite: # ( -- )
   call testEmit
   call testCountNt
   call testIoBuffer
-  call testuPntX
+  call testpntUx
   call testPntStack
   call testMUL
   call testDumpInfo
@@ -931,17 +931,17 @@ bSTORE: # ( b addr -- )
   movb %bl, (%eax)
   ret
 
-uPntX: # ( n -- ) \ emit an unsigned hex number
+pntUx: # ( n -- ) \ emit an unsigned hex number
   movl $4, %eax
   call checkStackSize
   cmpl $0, (%ebp) # if number if 0 just print that
-  je uPntX_zero
+  je pntUx_zero
   dpush $0
   call swap # ( count n )
-uPntX_loop:
+pntUx_loop:
   movl (%ebp), %ebx
   cmpl $0, %ebx  # if number is zero, exit
-  je uPntX_ret
+  je pntUx_ret
   andl $15, %ebx  # ebx=ebx%16
   shrl $4, (%ebp) # divide n by 16. Note: n>>4 == n/2^4
   call ebx_toascii   # ( count n )
@@ -952,8 +952,8 @@ uPntX_loop:
   dpush %eax          # address to store byte at
   call bSTORE
   addl $1, 4(%ebp)    # increment count
-  jmp uPntX_loop
-uPntX_ret:
+  jmp pntUx_loop
+pntUx_ret:
   call drop # drop n (it is 0)
   movl $emitBufferMax, %eax 
   subl (%ebp), %eax
@@ -963,7 +963,7 @@ uPntX_ret:
   dpush $' '
   call emit
   ret
-uPntX_zero:
+pntUx_zero:
   call drop
   dpush $'0'
   call emit
@@ -973,7 +973,7 @@ uPntX_zero:
 
 ebx_toascii: # ( u -- c )
   # convert a number (typically 1-16) into ascii equivalent
-  # This is used with uPntX (above)
+  # This is used with pntUx (above)
   cmp $9, %ebx
   jg 1f
   # number <= 9
@@ -991,17 +991,17 @@ ebx_toascii: # ( u -- c )
   call *(panic)
   call unreachable
 
-testuPntX:
+testpntUx:
   dpush $1
-  call uPntX
+  call pntUx
   dpush $0x12
-  call uPntX
+  call pntUx
   dpush $0xDEADBEEF
-  call uPntX
+  call pntUx
   dpush $'\n'
   call emit
 
-  dpush $testuPntXStr
+  dpush $testpntUxStr
   call countnt
   call pntTestPass
   call assertEmpty
@@ -1031,7 +1031,7 @@ pntStack: # ( -- )
   call pntSNt
 
   call depth 
-  call uPntX
+  call pntUx
 
   dpush $'>'
   call emit
@@ -1055,7 +1055,7 @@ pntStack: # ( -- )
   # print the number in hex
   movl (%ebx), %eax
   dpush %eax
-  call uPntX
+  call pntUx
 
   addl $1, (%ebp) # increment index
   jmp 1b # loop
@@ -1147,22 +1147,22 @@ dumpInfo:
   movl $registerSnapshot, %ebx
   movl (%ebx), %eax  # eax
   dpush %eax
-  call uPntX
+  call pntUx
 
   movl $registerSnapshot, %ebx
   movl 4(%ebx), %eax # ebx
   dpush %eax
-  call uPntX
+  call pntUx
 
   movl $registerSnapshot, %ebx
   movl 8(%ebx), %eax # ecx
   dpush %eax
-  call uPntX
+  call pntUx
 
   movl $registerSnapshot, %ebx
   movl 12(%ebx), %eax # edx
   dpush %eax
-  call uPntX
+  call pntUx
 
   movl $registerSnapshot, %ebx
   dpush $registersDsStr
@@ -1170,12 +1170,12 @@ dumpInfo:
   movl $registerSnapshot, %ebx
   movl 16(%ebx), %eax # edi
   dpush %eax
-  call uPntX
+  call pntUx
 
   movl $registerSnapshot, %ebx
   movl 20(%ebx), %eax # esi
   dpush %eax
-  call uPntX
+  call pntUx
   dpush $'\n'
   call emit
 
@@ -1238,7 +1238,7 @@ defaultPanic: # ( -- )
   call pntSNt
   movl panicErr, %eax
   dpush %eax
-  call uPntX
+  call pntUx
   dpush $'\n'
   call emit
   movl $RC_PANIC, %ebx
@@ -1394,7 +1394,7 @@ dump: # ( addr count -- ) \ Dump the contents of the address onto emitFd
   dpush $dumpAddrStr
   call pntSNt
   call over
-  call uPntX
+  call pntUx
   dpush $'\n'
   call emit
 
@@ -1425,11 +1425,11 @@ dump: # ( addr count -- ) \ Dump the contents of the address onto emitFd
 
 dump_addr: # ( addr -- ) \ print "<addr>: "
   call dup
-  call uPntX
+  call pntUx
   dpush $colonSpaceStr
   call pntSNt
   callXt $xt_FETCH
-  call uPntX
+  call pntUx
   dpush $'\n'
   call emit
   ret
@@ -1591,6 +1591,19 @@ def_callword "DUP" , 3 ,  0 ,   dup
 # ( a b -- a b a b )
 #           ascii , len, flag, label
 def_callword "2DUP" , 4 ,  0 ,   _2dup
+
+# ( a b c -- a b c a b c )
+#           ascii , len, flag, label
+def_asmword "3DUP" , 4 ,  0 ,   _3dup
+  movl $12, %eax
+  call checkStackSize
+  movl 8(%ebp), %eax
+  movl 4(%ebp), %ebx
+  movl (%ebp), %ecx
+  dpush %eax
+  dpush %ebx
+  dpush %ecx
+  ret
 
 # ( a -- )
 #           ascii ,  len, flag, label
@@ -1767,7 +1780,7 @@ def_asmword "U16@" ,  4 ,  0 ,  u16FETCH
 
 # ( n -- ) \ prints an unsigned integer as hex
 #           ascii, len, flag, label
-def_callword "UPNTX" ,  5 ,  0 ,  uPntX
+def_callword ".ux" ,  3 ,  0 ,  pntUx
 
 # ( -- ) \ fail test
 #                 ascii, len, flag, label
@@ -2909,6 +2922,11 @@ def_const "FR_TIME_IMM",         11, FR_TIME_IMM
 def_const "FR_TIME_IMM_PART",    16, FR_TIME_IMM_PART
 def_const "FR_TIME_RUN_PART",    16, FR_TIME_RUN_PART
 def_const "ERR_SEE_MSG",         11, ERR_SEE_MSG
+def_const "SYS_OPEN",             8, SYS_OPEN
+def_const "SYS_WRITE",            9, SYS_WRITE
+def_const "SYS_READ",             8, SYS_READ
+def_const "SYS_CLOSE",            9, SYS_CLOSE
+def_const "SYS_EXIT",             8, SYS_EXIT
 def_const "IOB",                  3, iob
 
 testConst:
