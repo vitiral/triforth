@@ -202,8 +202,7 @@ registerSnapshot: .space 24
 dstackMin: .space DSTACK_SIZE # data stack
 dstackMax:
 .equ IO_BUFFER_SIZE, 128
-ioBuffer: .space 128
-ioBufferLen: .int 0  # number of bytes in ioBuffer
+iob: .space 1024  # IO buffer, used in fmt\" and other operations.
 .equ MAX_WORD_LEN,32
 wordBuffer: .space MAX_WORD_LEN
 wordCount: .int 0 # for debugging only
@@ -293,8 +292,8 @@ testNewDefinedWordStr: .ascii "NEWDEFINEDWORD\0"
 testSuite: # ( -- )
   # We are doing test driven development. All assembly tests we write should go
   # here. You can ignore them for now.
-  call testMemLocations
   call assertEmpty
+
   call testAsserts
   call testIndirectCall
   call testPanicHandle
@@ -341,20 +340,6 @@ testSuite: # ( -- )
   call testInterpret
   call assertCleanState
   ret
-
-testMemLocations:
-  # Sanity check to make sure memory locations are set as expected.
-  movl $rstackMax, %eax
-  subl $rstackMin, %eax
-  cmp $RSTACK_SIZE, %eax
-  jne 1f
-  movl $ioBufferLen, %eax
-  subl $IO_BUFFER_SIZE, %eax
-  cmp $ioBuffer, %eax
-  jne 1f
-  ret
-1:
-  call testFailed
 
 testFailed: # The test failed
   call dumpInfo
@@ -1209,7 +1194,7 @@ dumpInfo:
   ret
 
 testDumpInfo:
-  # preload ioBuffer with something
+  # preload iob with something
   dpush $testDumpInfoStr
   call countnt # ( addr count )
   movl (%ebp), %eax
@@ -1320,9 +1305,9 @@ fake_xt_MUL: # here for testing/demo. The real xt will be in the dict
   .align 4
 
 testNEXT:
-  # In this test we will store our fake "xt's" in the ioBuffer, since we know
+  # In this test we will store our fake "xt's" in the iob, since we know
   # it isn't being used.
-  movl $ioBuffer, %esi
+  movl $iob, %esi
   # Forth: 7 3 2 * * testNEXT_xt
   dpush $7
   dpush $3
@@ -1375,7 +1360,7 @@ callXt_cont:
 .endm
 
 testEXIT:
-  movl $ioBuffer, %ebx
+  movl $iob, %ebx
 
   # DBL
   movl $DOCOL, (%ebx)
@@ -1391,8 +1376,8 @@ testEXIT:
 
   dpush $8  # put 8 on the stack
 
-  # movl $ioBuffer+16, %eax  # QUAD xt
-  callXt $ioBuffer+16
+  # movl $iob+16, %eax  # QUAD xt
+  callXt $iob+16
 
   dpop %eax
   movl $32, %ebx
@@ -1525,14 +1510,12 @@ testDictSimple:
   dpush $3  # put 8 on the stack
   dpush $2  # put 8 on the stack
   # Forth= : * * ;
-  movl $ioBuffer, %ebx
+  movl $iob, %ebx
   movl $DOCOL, (%ebx)
   movl $xt_MUL, 4(%ebx)
   movl $xt_MUL, 8(%ebx)
   movl $xt_EXIT, 12(%ebx)
-
-  # movl $ioBuffer, %eax
-  callXt $ioBuffer
+  callXt $iob
 
   dpop %eax
   movl $42, %ebx
@@ -1760,7 +1743,6 @@ def_callword "B!" ,  2 ,  0 ,  bSTORE
 def_asmword "U16!" ,  4 ,  0 ,  u16STORE
   dpop %eax # addr
   dpop %ebx # value
-  movl %ebp, %edx # TODO: remove
   movw %bx, (%eax)
   NEXT
 
@@ -2851,6 +2833,7 @@ def_const "FR_TIME_IMM",         11, FR_TIME_IMM
 def_const "FR_TIME_IMM_PART",    16, FR_TIME_IMM_PART
 def_const "FR_TIME_RUN_PART",    16, FR_TIME_RUN_PART
 def_const "ERR_SEE_MSG",         11, ERR_SEE_MSG
+def_const "IOB",                  3, iob
 
 testConst:
   callXt $xt_FR_TIME_IMM
@@ -3276,7 +3259,6 @@ def_asmword "REQUIREEMPTY",  12,    0, requireEmpty
   jne 1f
   NEXT
 1:
-  call dbgexit
   movl $ERR_STACK_NOT_EMPTY, panicErr
   call *(panic)
 

@@ -7,18 +7,22 @@
 
 \ ########################
 \ # Compilation Helpers: these help us create words which compile other words.
+\ In most languages these (and any other IMM word) would be considered macros,
+\ since they are essentially code generators.
 : ['] IMM \ immediately get the xt of the next word and put on stack
   word find nt>xt ;
-: [compile] IMM \ ( -- ) immediately compile the next word
+: [compile] IMM \ ( -- ) immediately compile the next word.
+  \ Useful for compiling immediate words instead of executing them.
   word find nt>xt , ;
-
+: compile, IMM \ Shorthand for  ' WORD ,
+  ' lit ,  word find nt>xt ,  ' , , ;
 
 \ ########################
 \ # Literals
 \ We need some basic character literals to help us. We will define a few
 \ words to help us as well.
 : literal IMM  \ ( u -- ) take whatever is on stack and compile as a literal
-  ' lit , \ compile xt of LIT
+  compile, lit \ compile xt of LIT
   , ;     \ compile the literal itself (from the stack)
 : [ascii] IMM \ ( -- b ) compile next single-letter word as ascii literal
   ascii [compile] literal ; \ note: ascii reads from _input stream_
@@ -30,8 +34,6 @@
 : ':' [ascii] : ;      : ';' [ascii] ; ;
 : '(' [ascii] ( ;      : ')' [ascii] ) ;
 : '\' [ascii] \ ;      : '"' [ascii] " ;
-\ The xt's of "!@," repsectively.
-: xt! ' ! ;     : xt@ ' @ ;    : xt, ' , ;
 
 ':' 0x 3A assertEq  '(' 0x 28 assertEq  ')' 0x 29 assertEq
 ';' 0x 3B assertEq  '\' 0x 5C assertEq  '"' 0x 22 assertEq
@@ -39,7 +41,7 @@
 \ ########################
 \ # Variables: allow defining variables and constants
 : VARIABLE WORD create drop ; \ Allow defining variables
-VARIABLE testCache 0x 0 , 0x 0 , 0x 0 , \ temp storage for tests
+VARIABLE testCache 0 , 0 , 0 , \ temp storage for tests
 
 \ ########################
 \ # Addressing and Indexing mechanisms
@@ -54,7 +56,7 @@ VARIABLE testCache 0x 0 , 0x 0 , 0x 0 , \ temp storage for tests
 : !i     cells + ! ; \ ( u addr i -- ) store u at index=i of addr
 : !1     cell+ ! ; \ ( u addr -- u ) store u at index=1 of addr
 : !2     [ 0x 2 CELLS ] LITERAL + ! ; \ ( u addr -- u ) store u at index=2 of addr
-: +!     dup @ 1+ swap ! ; \ ( addr -- ) increment value inside address by 1
+: +1!     dup @ 1+ swap ! ; \ ( addr -- ) increment value inside address by 1
 : +4!    dup @ 4+ swap ! ; \ ( addr -- ) increment value inside address by 4
 : align \ ( addr -- addr ) align address by four bytes
   0x 3 +   [ 0x 3 invert ] LITERAL and ;
@@ -67,7 +69,7 @@ VARIABLE testCache 0x 0 , 0x 0 , 0x 0 , \ temp storage for tests
 0x 43 testCache !1        testCache @1 0x 43 assertEq
 0x 51 testCache !2        testCache @2 0x 51 assertEq
 0x 50 testCache 0x 1 !i   testCache 0x 1 @i 0x 50 assertEq
-0x 20 testCache !   testCache +!   testcache @ 0x 21 assertEq
+0x 20 testCache !   testCache +1!   testcache @ 0x 21 assertEq
 0x 20 testCache !   testCache +4!  testcache @ 0x 24 assertEq
 0x 2 align 0x 4 assertEq     0x 4 align 0x 4 assertEq
 0x 11 align 0x 14 assertEq   0x 7 align 0x 8 assertEq
@@ -80,10 +82,10 @@ assertEmpty
   \ called, return the dictionary to the previous state.
   &latest @ &here @  \ get the current HERE
   CREATEWORD          \ create the word to act as a marker
-  ' lit , ,         \ compile literal HERE directly
-  ' &here ,   xt! , \ which the code will store into HERE
-  ' lit , ,   ' &latest ,    xt! ,  \ same as HERE with LATEST
-  ' EXIT , ;        \ then the word should exit
+  compile, lit ,         \ compile literal HERE directly
+  compile, &here   compile, ! \ which the code will store into HERE
+  compile, lit ,   ' &latest ,    compile, !  \ same as HERE with LATEST
+  compile, EXIT ;        \ then the word should exit
 
 &here @   testCache !    &latest @ testCache !1 \ store here and latest
 MARKER -test
@@ -103,10 +105,10 @@ testCache @1  &latest @ assertEq assertEmpty
 : IF IMM  \ ( -- addr )
   \ ( flag ) IF <ifblock> ELSE? <elseblock> THEN  is a conttrol structure. If flag<>0, the
   \ <ifblock> is executed. If there is an ELSE block, it will otherwise be executed.
-  ' 0BRANCH , \ compile 0BRANCH, which branches to next literal if 0
+  compile, 0BRANCH \ compile 0BRANCH, which branches to next literal if 0
   &here @     \ preserve the current location for THEN to consume
   0x 0 , ;       \ compile a tmp offset to be overriden by THEN
-: UNLESS IMM ' not ,   [compile] IF ; \ opposite of IF
+: UNLESS IMM compile, not   [compile] IF ; \ opposite of IF
 
 : THEN IMM \ ( addr -- ) Follows from IF or ELSE
   \ We want to replace the value IF jumps to to the current address.
@@ -115,7 +117,7 @@ testCache @1  &latest @ assertEq assertEmpty
   - swap ! ;       \ Store (here-addr) at addr
 
 : ELSE IMM \ ( addr -- addr )
-  ' BRANCH , \ compile definite branch. IF was nonzero this will execute after
+  compile, BRANCH \ compile definite branch. IF was nonzero this will execute after
              \ its block
   &here @ swap \ store the current location on the stack and move to 2nd item
   0x 0 , \ put a tmp location for THEN to store to. Stack: ( elseaddr ifaddr )
@@ -136,8 +138,8 @@ false testUNLESS 0x 420 assertEq    true testUNLESS 0x 42 assertEq
 : BEGIN IMM \ BEGIN <block> ( flag ) UNTIL will execute <block> until flag<>0
   &here @ ; \ put the address of HERE on the stack for UNTIL/AGAIN to consume
 : UNTIL IMM  \ ( flag -- ) BRANCH to the BEGIN offset if flag<>0
-  ' NOT ,   ' 0BRANCH ,  &here @ - , ;
-: AGAIN IMM  ' BRANCH , &here @ - , ; \ Always branch back (infinite loop)
+  compile, NOT   compile, 0BRANCH   &here @ - , ;
+: AGAIN IMM  compile, BRANCH &here @ - , ; \ Always branch back (infinite loop)
 
 MARKER -test
 : testBeginUntil \ ( u:a u:b -- u:a*2^b ) for b>0 using addition only
@@ -185,8 +187,10 @@ assertEmpty -test
 \ # Stack Functions
 \ The R@N functions must NEVER be exected at runtime since
 \ the return stack is corrupted by executing them.
-: R@ ( -- u ) IMM ' rsp@ ,   xt@ , ;
-: R@1 ( -- u ) IMM ' rsp@ ,  ' cell+ ,   xt@ , ;
+: R@ ( -- u ) IMM  compile, rsp@   compile, @ ;
+: R@1 ( -- u ) IMM compile, rsp@   compile, cell+   compile, @ ;
+: >2R ( u:a u:b -- ) IMM compile, swap  compile, >R  compile, >R ;
+: 2R> ( -- u:a u:b ) IMM compile, R>  compile, R>  compile, swap ;
 \ : lroll ( u:x@N u:x@n-1 ... u:x@0 u:N -- u:x@N-1 ... u:x@0 u:x@N )
 
 MARKER -test
@@ -209,7 +213,7 @@ testR@ testR@1 assertEmpty -test
 \ that you want to write  "  but rare that you need to write \"  explicitly.
 
 : b, ( b -- ) \ append the byte onto the dictionary
-  &here @ b! ( store byte to HERE) &here +! ( increment HERE) ;
+  &here @ b! ( store byte to HERE) &here +1! ( increment HERE) ;
 
 MARKER -test
 &HERE @ testCache !
@@ -292,7 +296,8 @@ MARKER -test
 \ most values will call _lits, since we just want to compile them and inc
 \ count. However, formatting calls require: 
 
-: _exec \ ( xtStr addr-count count u8 unknown-escaped -- xtStr addr-count count )
+: _exec \ ( 'str addr-count count u8 unknown-escaped -- 'str addr-count count )
+  \ 'str must be xt of type ( addr count -- )
   IF ( handle unknown escape) 
     dup [ascii] $ = IF false _lits \ if \$ pass as known $
     ELSE true _lits \ else pass to _lits as unknown, which panics
@@ -303,17 +308,47 @@ MARKER -test
     \ - Compile the xt to run on litstrings into the word
     \ - exec|compile the xt specified in the string
     \ - start a new litstr
-    drop ( drop key) _litsFinish    dup ( =xtStr) exec|compile
-    word ( word from STRING) find nt>xt exec|compile   _litsStart ( xtStr addr-count count)
+    drop ( drop key) _litsFinish    dup ( ='str) exec|compile
+    word ( word from STRING) find nt>xt exec|compile   _litsStart ( 'str addr-count count)
     \ TODO: support "$( any arbitrary forth code ) "
   ELSE false _lits THEN ;
 
-: exec\" IMM ( xtStr -- )
-  _litsStart   ' _exec    map\"  _litsFinish   ( xtStr) ,  ;
+: exec\" IMM ( 'str -- )
+  _litsStart   ' _exec    map\"  _litsFinish   ( 'str) ,  ;
+: pntf\" IMM ( -- ) \ Emits the formatted string to emitFd
+  ' pnt  [compile] exec\" ;
+
 
 
 MARKER -test
-: testExec \" World\"   ['] pnt exec\" Hello $pnt !\n\"  ; testExec -test
+: testExec \" World\"   ['] pnt exec\" Hello $pnt !\n\"  ; testExec
+: testPntf \" Denver\"  pntf\" Hello $pnt !\n\" ; testPntf
+-test
+
+\ \ Maniuplating "IOB" buffer defined in assembly. Useful for small formatting
+\ \ operations.
+\ VARIABLE &iobLen 0 ,  \ max=1024=0x400
+\ : iobLen &iobLen @ ;
+\ : iobClear   &iobLen 0 ! ; \ clear the io buffer
+\ : iobPanic pntf\" IO Buffer full\n\" panic ;
+\ : iob.b ( u8 -- flag ) \ push a byte to iob, panics on failure
+\   iobLen 0x 400 >= IF iobPanic THEN
+\   iob iobLen + b! ( <-store byte at iob+len) &iobLen +1! ( <-inc len) ;
+\ : iob.s ( addr count -- flag ) \ push a string to iob, panics on failure
+\   ( check for overflow) dup iobLen + 0x 400 >= IF iobPanic THEN
+\   ( preserve count) tuck ( move bytes) iob iobLen + swap cmove
+\   ( inc len) iobLen + &iobLen ! ;
+\ : _iobf ( addr count -- ) iobExtend NOT IF pntf\" IO Buffer full\n\" panic THEN ;
+\ : iobFmt\" IMM ( 'write -- ) \ Formats the string into iob. Panics on failure.
+\   ' _iobf  [compile] exec\" ;
+
+\ : s>> ( addr count &ctx xt -- &ctx xt )
+\   \ Standard string writing function used by write\" and others.
+\   \ The xt is expected to have type ( addr count &ctx -- ).
+\   \ This function will restore the ( &ctx xt ) at the end.
+\   >R >R R@ R@ execute  
+\ : write\" 
+
 
 
 \ #########################
