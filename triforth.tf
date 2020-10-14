@@ -142,7 +142,7 @@ false testUNLESS 0x 420 assertEq    true testUNLESS 0x 42 assertEq
   &here @ ; \ put the address of HERE on the stack for UNTIL/AGAIN to consume
 : UNTIL IMM  \ ( flag -- ) BRANCH to the BEGIN offset if flag<>0
   compile, NOT   compile, 0BRANCH   &here @ - , ;
-: AGAIN IMM  compile, BRANCH &here @ - , ; \ Always branch back (infinite loop)
+: AGAIN IMM  compile, BRANCH  &here @ - , ; \ Always branch back (infinite loop)
 
 MARKER -test
 : testBeginUntil \ ( u:a u:b -- u:a*2^b ) for b>0 using addition only
@@ -151,6 +151,13 @@ MARKER -test
   dup UNTIL drop ;
 0x 10 0x 1 testBeginUntil 0x 20 assertEq
 0x 10 0x 3 testBeginUntil 0x 80 assertEq
+: testBeginAgain \ same as above
+  BEGIN
+    swap dup + swap 1-        \ ( (a+a) (b-1) )
+    dup =0 IF drop EXIT  THEN \ if b=0 exit
+  AGAIN ;
+0x 10 0x 1 testBeginAgain 0x 20 assertEq
+0x 10 0x 3 testBeginAgain 0x 80 assertEq
 assertEmpty -test
 
 : WHILE IMM \ BEGIN ... ( flag ) WHILE ... REPEAT loop while flag<>0
@@ -340,8 +347,11 @@ MARKER -test
   \ ( Ex) \" foo${ any code here } bar\"
   \ ( Ex) doSomethingDangerous ? { error handling code } ( ... rest of function)
   ' } BEGIN
-    word find nt>xt 2dup <> WHILE exec|compile
-  AGAIN [ drop ] ;
+    word dumpInfo find nt>xt dumpInfo 2dup = IF
+    2drop EXIT
+    ELSE  exec|compile
+    THEN
+  AGAIN ;
 
 : IF? IMM  \ ( flagu8 -- flagu8 ) Check IF least-significant-byte of stack is 0.
   compile, ?BRANCH  &here @  0 , ;   \ see IF for explanation
@@ -359,6 +369,25 @@ MARKER -test
     word find nt>xt exec|compile    compile, EXIT
   [compile] THEN ;
 : _ IMM  ; \ Noop, useful with ? if no code needs to be executed
+
+MARKER -test
+: testIF?  0 IF? failTest         THEN 0 assertEq
+  false      IF? failTest         THEN false assertEq
+  0x FF00    IF? failTest         THEN 0x FF00 assertEq
+  0x 1       IF? 0x 1 assertEq    ELSE failTest THEN
+  true       IF? true assertEq    ELSE failTest THEN
+  0x FF01    IF? 0x FF01 assertEq ELSE failTest THEN
+  ;  testIF?
+: test?
+  \ 0 ?            failTest              0 assertEq
+  \ false      ?   failTest              false assertEq
+  \ 0x FF00    ?   failTest              0x FF00 assertEq
+  0x 1     ? { drop }       assertEmpty
+  [dbgexit]
+  \ true       ? { true assertEq }       assertEmpty
+  \ 0x FF01    ? { 0x FF01 assertEq }    assertEmpty
+  ; test?
+-test
 
 \ \ Maniuplating "IOB" buffer defined in assembly. Useful for small formatting
 \ \ operations.

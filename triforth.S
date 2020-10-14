@@ -342,7 +342,7 @@ testSuite: # ( -- )
   call assertCleanState
   ret
 
-testFailed: # The test failed
+failTest: # The test failed
   call dumpInfo
   movl $RC_TFAIL, %ebx
   jmp sysexit
@@ -369,7 +369,7 @@ exit0: # ( -- )
 
 assertEaxEbxEq: # %eax %ebx ( -- )
   cmp %eax, %ebx
-  jne testFailed
+  jne failTest
   ret
 
 testAsserts:
@@ -453,7 +453,7 @@ testPanicHandle: # ( * -- )
   # 4.
   cmp $0, panicErr
   je 1f
-  call testFailed
+  call failTest
 1:
   call resetPanicCatch
   ret
@@ -572,7 +572,7 @@ testDsPushPop:
   call assertCleanState
   ret
 testDsPushPop_fail:
-  call testFailed
+  call failTest
 testing_underflow:
   call assertEmpty
   dpush $4
@@ -1769,6 +1769,10 @@ def_asmword "U16@" ,  4 ,  0 ,  u16FETCH
 #           ascii, len, flag, label
 def_callword "UPNTX" ,  5 ,  0 ,  uPntX
 
+# ( -- ) \ fail test
+#                 ascii, len, flag, label
+def_callword "FAILTEST",  8,    0, failTest
+
 # ( flag -- ) \ true or fail test
 #           ascii,        len, flag, label
 def_asmword "ASSERTTRUE",  10,    0, assertTrue
@@ -1777,7 +1781,7 @@ def_asmword "ASSERTTRUE",  10,    0, assertTrue
   je 1f
   NEXT
 1:
-  call testFailed
+  call failTest
   call unreachable
 
 # ( flag -- ) \ false or fail test
@@ -1788,7 +1792,7 @@ def_asmword "ASSERTFALSE",  11,    0, assertFalse
   jne 1f
   NEXT
 1:
-  call testFailed
+  call failTest
   call unreachable
 
 # ( u u -- ) \ equal or fail test
