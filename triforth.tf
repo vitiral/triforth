@@ -198,6 +198,7 @@ assertEmpty
 : testR@ 0x 42 >R   r@ 0x 42 assertEq    R> 0x 42 assertEq ;
 : testR@1 0x 42 >R 0x 43 >R  r@ 0x 43 assertEq    r@1 0x 42 assertEq
   R> 0x 43 assertEq   R> 0x 42 assertEq ;
+: test>2R 0x 42 0 >2R   R@ 0x 42 assertEq  R@1 0 assertEq
 testR@ testR@1 assertEmpty -test
 
 \ #########################
@@ -317,8 +318,6 @@ MARKER -test
   _litsStart   ' _exec    map\"  _litsFinish   ( 'str) ,  ;
 : pntf\" IMM ( -- ) \ Emits the formatted string to emitFd
   ' pnt  [compile] exec\" ;
-
-
 
 MARKER -test
 : testExec \" World\"   ['] pnt exec\" Hello $pnt !\n\"  ; testExec
