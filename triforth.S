@@ -3394,12 +3394,22 @@ def_asmword "BRANCH",   6,    0, branch
   addl (%esi), %esi
   NEXT
 
-# ( offset flag -- offset ) \ perform BRANCH iff flag=0
+# ( flag -- ) \ perform BRANCH iff flag=0
 #               ascii, len, flag, label
 def_asmword "0BRANCH",   7,    0, _0branch
   # NOTE: %eax contains xt of current instruction from NEXT. Don't override it!
   dpop %ebx  # count
   cmp $0, %ebx
+  je word_branch  # if 0, jump to code in BRANCH above
+  lodsl           # otherwise skip the offset
+  NEXT
+
+# ( flag -- ) \ perform BRANCH iff the first byte=0. Don't
+# \ consume first word. This will be used for error checking.
+#                 ascii, len, flag, label
+def_asmword "?BRANCH",   7,    0, QUESTIONbranch
+  # NOTE: %eax contains xt of current instruction from NEXT. Don't override it!
+  cmpb $0, (%ebp)
   je word_branch  # if 0, jump to code in BRANCH above
   lodsl           # otherwise skip the offset
   NEXT

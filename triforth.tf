@@ -5,6 +5,8 @@
 \ so we will use line comments for everything.
 &state @ 0x 0 assertEq assertEmpty  \ test: we are in runmode, nostack
 
+: [dbgexit] IMM dbgexit ; \ for debugging compiler state
+
 \ ########################
 \ # Compilation Helpers: these help us create words which compile other words.
 \ In most languages these (and any other IMM word) would be considered macros,
@@ -15,7 +17,8 @@
   \ Useful for compiling immediate words instead of executing them.
   word find nt>xt , ;
 : compile, IMM \ Shorthand for  ' WORD ,
-  ' lit ,  word find nt>xt ,  ' , , ;
+  ' lit ,    word find nt>xt ,  \ same as ' -- return xt instead of running
+  ' , , ; \ and then compile it into the word YOU are compiling
 
 \ ########################
 \ # Literals
@@ -102,7 +105,7 @@ testCache @1  &latest @ assertEq assertEmpty
 \ Using our BRANCH and 0BRANCH words we can create IF (ELSE?) THEN and LOOP
 \ control structures. We do this by putting HERE on the stack at compile time
 \ and using its value to branch backwards.
-: IF IMM  \ ( -- addr )
+: IF IMM  \ ( -- )
   \ ( flag ) IF <ifblock> ELSE? <elseblock> THEN  is a conttrol structure. If flag<>0, the
   \ <ifblock> is executed. If there is an ELSE block, it will otherwise be executed.
   compile, 0BRANCH \ compile 0BRANCH, which branches to next literal if 0
@@ -191,6 +194,10 @@ assertEmpty -test
 : R@1 ( -- u ) IMM compile, rsp@   compile, cell+   compile, @ ;
 : 2>R ( u:a u:b -- ) IMM compile, swap  compile, >R  compile, >R ; \ R: ( -- a b)
 : 2R> ( -- u:a u:b ) IMM compile, R>  compile, R>  compile, swap ; \ R: ( a b -- )
+: >R@ ( u -- u \ store+fetch) IMM compile, dup  compile, >R ; \ same as >R R@
+: 2>R@ ( u64 -- u64 \ store+fetch) IMM compile, 2dup  compile, 2>R ;
+: Rdrop ( -- \ drop value on R) IMM compile, R>  compile, drop ;
+: 2Rdrop ( -- \ drop value on R) IMM compile, 2R>  compile, 2drop ;
 \ : lroll ( u:x@N u:x@n-1 ... u:x@0 u:N -- u:x@N-1 ... u:x@0 u:x@N )
 
 MARKER -test
@@ -325,6 +332,34 @@ MARKER -test
 : testPntf \" Denver\"  pntf\" Hello $pnt !\n\" ; testPntf
 -test
 
+: } IMM ; \ noop, used in {
+: { IMM \ compile-block. This calls exec|compile on all words until }.
+  \ At first this may seem useless since it is what the interpreter already
+  \ does, but when you combine it with strings or ? (below) it allows you to
+  \ execute any arbitrary code instead of a single statement.
+  \ ( Ex) \" foo${ any code here } bar\"
+  \ ( Ex) doSomethingDangerous ? { error handling code } ( ... rest of function)
+  ' } BEGIN
+    word find nt>xt 2dup <> WHILE exec|compile
+  AGAIN [ drop ] ;
+
+: IF? IMM  \ ( flagu8 -- flagu8 ) Check IF least-significant-byte of stack is 0.
+  compile, ?BRANCH  &here @  0 , ;   \ see IF for explanation
+: ? IMM \ If error, execute next statement and exit.
+  \ "error" is defind by any non-zero value in the least-significant-byte
+  \ of the top value on the stack. This allows other values to be stored
+  \ in the upper 3 bytes. This function uses 0u8branch, so does not affect
+  \ the stack.
+  \ 
+  \ Conceptually, checks the byte in top value on the stack, if it is non-zero
+  \ executes the next word and exits with the error. Example:
+  \   >R@ doSomethingDangerous ? Rdrop ( ... rest of word)
+  \ If doSomethingDangerous returns a non-zero value then Rdrop will be called.
+  [compile] IF?
+    word find nt>xt exec|compile    compile, EXIT
+  [compile] THEN ;
+: _ IMM  ; \ Noop, useful with ? if no code needs to be executed
+
 \ \ Maniuplating "IOB" buffer defined in assembly. Useful for small formatting
 \ \ operations.
 \ VARIABLE &iobLen 0 ,  \ max=1024=0x400
@@ -342,16 +377,7 @@ MARKER -test
 \ : iobFmt\" IMM ( 'write -- ) \ Formats the string into iob. Panics on failure.
 \   ' _iobf  [compile] exec\" ;
 
-\ write\" foo $( >R R@ s>> IF >R drop EXIT THEN ) bar\"
-: ? IMM \ Error handling. Conceptually, checks the top value on the stack,
-        \ if it is non-zero executes the next word and exits with the error. 
-        \ Example:
-        \   >R R@ doSomethingDangerous ? Rdrop ( .. rest of function)
-        \ If doSomethingDangerous returns a non-zero value then Rdrop will
-        \ be called and the non-zero value will be returned.
-  compile, ?DUP    compile, IF
-    word find nt>xt exec|compile    compile, EXIT
-  compile, THEN ;
+
 
 \ Example: /" foo $( 's>> |? ) bar\"
 
