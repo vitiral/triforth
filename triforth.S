@@ -192,7 +192,6 @@
 
 ######################################################
 ### DATA SECTION
-######################################################
 # It's better to define most .data separately from .text (code), so the
 # definitions are here. Refer here when you see the data used in the code.
 .section .data
@@ -1859,6 +1858,44 @@ def_callword "DUMP" ,  4 ,  0 ,  dump
 # ( -- ) \ exits immediately, printing info
 #            ascii     , len, flag, label
 def_callword "DBGEXIT" ,  7 ,  0 ,  dbgexit
+
+# ( sc -- eax ) \ Call a syscall with no arguments
+#            ascii     , len, flag, label
+def_asmword "SYSCALL0",   8,    0, syscall0
+  dpop %eax
+  int $LINUX_SYSCALL
+  dpush %eax
+  NEXT
+
+# ( arg0 sc -- eax ) \ Call a syscall with one argument
+#            ascii     , len, flag, label
+def_asmword "SYSCALL1",   8,    0, syscall1
+  dpop %eax
+  dpop %ebx
+  int $LINUX_SYSCALL
+  dpush %eax
+  NEXT
+
+# ( arg1 arg0 sc -- eax ) \ Call a syscall with two arguments
+#            ascii     , len, flag, label
+def_asmword "SYSCALL2",   8,    0, syscall2
+  dpop %eax
+  dpop %ebx
+  dpop %ecx
+  int $LINUX_SYSCALL
+  dpush %eax
+  NEXT
+
+# ( arg2 arg1 arg0 sc -- eax ) \ Call a syscall with three arguments
+#            ascii     , len, flag, label
+def_asmword "SYSCALL3",   8,    0, syscall3
+  dpop %eax
+  dpop %ebx
+  dpop %ecx
+  dpop %edx
+  int $LINUX_SYSCALL
+  dpush %eax
+  NEXT
 
 # ( a b -- a+b ) \ add values
 #           ascii  , len, flag, label

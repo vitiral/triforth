@@ -398,6 +398,7 @@ MARKER -test
 \ write functions.
 
 \ : syswrite ( addr count fd -- eax )
+\   SYS_WRITE
 \ : write ( addr count fd -- count|err? )
 \   >R ( fd) BEGIN
 \ 
