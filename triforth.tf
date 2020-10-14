@@ -32,7 +32,7 @@
 
 \ Can't be gotten with [ascii]
 : '\t' 0x 9 ;     : '\n'  0x A ;    : '\r' 0x D ;
-: bl   0x 20 ; \ "blank" i.e. space
+: spc  0x 20 ; \ the literal ' '
 \ Mess with syntax highlighters and can be hard to read
 : ':' [ascii] : ;      : ';' [ascii] ; ;
 : '(' [ascii] ( ;      : ')' [ascii] ) ;
@@ -270,7 +270,7 @@ aligned    &HERE @ 4-   testCache @ assertEq \ test: alignment moves here +4
   ' litcarru8 ,   &here @ ( =count-addr) 0 b, ( =tmp-count) 0 ( =count) ;
 : _litsFinish ( addr-count count ) \ update tmp count, align HERE
   \ TODO: support count [256,u16MAX] with litc2arru8
-  dup 0x 255 > IF _SCERR pntln panic THEN 
+  dup 0x 255 > IF _SCERR .Sln panic THEN 
   swap b! ( update tmpcount)  aligned ;
 : _lits ( count b bool:escape -- count ) \ handle bytes from map\"
   \ Compiles relevant characters, checks escape validity.
@@ -281,7 +281,7 @@ aligned    &HERE @ 4-   testCache @ assertEq \ test: alignment moves here +4
       dup [ascii] n =       IF drop '\n'
       ELSE dup [ascii] t =  IF drop '\t'
       ELSE dup '\' =        IF ( '\' literal)
-      ELSE ( unknown escape) _SERR pnt '\' emit emit '\n' emit panic
+      ELSE ( unknown escape) _SERR .s '\' emit emit '\n' emit panic
       THEN THEN THEN
   THEN   b, ( <-compile byte) 1+ ( <-inc count) ;
 : \" IMM    _litsStart   ' _lits map\"    _litsFinish ; 
@@ -296,11 +296,11 @@ MARKER -test
 : escapeTest \" \\\n\t\"    0x 3 assertEq ( count) 
   dup b@ '\'  assertEq      dup b@1  '\n' assertEq
   b@2 '\t' assertEq ;                               ( run it) escapeTest
-: pntTest \" **TEST \\" string\\" complete\n\"   pnt ;        pntTest assertEmpty
+: pntTest \" **TEST \\" string\\" complete\n\"   .s ;        pntTest assertEmpty
 -test
 
-: .ln     '\n' emit ;   \ print carriage return a.k.a newline
-: space   bl emit ;     \ print space
+: .ln     '\n' emit ;   \ print new line
+: .spc    spc emit ;    \ print space
 
 \ exec\" function allows executing words in the context of strings. Each string
 \ will be executed given the provided xt and any included "$NAME " will be executed
@@ -335,25 +335,23 @@ MARKER -test
 : exec\" IMM ( 'str -- )
   _litsStart   ' _exec    map\"  _litsFinish   ( 'str) ,  ;
 : .f\" IMM ( -- ) \ Emits the formatted string to emitFd
-  ' pnt  [compile] exec\" ;
+  ' .s  [compile] exec\" ;
 : .fln\" IMM ( -- ) \ Emits the formatted string followed by newline
-  ' pnt  [compile] exec\"   compile, .ln ;
+  ' .s  [compile] exec\"   compile, .ln ;
 
 MARKER -test
-: testExec \" World\"   ['] pnt exec\" Hello $pnt !\n\"  ; testExec
-: test.f \" Denver\"  .f\" Hello $pnt !\n\" ; test.f
-: test.fln \" Denver\"  .f\" Hello $pnt !\n\" ; test.fln
+: testExec \" World\"   ['] .s exec\" Hello $.s !\n\"  ; testExec
+: test.f \" Denver\"  .f\" Hello $.s !\n\" ; test.f
+: test.fln \" Arvada\"  .f\" Hello $.s !\n\" ; test.fln
 -test
 
-: } IMM ; \ noop, used in {
+: } .fln\" only use } with {\"  panic ;
 : { IMM \ compile-block. This calls exec|compile on all words until }.
   \ At first this may seem useless since it is what the interpreter already
   \ does, but when you combine it with strings or ? (below) it allows you to
   \ execute any arbitrary code instead of a single statement.
   \ ( Ex) \" foo${ any code here } bar\"
   \ ( Ex) doSomethingDangerous ? { error handling code } ( ... rest of function)
-  \ OH GOD, I know what's happening... I've turned off the interpreter! Things are
-  \ funky....
   ' [compile] } ( <xt of }> ) BEGIN
     word
     find nt>xt 2dup = IF 2drop EXIT
@@ -368,7 +366,8 @@ MARKER -test
   \ "error" is defind by any non-zero value in the least-significant-byte
   \ of the top value on the stack. This allows other values to be stored
   \ in the upper 3 bytes. This function uses 0u8branch, so does not affect
-  \ the stack.
+  \ the stack. Note: these are explicitly defined to work with valued enums,
+  \ which we will define later.
   \ 
   \ Conceptually, checks the byte in top value on the stack, if it is non-zero
   \ executes the next word and exits with the error. Example:
@@ -394,6 +393,16 @@ MARKER -test
   0x FF01      ? { 0x FF01 assertEq }  assertEmpty
   ; test?
 -test
+
+\ Now that we understand how our error handling works, we can define our basic
+\ write functions.
+
+\ : syswrite ( addr count fd -- eax )
+\ : write ( addr count fd -- count|err? )
+\   >R ( fd) BEGIN
+\ 
+\   REPEAT
+
 
 \ \ Maniuplating "IOB" buffer defined in assembly. Useful for small formatting
 \ \ operations.
@@ -434,7 +443,7 @@ MARKER -test
 \ - create indirection for (syswrite, sysread, emit, readKey)
 \ - create &'NAME variables to modify the above in forth, as well as &'PANIC
 \ - Allow core XXX\" types to operate at runtime. \" will write to ioBuffer
-\   (rename iob, iobPush, etc), pnt\" will directly emit characters, etc
+\   (rename iob, iobPush, etc), fmt\" will directly emit characters, etc
 \ - have readKey keep track of current line. Add &LINENO, &FNAME, and &MODID 
 \   variables.
 \ - create better panic: rstack printer with name lookup, etc

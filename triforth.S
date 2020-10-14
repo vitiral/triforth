@@ -836,7 +836,7 @@ emit: # ( c -- )
 syswrite: # %ebx:fd %ecx:&buff %edx:bytesToWrite ( -- )
   # Direct call to SYS_WRITE syscall with error checking.
   movl $SYS_WRITE, %eax
-  int $0x80
+  int $LINUX_SYSCALL
   cmp $0, %eax
   jl 1f
   ret
@@ -887,7 +887,7 @@ testCountNt:
   call drop
   ret
 
-pnt: # ( addr count -- )
+pntS: # ( addr count -- )
   # Forth TYPE. Writes count bytes at addr to emitFd
   movl emitFd, %ebx   # fd
   dpop %edx # bytesToWrite=count
@@ -899,22 +899,22 @@ pntTestPass: # ( addr count -- )
   # pnts "TEST <addr count> PASS\n" to emitFd
   dpush $testPrefixStr
   call countnt
-  call pnt
-  call pnt
+  call pntS
+  call pntS
   dpush $testPassStr
   call countnt
-  call pnt
+  call pntS
   ret
 
-pntnt: # ( addr -- )
+pntSNt: # ( addr -- )
   # Type a null nerminated str
   call countnt
-  call pnt
+  call pntS
   ret
 
-pntntln: # ( addr -- )
+pntSNtln: # ( addr -- )
   # Type a null nerminated str ending w/ newline
-  call pntnt
+  call pntSNt
   dpush $'\n'
   call emit
   ret
@@ -960,7 +960,7 @@ uPntX_ret:
   subl (%ebp), %eax
   dpush %eax
   call swap
-  call pnt
+  call pntS
   dpush $' '
   call emit
   ret
@@ -1029,7 +1029,7 @@ pntStack: # ( -- )
   # Forth .S, prints the current stack
   dpush $stackStr
   # "Stack< DEPTH > "
-  call pntnt
+  call pntSNt
 
   call depth 
   call uPntX
@@ -1144,7 +1144,7 @@ dumpInfo:
 
   # Registers
   dpush $registersAdStr
-  call pntnt
+  call pntSNt
   movl $registerSnapshot, %ebx
   movl (%ebx), %eax  # eax
   dpush %eax
@@ -1167,7 +1167,7 @@ dumpInfo:
 
   movl $registerSnapshot, %ebx
   dpush $registersDsStr
-  call pntnt
+  call pntSNt
   movl $registerSnapshot, %ebx
   movl 16(%ebx), %eax # edi
   dpush %eax
@@ -1184,11 +1184,11 @@ dumpInfo:
   call pntStack
   # current word
   dpush $wordStr
-  call pntnt
+  call pntSNt
   dpush $wordBuffer
   movl wordCount, %eax
   dpush %eax
-  call pnt
+  call pntS
   dpush $'\n'
   call emit
 
@@ -1229,14 +1229,14 @@ dbgexit: # ( -- )
   # Mainly used in debugging.
   call dumpInfo
   dpush $dbgexitStr
-  call pntnt
+  call pntSNt
   movl $RC_DBG, %ebx
   jmp sysexit
 
 defaultPanic: # ( -- )
   call dumpInfo
   dpush $panicStr
-  call pntnt
+  call pntSNt
   movl panicErr, %eax
   dpush %eax
   call uPntX
@@ -1393,7 +1393,7 @@ testEXIT:
 dump: # ( addr count -- ) \ Dump the contents of the address onto emitFd
   call snapshotRegisters
   dpush $dumpAddrStr
-  call pntnt
+  call pntSNt
   call over
   call uPntX
   dpush $'\n'
@@ -1428,7 +1428,7 @@ dump_addr: # ( addr -- ) \ print "<addr>: "
   call dup
   call uPntX
   dpush $colonSpaceStr
-  call pntnt
+  call pntSNt
   callXt $xt_FETCH
   call uPntX
   dpush $'\n'
@@ -1964,6 +1964,38 @@ def_asmword "16*" , 3  ,  0 ,  _16MUL
   dpush %eax
   NEXT
 
+# ( u -- u ) \ shift bits left by 8
+#          ascii  , len, flag, label
+def_asmword "8SHL",   4,    0, _8shl
+  dpop %eax
+  shl $8, %eax
+  dpush %eax
+  NEXT
+
+# ( u -- u ) \ shift bits left by 16
+#          ascii   , len, flag, label
+def_asmword "16SHL",   6,    0, _16shl
+  dpop %eax
+  shl $16, %eax
+  dpush %eax
+  NEXT
+
+# ( u -- u ) \ shift bits right by 8
+#          ascii  , len, flag, label
+def_asmword "8SHR",   4,    0, _8shr
+  dpop %eax
+  shr $8, %eax
+  dpush %eax
+  NEXT
+
+# ( u -- u ) \ shift bits right by 16
+#           ascii  , len, flag, label
+def_asmword "16SHR",   5,    0, _16shr
+  dpop %eax
+  shr $16, %eax
+  dpush %eax
+  NEXT
+
 # ( u:a u:b -- u:quot u:rem ) \ divide a/b -> quotient remainder
 #           ascii  , len, flag, label
 def_asmword "/MOD" , 4  ,  0 ,  DIVmod
@@ -2370,14 +2402,14 @@ SUBtrailing_done:
 #           ascii   , len, flag, label
 def_callword "EMIT" , 4  ,   0 , emit
 
-# ( addr count -- ) \ prints bytes to emitFd
+# ( addr count -- ) \ print a string to emitFd
 #           ascii   , len, flag, label
-def_callword "PNT" ,  3 ,  0 ,  pnt
+def_callword ".S" ,  2 ,  0 ,  pntS
 
 # ( addr count -- ) \ pnts a string to emitFd with newline
-#            ascii , len, flag, label
-def_asmword "PNTLN",   5,    0, pntln
-  callXt $xt_pnt
+#           ascii , len, flag, label
+def_asmword ".SLN",   4,    0, pntSln
+  callXt $xt_pntS
   dpush $'\n'
   call emit
   NEXT
@@ -2448,7 +2480,7 @@ sysread: # %ebx:fd %ecx:&buff %edx:maxLength ( -- ) %eax:numRead
   # Read from a filedescriptor. This does NOT panic on failure, the caller must
   # check %eax for errors.
   movl $SYS_READ, %eax
-  int $0x80
+  int $LINUX_SYSCALL
   ret
 
 readKey: # ( -- ) \ reads a byte into keyBuffer
@@ -2481,7 +2513,7 @@ sysopen: # %ebx:&fnameNt %ecx:intention %edx:permissions ( -- ) %eax:fd
   # Open the nt filename.
   # check %eax for errors and panic if they exist.
   movl $SYS_OPEN, %eax
-  int $0x80
+  int $LINUX_SYSCALL
   cmp $0, %eax
   jl 1f
   ret
@@ -2493,7 +2525,7 @@ sysopen: # %ebx:&fnameNt %ecx:intention %edx:permissions ( -- ) %eax:fd
 sysclose: # %ebx:fd ( -- ) 
   # Close the filedescriptor
   movl $SYS_CLOSE, %eax
-  int $0x80
+  int $LINUX_SYSCALL
   cmp $0, %eax
   jl 1f
   ret
@@ -2603,7 +2635,7 @@ word_eof: # (in case of EOF we still push the count)
   NEXT
 word_err:
   dpush $maxWordLenErrorStr
-  call pntnt
+  call pntSNt
   movl $ERR_MAX_WORD_LEN, panicErr
   call *(panic)
 
@@ -2737,15 +2769,15 @@ _0x_done:
 _0x_noword:
   dpush $_0xWordNeededStr
   call countnt
-  callXt $xt_pntln
+  callXt $xt_pntSln
   movl $ERR_WORD_MISSING, panicErr
   call *(panic)
 _0x_notnumber:
   dpush $_0xNotNumberStr
-  call pntnt
+  call pntSNt
   # addr count still contains the word, simply use that
   call _2dup
-  callXt $xt_pntln
+  callXt $xt_pntSln
   movl $ERR_NUMBER_INVALID, panicErr
   call *(panic)
 
@@ -3502,20 +3534,20 @@ xt_testInterpret_pnt:
 .int DOCOL, xt_lit, testInterpretStr, xt_countnt, xt_pntTestPass, xt_EXIT
 testInterpret:
   dpush $testTheAnswerFile
-  call pntntln
+  call pntSNtln
   movl $testTheAnswerFile, %ebx
   call openNtEbx
   callXt $xt_testInterpret_theAnswer
   call closeKeyFd
 
   dpush $testSimpleMathFile
-  call pntntln
+  call pntSNtln
   call openSimpleMathFile
   callXt $xt_testInterpret_inputstream
   call closeKeyFd
 
   dpush $triforthFile
-  call pntntln
+  call pntSNtln
   movl $triforthFile, %ebx
   call openNtEbx
   callXt $xt_testInterpret_inputstream
