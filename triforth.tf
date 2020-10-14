@@ -299,6 +299,9 @@ MARKER -test
 : pntTest \" **TEST \\" string\\" complete\n\"   pnt ;        pntTest assertEmpty
 -test
 
+: .ln     '\n' emit ;   \ print carriage return a.k.a newline
+: space   bl emit ;     \ print space
+
 \ exec\" function allows executing words in the context of strings. Each string
 \ will be executed given the provided xt and any included "$NAME " will be executed
 \ in this context. This allows for arbitrary behavior like printing to stdout or
@@ -331,12 +334,15 @@ MARKER -test
 
 : exec\" IMM ( 'str -- )
   _litsStart   ' _exec    map\"  _litsFinish   ( 'str) ,  ;
-: pntf\" IMM ( -- ) \ Emits the formatted string to emitFd
+: .f\" IMM ( -- ) \ Emits the formatted string to emitFd
   ' pnt  [compile] exec\" ;
+: .fln\" IMM ( -- ) \ Emits the formatted string followed by newline
+  ' pnt  [compile] exec\"   compile, .ln ;
 
 MARKER -test
 : testExec \" World\"   ['] pnt exec\" Hello $pnt !\n\"  ; testExec
-: testPntf \" Denver\"  pntf\" Hello $pnt !\n\" ; testPntf
+: test.f \" Denver\"  .f\" Hello $pnt !\n\" ; test.f
+: test.fln \" Denver\"  .f\" Hello $pnt !\n\" ; test.fln
 -test
 
 : } IMM ; \ noop, used in {
@@ -346,13 +352,16 @@ MARKER -test
   \ execute any arbitrary code instead of a single statement.
   \ ( Ex) \" foo${ any code here } bar\"
   \ ( Ex) doSomethingDangerous ? { error handling code } ( ... rest of function)
-  ' } BEGIN
-    word dumpInfo find nt>xt dumpInfo 2dup = IF
-    2drop EXIT
+  \ OH GOD, I know what's happening... I've turned off the interpreter! Things are
+  \ funky....
+  ' [compile] } ( <xt of }> ) BEGIN
+    word
+    find nt>xt 2dup = IF 2drop EXIT
     ELSE  exec|compile
     THEN
   AGAIN ;
 
+: _ IMM  ; \ Noop, useful with ? if no code needs to be executed
 : IF? IMM  \ ( flagu8 -- flagu8 ) Check IF least-significant-byte of stack is 0.
   compile, ?BRANCH  &here @  0 , ;   \ see IF for explanation
 : ? IMM \ If error, execute next statement and exit.
@@ -368,7 +377,6 @@ MARKER -test
   [compile] IF?
     word find nt>xt exec|compile    compile, EXIT
   [compile] THEN ;
-: _ IMM  ; \ Noop, useful with ? if no code needs to be executed
 
 MARKER -test
 : testIF?  0 IF? failTest         THEN 0 assertEq
@@ -378,14 +386,12 @@ MARKER -test
   true       IF? true assertEq    ELSE failTest THEN
   0x FF01    IF? 0x FF01 assertEq ELSE failTest THEN
   ;  testIF?
-: test?
-  \ 0 ?            failTest              0 assertEq
-  \ false      ?   failTest              false assertEq
-  \ 0x FF00    ?   failTest              0x FF00 assertEq
-  0x 1     ? { drop }       assertEmpty
-  [dbgexit]
-  \ true       ? { true assertEq }       assertEmpty
-  \ 0x FF01    ? { 0x FF01 assertEq }    assertEmpty
+: test?  0     ? failTest              0 assertEq
+  false        ? failTest              false assertEq
+  0x FF00      ? failTest              0x FF00 assertEq
+  0x 1         ? { drop }              assertEmpty
+  true         ? { true assertEq }     assertEmpty
+  0x FF01      ? { 0x FF01 assertEq }  assertEmpty
   ; test?
 -test
 
@@ -394,7 +400,7 @@ MARKER -test
 \ VARIABLE &iobLen 0 ,  \ max=1024=0x400
 \ : iobLen &iobLen @ ;
 \ : iobClear   &iobLen 0 ! ; \ clear the io buffer
-\ : iobPanic pntf\" IO Buffer full\n\" panic ;
+\ : iobPanic .f\" IO Buffer full\n\" panic ;
 \ : iob.b ( u8 -- flag ) \ push a byte to iob, panics on failure
 \   iobLen 0x 400 >= IF iobPanic THEN
 \   iob iobLen + b! ( <-store byte at iob+len) &iobLen +1! ( <-inc len) ;
@@ -402,7 +408,7 @@ MARKER -test
 \   ( check for overflow) dup iobLen + 0x 400 >= IF iobPanic THEN
 \   ( preserve count) tuck ( move bytes) iob iobLen + swap cmove
 \   ( inc len) iobLen + &iobLen ! ;
-\ : _iobf ( addr count -- ) iobExtend NOT IF pntf\" IO Buffer full\n\" panic THEN ;
+\ : _iobf ( addr count -- ) iobExtend NOT IF .f\" IO Buffer full\n\" panic THEN ;
 \ : iobFmt\" IMM ( 'write -- ) \ Formats the string into iob. Panics on failure.
 \   ' _iobf  [compile] exec\" ;
 
@@ -423,10 +429,6 @@ MARKER -test
 \ need a way to define closures... maybe :: myClosure ; ?
 \ Never-the-less, I think this should actually work -- although it is slightly crazy :D
 
-\ #########################
-\ # Character Printing helpers
-\ : cr      '\n' emit ;   \ print carriage return a.k.a newline
-\ : space   bl emit ;     \ print space
 
 \ TODO next: 
 \ - create indirection for (syswrite, sysread, emit, readKey)

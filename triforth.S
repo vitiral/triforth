@@ -134,6 +134,7 @@
 .equ ERR_STACK_NOT_EMPTY,0x312
 .equ ERR_STATE_INCORRECT,0x313
 .equ ERR_EMIT_ERR,0x314
+.equ ERR_NULL_NAMETOKEN,0x315
 
 .equ FALSE, 0
 .equ TRUE, -1
@@ -2598,6 +2599,7 @@ word_eof: # (in case of EOF we still push the count)
   movl %eax, wordCount
   dpush $wordBuffer # ( count addr )
   call swap
+  movl $0x300, %edx  # TODO: remove
   NEXT
 word_err:
   dpush $maxWordLenErrorStr
@@ -2947,6 +2949,8 @@ def_asmword "ALIGN4",  6,    0, align4
 #            ascii  , len, flag, label
 def_asmword "NT>&F0",   6,    0, ntTOf0
   dpop %eax           # address of nt
+  cmp $0, %eax
+  je 1f
   addl $4, %eax       # start of c8bytes (count)
   movb (%eax), %bl    # ebx=count
   andl $F0_NAMELEN_BYTE_MASK, %ebx
@@ -2957,6 +2961,9 @@ def_asmword "NT>&F0",   6,    0, ntTOf0
   call eax_align4     # align, as F0 is always aligned
   dpush %eax
   NEXT
+1:
+  movl $ERR_NULL_NAMETOKEN, panicErr
+  call *(panic)
 
 # ( nt -- FR ) \ given the nt return the address of FR
 #            ascii  , len, flag, label
@@ -3427,8 +3434,8 @@ def_asmword "EXECUTE",   7,    0, execute
   NEXT
 
 # ( xt -- ??? ) \ exec or compile the given xt given STATE and the xt's TIME_IMM
-#                ascii, len, flag, label
-def_callword "EXEC|COMPILE",   12,    0, execORcompile
+#                     ascii, len, flag, label
+def_callword "EXEC|COMPILE",  12,    0, execORcompile
 execORcompile:
   movl $4, %eax
   call checkStackSize
