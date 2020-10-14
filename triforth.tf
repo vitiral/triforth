@@ -189,7 +189,7 @@ assertEmpty -test
 \ the return stack is corrupted by executing them.
 : R@ ( -- u ) IMM  compile, rsp@   compile, @ ;
 : R@1 ( -- u ) IMM compile, rsp@   compile, cell+   compile, @ ;
-: >2R ( u:a u:b -- ) IMM compile, swap  compile, >R  compile, >R ; \ R: ( -- a b)
+: 2>R ( u:a u:b -- ) IMM compile, swap  compile, >R  compile, >R ; \ R: ( -- a b)
 : 2R> ( -- u:a u:b ) IMM compile, R>  compile, R>  compile, swap ; \ R: ( a b -- )
 \ : lroll ( u:x@N u:x@n-1 ... u:x@0 u:N -- u:x@N-1 ... u:x@0 u:x@N )
 
@@ -198,9 +198,9 @@ assertEmpty
 : testR@ 0x 42 >R   r@ 0x 42 assertEq    R> 0x 42 assertEq ;
 : testR@1 0x 42 >R 0x 43 >R  r@ 0x 43 assertEq    r@1 0x 42 assertEq
   R> 0x 43 assertEq   R> 0x 42 assertEq ;
-: test>2R 0x 42 0  >2R   R@ 0 assertEq  R@1 0x 42 assertEq
+: test2>R 0x 42 0  2>R   R@ 0 assertEq  R@1 0x 42 assertEq
           2R>   0 asserteq   0x 42 assertEq ;
-testR@ testR@1 test>2R assertEmpty -test
+testR@ testR@1 test2>R assertEmpty -test
 
 \ #########################
 \ # Strings
@@ -342,14 +342,20 @@ MARKER -test
 \ : iobFmt\" IMM ( 'write -- ) \ Formats the string into iob. Panics on failure.
 \   ' _iobf  [compile] exec\" ;
 
-\ : s>> ( addr count &ctx xt -- &ctx xt )
-\   \ Standard string writing function used by write\" and others.
-\   \ The xt is expected to have type ( addr count &ctx -- ).
-\   \ This function will restore the ( &ctx xt ) at the end.
-\   >R >R R@ R@ execute  
-\ : write\" 
+\ write\" foo $( >R R@ s>> IF >R drop EXIT THEN ) bar\"
+: | \ similar to execute but preserves the second item on the stack.
+  \ Execute has this type: ( ... xt -- ??? )
+  \ | has this type:       ( ... ctx xt -- ??? ctx)
+  \ This might seem like a rather minor difference, but when executing the same
+  \ kind of .... TODO
+  over >R execute >R ;
+: |? \ similar to | but consumes the first value on the stack after execute
+     \ and EXITs the function in this case. The ctx is still on the stack
+     \ in this case.
+  compile, |  compile, swap  compile, dup   \ | swap dup
+  compile, IF  compile, EXIT  compile, THEN  compile, drop ; \ IF EXIT THEN drop
 
-
+\ Example: /" foo $( 's>> |? ) bar\"
 
 \ #########################
 \ # Character Printing helpers
