@@ -343,19 +343,30 @@ MARKER -test
 \   ' _iobf  [compile] exec\" ;
 
 \ write\" foo $( >R R@ s>> IF >R drop EXIT THEN ) bar\"
-: | \ similar to execute but preserves the second item on the stack.
-  \ Execute has this type: ( ... xt -- ??? )
-  \ | has this type:       ( ... ctx xt -- ??? ctx)
-  \ This might seem like a rather minor difference, but when executing the same
-  \ kind of .... TODO
-  over >R execute >R ;
-: |? \ similar to | but consumes the first value on the stack after execute
-     \ and EXITs the function in this case. The ctx is still on the stack
-     \ in this case.
-  compile, |  compile, swap  compile, dup   \ | swap dup
-  compile, IF  compile, EXIT  compile, THEN  compile, drop ; \ IF EXIT THEN drop
+: ? IMM \ Error handling. Conceptually, checks the top value on the stack,
+        \ if it is non-zero executes the next word and exits with the error. 
+        \ Example:
+        \   >R R@ doSomethingDangerous ? Rdrop ( .. rest of function)
+        \ If doSomethingDangerous returns a non-zero value then Rdrop will
+        \ be called and the non-zero value will be returned.
+  compile, ?DUP    compile, IF
+    word find nt>xt exec|compile    compile, EXIT
+  compile, THEN ;
 
 \ Example: /" foo $( 's>> |? ) bar\"
+
+\ Hmm... I really like that approach, but it makes the stack non-deterministic.
+\ A better approach for typed functions might be that functions have a "stream"
+\ version, i.e. foo and |foo or something. The "stream" version will simply
+\ call "drop" on all types that are supposed to be consumed... oh but that
+\ wouldn't fix other issues... drat.
+\ NO! In code which does error handling all the stack changes will happen
+\ "up front" or be pushed into local vars.
+\ The error handling can go one better --  |?' cleanup  -- "cleanup" is the
+\ xt to call on failure before exiting. It is given the point to the locals in the current
+\ function so it can clean them up -- basically it is a closure. I really
+\ need a way to define closures... maybe :: myClosure ; ?
+\ Never-the-less, I think this should actually work -- although it is slightly crazy :D
 
 \ #########################
 \ # Character Printing helpers
