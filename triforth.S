@@ -2088,16 +2088,18 @@ def_asmword "DEC4",   4,    0, dec4
 #          ascii  , len, flag, label
 def_asmword "AND" ,  3 ,   0 , and
   dpop %eax
-  andl %eax, (%ebp)
+  dpop %ebx
+  andl %eax, %ebx
+  dpush %ebx
   NEXT
 
 # ( u u -- u ) \ bitwise OR
 #          ascii , len, flag, label
 def_asmword "OR" ,  2 ,   0 , or
-  movl $8, %eax
-  call checkStackSize
   dpop %eax
-  orl %eax, (%ebp)
+  dpop %ebx
+  orl %eax, %ebx
+  dpush %ebx
   NEXT
 
 # ( u u -- u ) \ bitwise XOR (exclusive OR)
@@ -2283,6 +2285,7 @@ def_asmword "BMOVE>",   6,   0 , bmoveRIGHT
   # Forth BMOVE, move count bytes from addr1 -> addr2.
   dpop %edi # count/index
   dpop %ecx # addr2
+  call *(panic) # TODO: this next line ain't right
   movl %eax, %edi  # index
   cmp $0, %edi # if count=0 exit
   je 2f
@@ -2295,9 +2298,27 @@ def_asmword "BMOVE>",   6,   0 , bmoveRIGHT
 2:
   ret
 
-# ( src dst count -- ) \ Moves bytes from src to dst
+# ( src dst count -- ) \ Moves bytes as uppercase from src to dst
 #                ascii    , len, flag, label
 def_callword "BMOVEUPPER" , 10 ,    0, bmoveUpper
+
+# ( src dst count -- ) \ Move count cells from src to dst
+#               ascii , len, flag, label
+def_asmword "CELLMOVE",   8,    0, cellmove
+  dpop %ecx # count/index
+  dpop %ebx # dst
+  dpop %eax # src
+  movl $0, %edi # index
+1:
+  cmp %edi, %ecx
+  jge 2f
+  movl (%eax,%edi,4), %edx
+  movl %edx, (%ebx,%edi,4)
+  inc %edi
+  jmp 1b
+2:
+  NEXT
+
 
 # ( addr -- addr count ) \ counts a null-terminated (c-style) string.
 #           ascii      , len, flag, label
@@ -2928,6 +2949,7 @@ def_const "SYS_READ",             8, SYS_READ
 def_const "SYS_CLOSE",            9, SYS_CLOSE
 def_const "SYS_EXIT",             8, SYS_EXIT
 def_const "IOB",                  3, iob
+def_const "F_ERR",                5, F_ERR
 
 testConst:
   callXt $xt_FR_TIME_IMM
@@ -3502,13 +3524,14 @@ def_asmword "0BRANCH",   7,    0, _0branch
   lodsl           # otherwise skip the offset
   NEXT
 
-# ( flag -- ) \ perform BRANCH iff the first byte=0. Don't
-# \ consume first word. This will be used for error checking.
+.equ F_ERR, 0x80000000 # most-significant-bit will flag an error
+# ( flag -- ) \ perform BRANCH iff the most-sig-bit=0. Don't
+# \ consume first word. This will be used for our error handling.
 #                 ascii, len, flag, label
-def_asmword "?BRANCH",   7,    0, QUESTIONbranch
+def_asmword "?0BRANCH",   8,    0, QUESTIONbranch
   # NOTE: %eax contains xt of current instruction from NEXT. Don't override it!
-  cmpb $0, (%ebp)
-  je word_branch  # if 0, jump to code in BRANCH above
+  testl $F_ERR, (%ebp) # does AND setting flags, discards the AND
+  jz word_branch
   lodsl           # otherwise skip the offset
   NEXT
 

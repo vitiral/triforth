@@ -195,30 +195,44 @@ assertEmpty -test
 : u8 ( u -- u8 ) 0x FF AND ; \ mask upper bits
 
 \ #########################
-\ # Stack Functions
-\ The R@N functions must NEVER be exected at runtime since
-\ the return stack is corrupted by executing them.
+\ # Stack Operations
 : R@ ( -- u ) IMM  compile, rsp@   compile, @ ;
-: R@1 ( -- u ) IMM compile, rsp@   compile, cell+   compile, @ ;
+: R@1 ( -- u ) rsp@ 0x 2 cells + @ ; \ 2 cells because we have to skip caller's address
+: R@2 ( -- u ) rsp@ 0x 3 cells + @ ;
 : 2>R ( u:a u:b -- ) IMM compile, swap  compile, >R  compile, >R ; \ R: ( -- a b)
 : 2R> ( -- u:a u:b ) IMM compile, R>  compile, R>  compile, swap ; \ R: ( a b -- )
 : >R@ ( u -- u \ store+fetch) IMM compile, dup  compile, >R ; \ same as >R R@
 : 2>R@ ( u64 -- u64 \ store+fetch) IMM compile, 2dup  compile, 2>R ;
-: Rdrop ( -- \ drop value on R) IMM compile, R>  compile, drop ;
-: 2Rdrop ( -- \ drop value on R) IMM compile, 2R>  compile, 2drop ;
-\ : lroll ( u:x@N u:x@n-1 ... u:x@0 u:N -- u:x@N-1 ... u:x@0 u:x@N )
+: Rdrop ( -- \ drop cell on R) IMM  compile, R>  compile, drop ;
+: 2Rdrop ( -- \ drop 2cells on R) IMM  [compile] 2R>  compile, 2drop ;
+: swapAB ( ... A B -- ... ) \ swap size A with size B
+  \ TODO: check that memory is large enough and no stack overflow
+  \ Naming: B is the size, &B is a pointer to the data. Same with A
+  \ So, we want to move &A -> &B and &B -> &A. We use temporary storage on the stack
+  >R@ ( =B) DSP@ 0x 2 cells + >R@ ( =&B)
+  dup over 0x 16 + - >R@ ( =tmp dest) lrot cellmove \ move B to tmp stack
+  \ D: ( A)  R: ( B &B &tmp) -- we now want to move &A down to &B
+  R@1 ( =&B) R@2 ( =B) cells + ( =&A src) R@1 ( =&B dst) lrot >R@ ( =A) cellmove
+  \ D: ( )   R: ( B &B &tmp A) we need to move B to where A was
+  R> ( =A) R@1 ( =&B) + ( =dst &A)  R> ( =&tmp src) swap Rdrop R> ( =B )
+  cellmove ;
 
 MARKER -test
 assertEmpty
 : testR@ 0x 42 >R   r@ 0x 42 assertEq    R> 0x 42 assertEq ;
 : testR@1 0x 42 >R 0x 43 >R  r@ 0x 43 assertEq    r@1 0x 42 assertEq
-  R> 0x 43 assertEq   R> 0x 42 assertEq ;
+  R> 0x 43 assertEq   R> 0x 42 assertEq assertEmpty ;
 : test2>R 0x 42 0  2>R   R@ 0 assertEq  R@1 0x 42 assertEq
-          2R>   0 asserteq   0x 42 assertEq ;
-testR@ testR@1 test2>R assertEmpty -test
+          2R>   0 asserteq   0x 42 assertEq assertEmpty ;
+: testR@2 0x 42 >R 0 >R 0 >R assertEmpty R@2 0x 42 assertEq 2Rdrop Rdrop ;
+\ TODO: testSwapAB
+testR@ testR@1 test2>R testR@2 assertEmpty 
+\ 0x 1          0x 2          0x 3          0x 4    0x 4 lrotN 
+\ 0x 1 assertEq 0x 4 assertEq 0x 3 assertEq 0x 2 assertEq
+-test
 
 \ #########################
-\ # Strings
+\ # Strings and Formatting
 \ This forth uses a unique way to specify strings that is often superior to
 \ many other languages. Like many c-style languages, the `\` character "escapes"
 \ the next character to be processed. For instance \n means the newline character,
@@ -346,11 +360,23 @@ MARKER -test
 : test.fln \" Arvada\"  .f\" Hello $.s !\n\" ; test.fln
 -test
 
+\ #########################
+\ # Errors and Error Hanlding
+\ In this forth there are two kinds of errors:
+\ - panic: we have already seen this. This aborts the program immediately,
+\   printing out some debug information. This is the correct error in cases
+\   where the _programmer_ made a mistake, i.e. by using too many stack values.
+\   Panics should NOT be caught (outside of tests), as there is no way to
+\   clean up any leftover state.
+\ - Result enum type. This has two possible values: Ok and Error and uses the
+\   ? operator (which uses ?0BRANCH) to handle errors cleanly.
+
+
 : } .fln\" only use } with {\"  panic ;
 : { IMM \ compile-block. This calls exec|compile on all words until }.
   \ At first this may seem useless since it is what the interpreter already
   \ does, but when you combine it with strings or ? (below) it allows you to
-  \ execute any arbitrary code instead of a single statement.
+  \ execute any arbitrary code instead of only a single statement.
   \ ( Ex) \" foo${ any code here } bar\"
   \ ( Ex) doSomethingDangerous ? { error handling code } ( ... rest of function)
   ' [compile] } ( <xt of }> ) BEGIN
@@ -360,9 +386,8 @@ MARKER -test
     THEN
   AGAIN ;
 
-: _ IMM  ; \ Noop, useful with ? if no code needs to be executed
 : IF? IMM  \ ( flagu8 -- flagu8 ) Check IF least-significant-byte of stack is 0.
-  compile, ?BRANCH  &here @  0 , ;   \ see IF for explanation
+  compile, ?0BRANCH  &here @  0 , ;   \ see IF for explanation
 : ? IMM \ If error, execute next statement and exit.
   \ "error" is defind by any non-zero value in the least-significant-byte
   \ of the top value on the stack. This allows other values to be stored
@@ -377,41 +402,40 @@ MARKER -test
   [compile] IF?
     word find nt>xt exec|compile    compile, EXIT
   [compile] THEN ;
+: _ IMM  ; \ Noop, useful with ? if there is no cleanup.
 
 MARKER -test
-: testIF?  0 IF? failTest         THEN 0 assertEq
-  false      IF? failTest         THEN false assertEq
-  0x FF00    IF? failTest         THEN 0x FF00 assertEq
-  0x 1       IF? 0x 1 assertEq    ELSE failTest THEN
-  true       IF? true assertEq    ELSE failTest THEN
-  0x FF01    IF? 0x FF01 assertEq ELSE failTest THEN
+: testIF?  0    IF? failTest                THEN 0 assertEq
+  false         IF? failTest                THEN false assertEq
+  0x 7FFFFFFF   IF? failTest                THEN 0x 7FFFFFFF assertEq
+  F_ERR         IF? F_ERR assertEq          ELSE failTest THEN
+  true          IF? true assertEq           ELSE failTest THEN
+  F_ERR 0x FF01 OR IF? 0x 8000FF01 assertEq           ELSE failTest THEN
   ;  testIF?
 : test?  0     ? failTest              0 assertEq
   false        ? failTest              false assertEq
   0x FF00      ? failTest              0x FF00 assertEq
-  0x 1         ? { drop }              assertEmpty
+  F_ERR        ? { drop }              assertEmpty
   true         ? { true assertEq }     assertEmpty
-  0x FF01      ? { 0x FF01 assertEq }  assertEmpty
+  0x FF010000  ? { 0x FF010000 assertEq }  assertEmpty
   ; test?
 -test
 
-: joinErr ( u24 u8:err -- u24|err ) u8 swap 8shl + ; \ combine a value with an error
-: splitErr ( u24|err -- u24 u8:err) dup u8 swap 8shr swap ;
-: ignoreErr IMM ( u24|err -- u24 ) compile, 8shr ; \ simply ignore the error
-0x F00F 0x 82 joinErr dup 0x F00F82 assertEq   splitErr 0x 82 assertEq  0x F00F assertEq
+\ The Result enum which has two values: Error and Result. The F_ERR flag takes
+\ up a single bit, the highest one, leaving 31 bits to be used for data, an
+\ error code or even a pointer.
+: Error ( u -- Error ) F_ERR OR ;  \ sets the F_ERR bit
+: Ok    ( u -- Ok )    F_ERR INVERT AND ; \ clears the F_ERR bit
 
-\ Now that we understand how our error handling works, we can define our basic
-\ write functions.
-
-: syswrite ( count addr fd -- eax ) SYS_WRITE SYSCALL3 ;
-: write ( addr count fd -- count|err? )
+: syswrite ( count addr fd -- eax )
+  \ Calls syswrite which returns the count written or a negative errno
+  SYS_WRITE SYSCALL3 ;
+: write ( addr count fd -- u24Result )
   rrot swap lrot ( count addr fd )
-  3dup syswrite dup 0 < IF negate ( positive error <255)
-  ELSE 0 joinErr \ return count|err=0
-  THEN ;
-\ : writeall ( addr count fd -- numWritten|err ) \ attempt to write all bytes.
-\   \ Note: If \ error is encountered numWritten will always be 0 since it is
-\   \ never valid anyway.
+  3dup syswrite dup 
+  0 < IF negate F_ERR THEN ; \ if <0 set F_ERR flag
+\ : writeall ( addr count fd -- numWritten|err ) 
+\   \ Call write until all bytes written or an error is encountered
 \   over 0x 3 roll ( count addr count fd )
 \   BEGIN  swap dup R@ <= WHILE \ while count<=numWritten
 \     3dup write ? { >R 4drop R> } \ on error drop values and numWritten, preserve count
