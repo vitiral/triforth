@@ -105,20 +105,21 @@ testCache @1  &latest @ assertEq assertEmpty
 \ Using our BRANCH and 0BRANCH words we can create IF (ELSE?) THEN and LOOP
 \ control structures. We do this by putting HERE on the stack at compile time
 \ and using its value to branch backwards.
+
+
+\ ####
+\ # IF ( ELSE ) THEN
 : IF IMM  \ ( -- )
   \ ( flag ) IF <ifblock> ELSE? <elseblock> THEN  is a conttrol structure. If flag<>0, the
   \ <ifblock> is executed. If there is an ELSE block, it will otherwise be executed.
   compile, 0BRANCH \ compile 0BRANCH, which branches to next literal if 0
   &here @     \ preserve the current location for THEN to consume
   0x 0 , ;       \ compile a tmp offset to be overriden by THEN
-: UNLESS IMM compile, not   [compile] IF ; \ opposite of IF
-
 : THEN IMM \ ( addr -- ) Follows from IF or ELSE
   \ We want to replace the value IF jumps to to the current address.
   \ 0BRANCH uses relative jumps, so we want it to jump to here-addr
   dup &here @ swap \ ( addr here addr )
   - swap ! ;       \ Store (here-addr) at addr
-
 : ELSE IMM \ ( addr -- addr )
   compile, BRANCH \ compile definite branch. IF was nonzero this will execute after
              \ its block
@@ -138,6 +139,8 @@ false testUNLESS 0x 420 assertEq    true testUNLESS 0x 42 assertEq
 0x 42 testUNLESS 0x 42 assertEq     assertEmpty
 -test
 
+\ ####
+\ # BEGIN UNTIL  |  BEGIN AGAIN
 : BEGIN IMM \ BEGIN <block> ( flag ) UNTIL will execute <block> until flag<>0
   &here @ ; \ put the address of HERE on the stack for UNTIL/AGAIN to consume
 : UNTIL IMM  \ ( flag -- ) BRANCH to the BEGIN offset if flag<>0
@@ -160,6 +163,8 @@ MARKER -test
 0x 10 0x 3 testBeginAgain 0x 80 assertEq
 assertEmpty -test
 
+\ ####
+\ # BEGIN WHILE REPEAT
 : WHILE IMM \ BEGIN ... ( flag ) WHILE ... REPEAT loop while flag<>0
   [compile] IF ; \ create a branch with tmp offset and push tmp addr under
 : REPEAT IMM swap  \ swap so beginaddr is top, followed by whileaddr
@@ -219,16 +224,14 @@ assertEmpty -test
 
 MARKER -test
 assertEmpty
-: testR@ 0x 42 >R   r@ 0x 42 assertEq    R> 0x 42 assertEq ;
+: testR@ 0x 42 >R   r@ 0x 42 assertEq    R> 0x 42 assertEq ; testR@
 : testR@1 0x 42 >R 0x 43 >R  r@ 0x 43 assertEq    r@1 0x 42 assertEq
-  R> 0x 43 assertEq   R> 0x 42 assertEq assertEmpty ;
+  R> 0x 43 assertEq   R> 0x 42 assertEq assertEmpty ; testR@1
 : test2>R 0x 42 0  2>R   R@ 0 assertEq  R@1 0x 42 assertEq
-          2R>   0 asserteq   0x 42 assertEq assertEmpty ;
-: testR@2 0x 42 >R 0 >R 0 >R assertEmpty R@2 0x 42 assertEq 2Rdrop Rdrop ;
+          2R>   0 asserteq   0x 42 assertEq assertEmpty ; test2>R
+: testR@2 0x 42 >R 0 >R 0 >R assertEmpty R@2 0x 42 assertEq 2Rdrop Rdrop
+  ; testR@2
 \ TODO: testSwapAB
-testR@ testR@1 test2>R testR@2 assertEmpty 
-\ 0x 1          0x 2          0x 3          0x 4    0x 4 lrotN 
-\ 0x 1 assertEq 0x 4 assertEq 0x 3 assertEq 0x 2 assertEq
 -test
 
 \ #########################
@@ -253,9 +256,6 @@ testCache @ b@ ( byte at previous here) 0x 32  assertEq
 &here @ 1-   testCache @ assertEq \ test: here has moved forward 1
 aligned    &HERE @ 4-   testCache @ assertEq \ test: alignment moves here +4
 -test
-
-\ : litc8bytes ( -- addr count ) \ literal bytes with an 8bit count (<=255 bytes)
-\   R@ \ addr of next xt to "run". We will not run it as it contains our cbytes
 
 : map\" ( xt -- ) \ Call an xt for each byte in a literal escaped string.
   \ The xt needs to be of this type: ( ... u8 bool:escaped -- ... )
@@ -323,20 +323,17 @@ MARKER -test
 \ writing to a file, etc.
 \ Note: the space (or other whitespace) at the end of "$NAME " is consumed and
 \ is necessary. When this function encounters a $ it
-\ simply does  WORD FIND NT>XT  to get the xt. WORD consumes the extra space.
+\ simply does  WORD FIND NT>XT EXEC|COMPILE to get the xt and pretend it is the interpreter. 
+\ WORD consumes the extra space.
 \ Note: $ can be escaped with \$
-
-\ The exec functions Consume the values from map\" and behaves appropriately.
-\ most values will call _lits, since we just want to compile them and inc
-\ count. However, formatting calls require: 
 
 : _exec \ ( 'str addr-count count u8 unknown-escaped -- 'str addr-count count )
   \ 'str must be xt of type ( addr count -- )
   IF ( handle unknown escape) 
-    dup [ascii] $ = IF false _lits \ if \$ pass as known $
-    ELSE true _lits \ else pass to _lits as unknown, which panics
+    dup [ascii] $ = IF false _lits \ if \$ pass as unescaped $
+    ELSE true _lits \ else pass to _lits as escaped which handles or panics
     THEN EXIT
-  THEN 
+  THEN
   dup [ascii] $ = IF
     \ - Finsh the previous litstr
     \ - Compile the xt to run on litstrings into the word
@@ -344,7 +341,6 @@ MARKER -test
     \ - start a new litstr
     drop ( drop key) _litsFinish    dup ( ='str) exec|compile
     word ( word from STRING) find nt>xt exec|compile   _litsStart ( 'str addr-count count)
-    \ TODO: support "$( any arbitrary forth code ) "
   ELSE false _lits THEN ;
 
 : exec\" IMM ( 'str -- )
@@ -359,6 +355,20 @@ MARKER -test
 : test.f \" Denver\"  .f\" Hello $.s !\n\" ; test.f
 : test.fln \" Arvada\"  .f\" Hello $.s !\n\" ; test.fln
 -test
+
+\ #########################
+\ # Testing Harness and Debugging Tools
+\ Okay, now that we have awesome string formatting, we can build out a better
+\ test harness and debugging tools.
+\ dumpInfo: we will replace the old one with one that also prints the return stack
+\   along with the name of the word (or ??? if it doesn't know).
+
+\ : runTest
+\   &latest @ nt>xt execute
+\   &latest @ @ 
+\   TEST_PREFIX_STR countnt .s  &latest @ nt>name .s TEST_PASS_STR countnt .s
+\   R> &here !  R> &latest ! ; \ restore dict state
+
 
 \ #########################
 \ # Errors and Error Hanlding

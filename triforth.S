@@ -119,6 +119,7 @@
 
 # Our Panic Error Codes
 .equ ERR_SEE_MSG,0x001
+.equ ERR_OKAY,0xBEEF # okay
 .equ ERR_DSTACK_OVERFLOW,0x300
 .equ ERR_DSTACK_UNDERFLOW,0x301
 .equ ERR_ASCII_BOUNDS,0x302
@@ -368,7 +369,7 @@ exit0: # ( -- )
   jmp sysexit
 
 assertEaxEbxEq: # %eax %ebx ( -- )
-  cmp %eax, %ebx
+  cmpl %eax, %ebx
   jne failTest
   ret
 
@@ -416,7 +417,7 @@ testing_setEbx42:
 reset: # ( * -- ) ( R: * -- )
   # Clears the data and return stacks and returns control at rstackCheckpoint
   # Important: this is ONLY used in panic handling code during testing.
-  cmp $0, rstackCheckpoint        # if rstackCheckpoint is 0 then we must exit
+  cmpl $0, rstackCheckpoint        # if rstackCheckpoint is 0 then we must exit
                               # since we don't know where to return
   je 1f
   movl rstackCheckpoint, %esp   # reset the rstack to the landing pad
@@ -451,7 +452,7 @@ testPanicHandle: # ( * -- )
   # 2.
   call testing_willPanic
   # 4.
-  cmp $0, panicErr
+  cmpl $0, panicErr
   je 1f
   call failTest
 1:
@@ -493,7 +494,7 @@ testing_panics:
 checkPushDs:
   # Checks to make sure that the datastack hasn't overflowed.
   # If it has, re-increments and panics with appropriate error.
-  cmp $dstackMin, %ebp
+  cmpl $dstackMin, %ebp
   jl 1f
   ret
 1:
@@ -511,7 +512,7 @@ checkPushDs:
 checkPopDs:
   # Checks to make sure that the datastack hasn't underflowed.
   # If it has, re-decrements and panics with appropriate error.
-  cmp $dstackMax, %ebp
+  cmpl $dstackMax, %ebp
   jge 1f
   ret
 1:
@@ -559,13 +560,13 @@ testDsPushPop:
   movl $77, panicErr
   setPanicCatch $panicHandle0
   call testing_underflow
-  cmp $0, panicErr
+  cmpl $0, panicErr
   jne testDsPushPop_fail
 
   movl $77, panicErr
   setPanicCatch $panicHandle0
   call testing_overflow
-  cmp $0, panicErr
+  cmpl $0, panicErr
   jne testDsPushPop_fail
 
   call resetPanicCatch
@@ -836,7 +837,7 @@ syswrite: # %ebx:fd %ecx:&buff %edx:bytesToWrite ( -- )
   # Direct call to SYS_WRITE syscall with error checking.
   movl $SYS_WRITE, %eax
   int $LINUX_SYSCALL
-  cmp $0, %eax
+  cmpl $0, %eax
   jl 1f
   ret
 1:
@@ -974,7 +975,7 @@ pntUx_zero:
 ebx_toascii: # ( u -- c )
   # convert a number (typically 1-16) into ascii equivalent
   # This is used with pntUx (above)
-  cmp $9, %ebx
+  cmpl $9, %ebx
   jg 1f
   # number <= 9
   addl $'0', %ebx
@@ -1042,7 +1043,7 @@ pntStack: # ( -- )
   dpush $0   # (%ebp) is index
 1:
   movl (%ebp), %eax
-  cmp %eax, 4(%ebp) # compare depth with index
+  cmpl %eax, 4(%ebp) # compare depth with index
   je 2f
   call dup
   dpush $4
@@ -1086,7 +1087,7 @@ bmove: # ( addr1 addr2 count -- )
   dpop %ebx # addr1
   movl $0, %edi  # index
 1:
-  cmp %edi, %eax
+  cmpl %edi, %eax
   je 2f
   movb (%ebx,%edi,1), %dl
   movb %dl, (%ecx,%edi,1)
@@ -1102,7 +1103,7 @@ bmoveUpper: # ( addr1 addr2 count -- )
   dpop %eax # addr1
   movl $0, %edi  # index
 1:
-  cmp %edi, %ecx
+  cmpl %edi, %ecx
   je 2f
   movb (%eax,%edi,1), %bl
   call bl_toupper
@@ -1402,7 +1403,7 @@ dump: # ( addr count -- ) \ Dump the contents of the address onto emitFd
   call over
   callXt $xt_align4
   dpop %eax
-  cmp 4(%ebp), %eax
+  cmpl 4(%ebp), %eax
   je 1f
   subl $4, %eax # we are not aligned, start at aligned-4
   movl %eax, 4(%ebp)
@@ -1412,7 +1413,7 @@ dump: # ( addr count -- ) \ Dump the contents of the address onto emitFd
   dpush %eax
 2:
   movl (%ebp), %eax
-  cmp %eax, 4(%ebp) # does addr=addrtop?
+  cmpl %eax, 4(%ebp) # does addr=addrtop?
   je 2f
   call over
   call dump_addr
@@ -1668,7 +1669,7 @@ def_asmword "REPLACE" ,   7,    0 , replace
 def_asmword "?DUP" , 4 ,  0 ,   QDUP
   movl $4, %eax
   call checkStackSize
-  cmp $0, (%ebp)
+  cmpl $0, (%ebp)
   je 1f
   call dup
 1:
@@ -1790,7 +1791,7 @@ def_callword "FAILTEST",  8,    0, failTest
 #           ascii,        len, flag, label
 def_asmword "ASSERTTRUE",  10,    0, assertTrue
   dpop %eax
-  cmp $0, %eax
+  cmpl $0, %eax
   je 1f
   NEXT
 1:
@@ -1801,7 +1802,7 @@ def_asmword "ASSERTTRUE",  10,    0, assertTrue
 #           ascii,         len, flag, label
 def_asmword "ASSERTFALSE",  11,    0, assertFalse
   dpop %eax
-  cmp $0, %eax
+  cmpl $0, %eax
   jne 1f
   NEXT
 1:
@@ -2121,7 +2122,7 @@ def_asmword "INVERT" ,  6 ,   0 , invert
 
 not:
   dpop %eax
-  cmp $0, %eax
+  cmpl $0, %eax
   je 1f
   dpush $FALSE  # false
   ret
@@ -2140,7 +2141,7 @@ def_asmword "=0",  2 ,   0 , EQ0
   NEXT
 
 bool: # ( n -- flag )  \ convert integer to TRUE or FALSE
-  cmp $0, (%ebp)      # if FALSE just return
+  cmpl $0, (%ebp)      # if FALSE just return
   je 1f
   movl $TRUE, (%ebp)  # else force TRUE
 1:
@@ -2156,7 +2157,7 @@ def_callword "BOOL",   4,   0, bool
   def_asmword "\name" , \namelen , \flags , \label
   dpop %ebx
   dpop %eax
-  cmp %ebx, %eax
+  cmpl %ebx, %eax
   \jumpcondition 1f
   dpush $FALSE  # false
   NEXT
@@ -2287,7 +2288,7 @@ def_asmword "BMOVE>",   6,   0 , bmoveRIGHT
   dpop %ecx # addr2
   call *(panic) # TODO: this next line ain't right
   movl %eax, %edi  # index
-  cmp $0, %edi # if count=0 exit
+  cmpl $0, %edi # if count=0 exit
   je 2f
   dec %edi
 1:
@@ -2310,7 +2311,7 @@ def_asmword "CELLMOVE",   8,    0, cellmove
   dpop %eax # src
   movl $0, %edi # index
 1:
-  cmp %edi, %ecx
+  cmpl %edi, %ecx
   jge 2f
   movl (%eax,%edi,4), %edx
   movl %edx, (%ebx,%edi,4)
@@ -2324,9 +2325,9 @@ def_asmword "CELLMOVE",   8,    0, cellmove
 #           ascii      , len, flag, label
 def_callword "COUNTNT" ,  7 ,  0 ,  countnt
 
-# ( addr -- addr count ) \ convert c8bytes (8bit counted bytes) to addr count
+# ( addr -- addr count ) \ convert carrayu8 (8bit counted bytes) to addr count
 #           ascii  , len, flag, label
-def_asmword "COUNT8",   6,   0 , count8
+def_asmword "COUNT",   5,   0 , count
   dpop %eax        # addr
   movl $0, %ebx
   movb (%eax), %bl # count
@@ -2379,7 +2380,7 @@ def_asmword "CEQ",   3,   0 , ceq
   movl $16, %eax
   call checkStackSize
   movl (%ebp), %eax
-  cmp %eax, 8(%ebp)  # cmp count1 to count2
+  cmpl %eax, 8(%ebp)  # cmp count1 to count2
   jne ceq_ne
   callXt $xt_compare
   call not
@@ -2396,7 +2397,7 @@ def_asmword "BYTESEQNOCASE", 9, 0, bytesEqNoCase
   movl $16, %eax
   call checkStackSize
   movl (%ebp), %eax
-  cmp %eax, 8(%ebp)  # cmp count1 to count2
+  cmpl %eax, 8(%ebp)  # cmp count1 to count2
   jne byteseq_igcase_ne
   movl 4(%ebp), %ecx  # addr2
   movl 12(%ebp), %eax # addr1
@@ -2485,11 +2486,19 @@ def_asmword ".SLN",   4,    0, pntSln
   call emit
   NEXT
 
-# ( -- ) \ panics immediately with ERR_SEE_MSG
+# ( -- ) \ The default panic handler
+#            ascii   , len, flag, label
+def_asmword "ASMPANIC", 8,  0, asmpanic
+  movl $ERR_SEE_MSG, panicErr
+  call defaultPanic
+
+# ( -- ) \ Calls the variable (defined later) allowing us to override the default
+#        \ panic handler
 #            ascii   , len, flag, label
 def_asmword "PANIC" ,  5 ,  0 ,  panic
-  movl $ERR_SEE_MSG, panicErr
-  call *(panic)
+  movl var_REFXTpanic, %eax
+  call _callXt
+  call unreachable
 
 ####
 # Builtin Test
@@ -2559,7 +2568,7 @@ readKey: # ( -- ) \ reads a byte into keyBuffer
   movl $keyBuffer, %ecx
   movl $1, %edx
   call sysread
-  cmp $0, %eax
+  cmpl $0, %eax
   jl readKeyErr
   ret
 readKeyErr:
@@ -2585,7 +2594,7 @@ sysopen: # %ebx:&fnameNt %ecx:intention %edx:permissions ( -- ) %eax:fd
   # check %eax for errors and panic if they exist.
   movl $SYS_OPEN, %eax
   int $LINUX_SYSCALL
-  cmp $0, %eax
+  cmpl $0, %eax
   jl 1f
   ret
 1:
@@ -2597,7 +2606,7 @@ sysclose: # %ebx:fd ( -- )
   # Close the filedescriptor
   movl $SYS_CLOSE, %eax
   int $LINUX_SYSCALL
-  cmp $0, %eax
+  cmpl $0, %eax
   jl 1f
   ret
 1:
@@ -2663,7 +2672,7 @@ def_asmword "TOUPPER",    7,    0, toupper
   movl 4(%ebp), %edx  # addr
   movl $0, %edi       # index
 1:
-  cmp %edi, %ecx  # compare count to index
+  cmpl %edi, %ecx  # compare count to index
   je 2f
   movb (%edx,%edi,1), %bl
   call bl_toupper
@@ -2680,7 +2689,7 @@ word_loop:
   cmpl $MAX_WORD_LEN, (%ebp)
   jg word_err
   call readKey
-  cmp $0, %eax # check for EOF
+  cmpl $0, %eax # check for EOF
   je word_eof
   movb keyBuffer, %bl
   # check for whitespace: all bytes > ascii-space are not whitespace. This
@@ -2695,7 +2704,7 @@ word_loop:
   addl $1, (%ebp)  # increment count
   jmp word_loop
 word_ret_maybe:   # possibly return a word... or keep looping if count=0
-  cmp $0, (%ebp)  # are there any bytes in the buffer?
+  cmpl $0, (%ebp)  # are there any bytes in the buffer?
   je word_loop    # word not yet encountered, keep looping
 word_eof: # (in case of EOF we still push the count)
   movl (%ebp), %eax
@@ -2772,7 +2781,7 @@ ebx_asciitou_err:
 #          ascii, len, flag, label
 def_asmword "\\",   1, FR_TIME_IMM, linecomment
   call readKey
-  cmp $0, %eax # check for EOF
+  cmpl $0, %eax # check for EOF
   je 1f
   cmpb $'\n', keyBuffer
   jne word_linecomment # loop
@@ -2785,7 +2794,7 @@ def_asmword "\\",   1, FR_TIME_IMM, linecomment
 def_asmword "ASCII",   5,    0, ascii
   callXt $xt_word # ( addr count )
   dpop %eax
-  cmp $1, %eax  # see if length <> 1
+  cmpl $1, %eax  # see if length <> 1
   jne 1f
   dpop %eax  # get the address
   movl $0, %ebx  # zero ebx and move ascii into bl
@@ -2802,7 +2811,7 @@ def_asmword "ASCII",   5,    0, ascii
 def_asmword "0X",   2, FR_TIME_IMM, _0x
   callXt $xt_word # ( addr count )
   call strTOhex
-  cmp $0, var_REFstate
+  cmpl $0, var_REFstate
   jne 1f
   NEXT # runmode: leave value on stack
 1: # Compile mode: compile the literal into the word
@@ -2814,14 +2823,14 @@ def_asmword "0X",   2, FR_TIME_IMM, _0x
 strTOhex: # ( addr count -- u )
   movl $8, %eax
   call checkStackSize
-  cmp $0, (%ebp)
+  cmpl $0, (%ebp)
   je _0x_noword       # word returned a count of 0=no word so panic
   movl $0, %edi       # index
   movl $0, %eax       # cumulative value
   movl $0, %ebx       # byte value
   movl 4(%ebp), %ecx  # address of word
 _0x_loop:
-  cmp %edi, (%ebp)  # cmp count with index
+  cmpl %edi, (%ebp)  # cmp count with index
   je _0x_done
   movb (%ecx,%edi,1), %bl # get the ascii and convert to int
   call ebx_asciitou
@@ -2915,11 +2924,13 @@ var_\label :
   .int \initial
 .endm
 
+
 #      ascii         , len, flag,  label , initial
 def_var "&STATE"     ,   6,    0, REFstate  , 0
 def_var "&HERE"      ,   5,    0, REFhere   , 0
 def_var "&LATEST"    ,   7,    0, REFlatest , 0 # initialized in _start
 def_var "&RSTACK_MAX",  10,    0, REFrstack_max , 0 # initialized in _start
+def_var "&'PANIC"    ,   7,    0, REFXTpanic , 0 # initialized in _start
 
 ##############################
 # Builtin Constants
@@ -2932,6 +2943,7 @@ def_asmword \name , \namelen , 0, \label
 
 #         ascii  ,              len, label
 def_const "0",                    1, 0
+def_const "1",                    1, 1
 def_const "TRUE" ,                4, TRUE
 def_const "FALSE" ,               5, FALSE
 def_const "RMAX" ,                4, rstackMax
@@ -2950,6 +2962,9 @@ def_const "SYS_CLOSE",            9, SYS_CLOSE
 def_const "SYS_EXIT",             8, SYS_EXIT
 def_const "IOB",                  3, iob
 def_const "F_ERR",                5, F_ERR
+def_const "TEST_PREFIX_NT",      14, testPrefixStr
+def_const "TEST_PASS_NT",        12, testPassStr
+def_const "&PANIC_ERR",          10, panicErr  # mem address is a constant :D
 
 testConst:
   callXt $xt_FR_TIME_IMM
@@ -3058,7 +3073,7 @@ def_asmword "ALIGN4",  6,    0, align4
 #            ascii  , len, flag, label
 def_asmword "NT>&F0",   6,    0, ntTOf0
   dpop %eax           # address of nt
-  cmp $0, %eax
+  cmpl $0, %eax
   je 1f
   addl $4, %eax       # start of c8bytes (count)
   movb (%eax), %bl    # ebx=count
@@ -3091,9 +3106,9 @@ def_asmword "NT>XT",   5,    0, ntTOxt
 
 # ( nt -- addr count ) \ given the nt return the name
 #             ascii  , len, flag, label
-def_asmword "NT>NAME",   9,    0, ntTOname
+def_asmword "NT>NAME",   7,    0, ntTOname
   addl $4, (%ebp) # name is directly after nt
-  callXt $xt_count8
+  callXt $xt_count
   NEXT
 
 # ( nt -- xt ) \ get "code field address" (xt) from nt
@@ -3214,7 +3229,7 @@ find_loop:
 
   callXt $xt_bytesEqNoCase  # find if strings are equal
   dpop %eax                 # if equal, return nt
-  cmp $TRUE, %eax           # stack: ( nt addrf countf )
+  cmpl $TRUE, %eax           # stack: ( nt addrf countf )
   je find_found
   jmp find_next
 find_found:
@@ -3223,7 +3238,7 @@ find_found:
 find_next:
   movl 8(%ebp), %ebx  # see if next link is 0, exit if is
   movl (%ebx), %eax   # %eax contains next nt
-  cmp $0, %eax
+  cmpl $0, %eax
   je find_not_found
   movl %eax, 8(%ebp)  # point link to next item
   jmp find_loop
@@ -3239,11 +3254,11 @@ xt_testFind:
 # Cannot find word which DNE
 .int xt_lit, testAbcStr, xt_countnt, xt_find, xt_lit, 0, xt_assertEq
 # Find SWAP
-.int xt_lit, c8bytes_swap, xt_count8, xt_find, xt_lit, nt_swap, xt_assertEq
+.int xt_lit, c8bytes_swap, xt_count, xt_find, xt_lit, nt_swap, xt_assertEq
 # Find EXIT
-.int xt_lit, c8bytes_EXIT, xt_count8, xt_find, xt_lit, nt_EXIT, xt_assertEq
+.int xt_lit, c8bytes_EXIT, xt_count, xt_find, xt_lit, nt_EXIT, xt_assertEq
 # Find 0x
-.int xt_lit, c8bytes__0x, xt_count8, xt_find, xt_lit, nt__0x, xt_assertEq
+.int xt_lit, c8bytes__0x, xt_count, xt_find, xt_lit, nt__0x, xt_assertEq
 .int xt_lit, testFindStr, xt_countnt, xt_pntTestPass
 .int xt_EXIT
 .align 4
@@ -3258,12 +3273,12 @@ DOCREATE: # ( -- xt-body ) \ the (default) execution word for CREATE. Simply
   dpush %eax     # push the body
   NEXT
 
-# ( addr namelen -- nt ) \ create the next word on the input stream in the dictionary
+# ( addr namelen -- nt ) \ create the given string in the dictionary
 #             ascii  , len, flag, label
 def_asmword "CREATE" ,  6 ,    0 , create
   movl $8, %eax
   call checkStackSize
-  cmp $MAX_WORD_LEN, (%ebp) # check if namelen > max
+  cmpl $MAX_WORD_LEN, (%ebp) # check if namelen > max
   jg create_fail
   movl var_REFhere, %edi  # edi=here=nt of this word
   movl var_REFlatest, %eax   # latest=previous word
@@ -3366,7 +3381,7 @@ def_doword "CREATEWORD",  10,    0, createWord
 # ( -- ) \ require the state to be in run mode
 #                ascii  , len, flag, label
 def_asmword "REQUIRERUN",  10,    0, requireRun
-  cmp $0, var_REFstate
+  cmpl $0, var_REFstate
   jne 1f
   NEXT
 1:
@@ -3376,7 +3391,7 @@ def_asmword "REQUIRERUN",  10,    0, requireRun
 # ( -- ) \ require the state to be in compile mode
 #                 ascii  , len, flag, label
 def_asmword "REQUIRECOMP",  11,    0, requireComp
-  cmp $0, var_REFstate
+  cmpl $0, var_REFstate
   je 1f
   NEXT
 1:
@@ -3397,7 +3412,7 @@ def_doword ":",   1,    0, COLON
 def_asmword "REQUIREEMPTY",  12,    0, requireEmpty
   call depth
   dpop %eax
-  cmp $0, %eax
+  cmpl $0, %eax
   jne 1f
   NEXT
 1:
@@ -3519,7 +3534,7 @@ def_asmword "BRANCH",   6,    0, branch
 def_asmword "0BRANCH",   7,    0, _0branch
   # NOTE: %eax contains xt of current instruction from NEXT. Don't override it!
   dpop %ebx  # count
-  cmp $0, %ebx
+  cmpl $0, %ebx
   je word_branch  # if 0, jump to code in BRANCH above
   lodsl           # otherwise skip the offset
   NEXT
@@ -3586,10 +3601,10 @@ eorc_err_badflag:
 def_asmword "INTERPRET",   9,    0, interpret
 interpret_loop:
   callXt $xt_word
-  cmp $0, (%ebp) # if count == 0, exit
+  cmpl $0, (%ebp) # if count == 0, exit
   je interpret_next
   callXt $xt_find
-  cmp $0, (%ebp) # if nt is 0 then error
+  cmpl $0, (%ebp) # if nt is 0 then error
   je interpret_err_noword
   callXt $xt_ntTOxt
   call execORcompile
@@ -3659,6 +3674,8 @@ _start:
   movl $nt_quit, var_REFlatest
   movl $rstackMax, %esp  # clear rstack
   movl $dstackMax, %ebp  # clear dstack
+  movl $ERR_OKAY, panicErr
+  call *(panic)
   jmp exit0
 
 .data
