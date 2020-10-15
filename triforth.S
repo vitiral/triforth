@@ -162,7 +162,7 @@
 .equ F0_LINENO,            0x00FFF000   # 12b: line number (max 4096)
 # Byte 4 (most-significant left-most byte)
 .equ F0_NAMELEN_MASK,      0x1F000000   # 5b: name's length (up to 32)
-.equ F0_NAMELEN_SHIFT,     24           # na: number of bits to shift
+.equ F0_NAMELEN_SHR,       24           # na: number of bits to shift
 .equ F0_NAMELEN_BYTE_MASK, 0x1F         # na: mask used for left-most byte
 .equ F0_RESL,              0xE0000000   # 3b: top 3 bits unused
 
@@ -1484,7 +1484,7 @@ c8bytes_EXIT:
   .ascii "EXIT" # the word name
   .align 4
 flags_EXIT:
-  .int (4<<F0_NAMELEN_SHIFT)  # F0
+  .int (4<<F0_NAMELEN_SHR)  # F0
   .int 0                      # FR
 xt_EXIT:
   .int word_EXIT # xt
@@ -1498,7 +1498,7 @@ c8bytes_MUL:
   .ascii "*"    # the word name
   .align 4
 flags_MUL:
-  .int (3<<F0_NAMELEN_SHIFT)  # F0
+  .int (3<<F0_NAMELEN_SHR)  # F0
   .int 0                      # FR
 xt_MUL:
   .int word_MUL # xt
@@ -1546,7 +1546,7 @@ c8bytes_\label :
   .ascii "\name"       # the ascii name itself
   .align 4             # padding to next 4 byte boundary
 flags_\label :
-  .int \namelen << F0_NAMELEN_SHIFT # F0
+  .int \namelen << F0_NAMELEN_SHR # F0
   .int \flags                       # FR
 xt_\label :
   .int word_\label
@@ -1574,7 +1574,7 @@ c8bytes_\label :
   .ascii "\name"        # the ascii name itself
   .align 4              # padding to next 4 byte boundary
 flags_\label :
-  .int \namelen << F0_NAMELEN_SHIFT # F0
+  .int \namelen << F0_NAMELEN_SHR # F0
   .int \flags                       # FR
 xt_\label :
   .int DOCOL
@@ -2392,8 +2392,8 @@ ceq_ne:
 
 # ( addr1 count1 addr2 count2 -- flag )
 # \ return whether bytes1==bytes2 with case ignored
-#         ascii  , len, flag, label
-def_asmword "BYTESEQNOCASE", 9, 0, bytesEqNoCase
+#                     ascii, len, flag, label
+def_asmword "BYTESEQNOCASE",  13,    0, bytesEqNoCase
   movl $16, %eax
   call checkStackSize
   movl (%ebp), %eax
@@ -2946,9 +2946,10 @@ def_const "0",                    1, 0
 def_const "1",                    1, 1
 def_const "TRUE" ,                4, TRUE
 def_const "FALSE" ,               5, FALSE
-def_const "RMAX" ,                4, rstackMax
+def_const "RSMIN" ,               5, rstackMin
+def_const "RSMAX" ,               5, rstackMax
+def_const "HEAPMAX",              7, heapMax
 def_const "DOCOL",                5, DOCOL
-def_const "F0_NAMELEN",          10, F0_NAMELEN_MASK
 def_const "FR_TIME_MASK",        12, FR_TIME_MASK
 def_const "FR_TIME_RUN",         11, FR_TIME_RUN
 def_const "FR_TIME_IMM",         11, FR_TIME_IMM
@@ -3111,6 +3112,16 @@ def_asmword "NT>NAME",   7,    0, ntTOname
   callXt $xt_count
   NEXT
 
+# ( &fr -- addr count ) \ given the nt return the name
+#                   ascii, len, flag, label
+def_asmword "&F0>NAMELEN",  11,    0, frTOnamelen
+  dpop %eax
+  movl (%eax), %eax
+  andl $F0_NAMELEN_MASK, %eax
+  shr $F0_NAMELEN_SHR, %eax
+  dpush %eax
+  NEXT
+
 # ( nt -- xt ) \ get "code field address" (xt) from nt
 #         ascii  , len, flag, label
 def_doword ">CFA",   4,    0, TOcfa
@@ -3130,6 +3141,12 @@ def_doword "XT>&FR",   5,    0, xtTOfr
   .int xt_dec4
   .int xt_EXIT
 
+# ( xt -- FR ) \ get FR flags of the word
+#           ascii  , len, flag, label
+def_doword "XT>&F0",   5,    0, xtTOf0
+  .int xt_dec4
+  .int xt_dec4
+  .int xt_EXIT
 
 .align 4
 xt_test_ntTOother_constructed0: # unaligned name
@@ -3299,7 +3316,7 @@ def_asmword "CREATE" ,  6 ,    0 , create
   movl var_REFhere, %eax   # restore HERE into eax
   addl %ecx, %eax       # add namelen to HERE and align
   call eax_align4
-  shl $F0_NAMELEN_SHIFT, %ecx # shift namelen to use as F0
+  shl $F0_NAMELEN_SHR, %ecx # shift namelen to use as F0
   movl %ecx, (%eax)           # dict: set F0
   addl $4, %eax               # increment eax to point to FR
   movl $0, (%eax)             # set FR to 0
@@ -3326,7 +3343,7 @@ xt_testCreate:
 .int xt_dup, xt_lit, testCreatedWordUpper, xt_countnt, xt_find, xt_assertEq
 # stack: ( nt )
 # Flags are as expected (namelen)
-.int xt_dup, xt_ntTOf0, xt_FETCH, xt_lit, 11<<F0_NAMELEN_SHIFT, xt_assertEq
+.int xt_dup, xt_ntTOf0, xt_FETCH, xt_lit, 11<<F0_NAMELEN_SHR, xt_assertEq
 # Stored name is uppercased
 .int xt_ntTOname, xt_lit, testCreatedWordUpper, xt_countnt
 .int xt_ceq, xt_assertTrue
@@ -3432,7 +3449,7 @@ def_doword ";",   1, FR_TIME_IMM, SEMICOLON
 xt_testFlags:
 .int DOCOL
 # F0
-.int xt_lit, flags_SEMICOLON, xt_FETCH, xt_lit, 1 << F0_NAMELEN_SHIFT
+.int xt_lit, flags_SEMICOLON, xt_FETCH, xt_lit, 1 << F0_NAMELEN_SHR
 .int   xt_assertEq
 # FR
 .int xt_lit, flags_SEMICOLON, xt_inc4, xt_FETCH, xt_lit, FR_TIME_IMM
@@ -3476,7 +3493,7 @@ xt_testCOLON:
 .int xt_dup, xt_ntTOxt, xt_FETCH, xt_lit, DOCOL, xt_assertEq
 # Validate our manual compilation
 .int xt_ntTOxt, xt_dec4, xt_dec4 # get F0
-.int xt_dup, xt_FETCH, xt_lit, 14<<F0_NAMELEN_SHIFT, xt_assertEq
+.int xt_dup, xt_FETCH, xt_lit, 14<<F0_NAMELEN_SHR, xt_assertEq
 .int xt_inc4 # get FR
 .int xt_dup, xt_FETCH, xt_lit, 0, xt_assertEq
 .int xt_inc4, xt_inc4 # back to xt -> first data
@@ -3674,8 +3691,8 @@ _start:
   movl $nt_quit, var_REFlatest
   movl $rstackMax, %esp  # clear rstack
   movl $dstackMax, %ebp  # clear dstack
-  movl $ERR_OKAY, panicErr
-  call *(panic)
+  # movl $ERR_OKAY, panicErr
+  # call *(panic)
   jmp exit0
 
 .data

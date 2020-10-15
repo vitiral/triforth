@@ -134,9 +134,6 @@ false testIf 0x 420 assertEq    true testIf 0x 42 assertEq
 : testIFIF IF IF 0x 42 THEN THEN ;
 false testIFIF assertEmpty      false true testIFIF assertEmpty
 true true testIFIF 0x 42 assertEq                   assertEmpty
-: testUNLESS UNLESS 0x 420 ELSE 0x 42 THEN ;
-false testUNLESS 0x 420 assertEq    true testUNLESS 0x 42 assertEq
-0x 42 testUNLESS 0x 42 assertEq     assertEmpty
 -test
 
 \ ####
@@ -198,6 +195,11 @@ assertEmpty -test
 : mod     /mod drop ;   \ ( a b -- a%b )
 : negate  0 SWAP - ; \ get negative of the number
 : u8 ( u -- u8 ) 0x FF AND ; \ mask upper bits
+: land ( flag flag -- flag \logical and)
+  IF IF true ELSE false THEN
+  ELSE drop false THEN ;
+: lor ( flag flag -- flag \logical or)
+  IF drop true ELSE IF true ELSE false THEN THEN ;
 
 \ #########################
 \ # Stack Operations
@@ -350,6 +352,20 @@ MARKER -test
 : .fln\" IMM ( -- ) \ Emits the formatted string followed by newline
   ' .s  [compile] exec\"   compile, .ln ;
 
+: } .fln\" only use } with {\"  panic ;
+: { IMM \ compile-block. This calls exec|compile on all words until }.
+  \ At first this may seem useless since it is what the interpreter already
+  \ does, but when you combine it with strings or ? (below) it allows you to
+  \ execute any arbitrary code instead of only a single statement.
+  \ ( Ex) \" foo${ any code here } bar\"
+  \ ( Ex) doSomethingDangerous ? { error handling code } ( ... rest of function)
+  ' [compile] } ( <xt of }> ) BEGIN
+    word
+    find nt>xt 2dup = IF 2drop EXIT
+    ELSE  exec|compile
+    THEN
+  AGAIN ;
+
 MARKER -test
 : testExec \" World\"   ['] .s exec\" Hello $.s !\n\"  ; testExec
 : test.f \" Denver\"  .f\" Hello $.s !\n\" ; test.f
@@ -362,6 +378,53 @@ MARKER -test
 \ test harness and debugging tools.
 \ dumpInfo: we will replace the old one with one that also prints the return stack
 \   along with the name of the word (or ??? if it doesn't know).
+
+: between ( min max i -- flag ) \ return whether i is bettween [min,max)
+  dup >= IF false THEN   < IF false THEN true ;
+: checkRead ( addr -- flag ) \ false if addr is not within valid memory
+  RSMIN HEAPMAX lrot between ;
+: XT>&F0 4- 4- ;
+: XT>NT  XT>&F0 dup ( &F0 contains namelen, so find name to left)
+  &F0>NAMELEN 1+ align ( =aligned name+countbyte)
+  - ( =&name) 4- ( =nt) ;
+: findMap ( xt -- nt:found ) \ call xt on every nt in the dictionary until
+  \ EXECUTE returns true. Return that nt or 0 if none found.
+  >R ( R@1=xt)  &latest @ >R ( R@=nt)
+  BEGIN
+    R@ =0 IF ( nt=0, dict exhausted) 2Rdrop 0 EXIT THEN
+    ( nt xt EXECUTE) R@ R@1 execute
+    IF ( found) R> ( =nt) Rdrop ( drop xt) EXIT THEN
+    R> @ ( go to next item) >R
+  AGAIN ;
+: _xe  ( xt:a nt -- xt:a flag ) \ return whether a is the xt of nt
+  over swap ( xt xt nt ) nt>xt = ;
+: xtExists ( xt -- flag ) \ return whether the xt exists.
+  ' _xe findMap nip ;
+
+MARKER -test
+: _fakeFind  ( addr count nt -- addr count flag)
+  >R ( R@=nt) 2dup ( dup str) R> nt>str bytesEqNoCase ;
+: testXT>NT   ' swap ( =xt of swap) XT>NT \" swap\" find assertEq 
+  ' .spc XT>NT \" .spc\" find assertEq ; testXT>NT
+: testDictMap  
+  \" swap\" ' _fakeFind findMap   ' swap XT>NT assertEq 2drop ( drop str) 
+  \" dne\"  ' _fakeFind findMap              0 assertEq 2drop ( drop str) 
+  ; testDictMap
+: testXtExists 0x 88888888 xtExists assertFalse   ' swap xtExists assertTrue
+  ; testXtExists
+-test
+
+: xt>name? ( xt -- addr count ) \ return xt name or "???"
+  dup xtExists IF xt>nt nt>name ELSE drop \" ???\" THEN ;
+: .rstack ( -- ) \ print the return stack, trying to find the names of the words
+  RSMAX RSP@ - ( =rstack depth) .f\" RSTACK < $.ux  >:\n\"
+  RSP@ BEGIN dup RSMAX <> WHILE \ go through return stack
+    dup ( =preserve rsp@) 
+    dup @ ( =value in rstack) .f\"  $.ux  :: ${ xt>name? .s } \n\"
+    cell+ \ go to next item
+  REPEAT drop ;
+
+: foo .rstack ; foo
 
 \ : runTest
 \   &latest @ nt>xt execute
@@ -381,20 +444,6 @@ MARKER -test
 \ - Result enum type. This has two possible values: Ok and Error and uses the
 \   ? operator (which uses ?0BRANCH) to handle errors cleanly.
 
-
-: } .fln\" only use } with {\"  panic ;
-: { IMM \ compile-block. This calls exec|compile on all words until }.
-  \ At first this may seem useless since it is what the interpreter already
-  \ does, but when you combine it with strings or ? (below) it allows you to
-  \ execute any arbitrary code instead of only a single statement.
-  \ ( Ex) \" foo${ any code here } bar\"
-  \ ( Ex) doSomethingDangerous ? { error handling code } ( ... rest of function)
-  ' [compile] } ( <xt of }> ) BEGIN
-    word
-    find nt>xt 2dup = IF 2drop EXIT
-    ELSE  exec|compile
-    THEN
-  AGAIN ;
 
 : IF? IMM  \ ( flagu8 -- flagu8 ) Check IF least-significant-byte of stack is 0.
   compile, ?0BRANCH  &here @  0 , ;   \ see IF for explanation
