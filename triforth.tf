@@ -44,7 +44,7 @@
 \ ########################
 \ # Variables: allow defining variables and constants
 : VARIABLE WORD create drop ; \ Allow defining variables
-VARIABLE testCache 0 , 0 , 0 , \ temp storage for tests
+VARIABLE &testCache 0 , 0 , 0 , \ temp storage for tests
 
 \ ########################
 \ # Addressing and Indexing mechanisms
@@ -68,12 +68,12 @@ VARIABLE testCache 0 , 0 , 0 , \ temp storage for tests
 : b@1     1+ b@ ;  \ ( addr -- b ) fetch byte at index=1 of addr
 : b@2     0x 2 + b@ ; \ ( addr -- u ) fetch byte at index=2 of addr
 
-0x 42 testCache !         testCache @ 0x 42 assertEq
-0x 43 testCache !1        testCache @1 0x 43 assertEq
-0x 51 testCache !2        testCache @2 0x 51 assertEq
-0x 50 testCache 0x 1 !i   testCache 0x 1 @i 0x 50 assertEq
-0x 20 testCache !   testCache +1!   testcache @ 0x 21 assertEq
-0x 20 testCache !   testCache +4!  testcache @ 0x 24 assertEq
+0x 42 &testCache !         &testCache @ 0x 42 assertEq
+0x 43 &testCache !1        &testCache @1 0x 43 assertEq
+0x 51 &testCache !2        &testCache @2 0x 51 assertEq
+0x 50 &testCache 0x 1 !i   &testCache 0x 1 @i 0x 50 assertEq
+0x 20 &testCache !   &testCache +1!   &testCache @ 0x 21 assertEq
+0x 20 &testCache !   &testCache +4!  &testCache @ 0x 24 assertEq
 0x 2 align 0x 4 assertEq     0x 4 align 0x 4 assertEq
 0x 11 align 0x 14 assertEq   0x 7 align 0x 8 assertEq
 assertEmpty
@@ -90,15 +90,15 @@ assertEmpty
   compile, lit ,   ' &latest ,    compile, !  \ same as HERE with LATEST
   compile, EXIT ;        \ then the word should exit
 
-&here @   testCache !    &latest @ testCache !1 \ store here and latest
+&here @   &testCache !    &latest @ &testCache !1 \ store here and latest
 MARKER -test
 : thisWillNotExist 0x 42 ;
 thisWillNotExist 0x 42 assertEq -test
 \ -test     \ Neither of these lines will work if uncommented
 \ thisWillNotExist
 MARKER -test  -test \ test mark+unmark works
-testCache @   &here @ assertEq \ test: dict restored
-testCache @1  &latest @ assertEq assertEmpty
+&testCache @   &here @ assertEq \ test: dict restored
+&testCache @1  &latest @ assertEq assertEmpty
 
 \ ########################
 \ # Control Structures
@@ -252,11 +252,11 @@ assertEmpty
   &here @ b! ( store byte to HERE) &here +1! ( increment HERE) ;
 
 MARKER -test
-&HERE @ testCache !
+&HERE @ &testCache !
 0x 32 b,  ( add a byte, misaligning HERE ) 
-testCache @ b@ ( byte at previous here) 0x 32  assertEq
-&here @ 1-   testCache @ assertEq \ test: here has moved forward 1
-aligned    &HERE @ 4-   testCache @ assertEq \ test: alignment moves here +4
+&testCache @ b@ ( byte at previous here) 0x 32  assertEq
+&here @ 1-   &testCache @ assertEq \ test: here has moved forward 1
+aligned    &HERE @ 4-   &testCache @ assertEq \ test: alignment moves here +4
 -test
 
 : map\" ( xt -- ) \ Call an xt for each byte in a literal escaped string.
@@ -406,25 +406,40 @@ MARKER -test
   >R ( R@=nt) 2dup ( dup str) R> nt>str bytesEqNoCase ;
 : testXT>NT   ' swap ( =xt of swap) XT>NT \" swap\" find assertEq 
   ' .spc XT>NT \" .spc\" find assertEq ; testXT>NT
-: testDictMap  
+: testFindMap  
   \" swap\" ' _fakeFind findMap   ' swap XT>NT assertEq 2drop ( drop str) 
   \" dne\"  ' _fakeFind findMap              0 assertEq 2drop ( drop str) 
-  ; testDictMap
+  ; testFindMap
 : testXtExists 0x 88888888 xtExists assertFalse   ' swap xtExists assertTrue
   ; testXtExists
 -test
 
-: xt>name? ( xt -- addr count ) \ return xt name or "???"
-  dup xtExists IF xt>nt nt>name ELSE drop \" ???\" THEN ;
+: "???" \" ???\" ;
+: _n? ( &prevNt &code nt -- &prev &code flag )
+  2dup >= IF ( found, don't update &prevNt) drop true
+  ELSE 0x 2 pick ! ( store xt in &prevNt) false
+  THEN ;
+\ : &code>name? ( &code -- addr count )
+\   dup &here @ >= IF drop "???" EXIT THEN
+\   &latest @ >R ( =prevNt) RSP@ ( =&prevNt) swap ' _n? findMap
+\   rrot 2drop
+\   IF R> ( =prevNt) nt>name ELSE Rdrop "???" THEN ;
+: &code>name? ( &code -- addr count )
+  dup &here @ >= IF drop "???" EXIT THEN
+  &latest @ &testCache ! ( =prevNt) &testCache ( =&prevNt) swap ' _n? findMap
+  rrot 2drop
+  IF &testCache @ ( =prevNt) nt>name ELSE "???" THEN ;
 : .rstack ( -- ) \ print the return stack, trying to find the names of the words
   RSMAX RSP@ - ( =rstack depth) .f\" RSTACK < $.ux  >:\n\"
   RSP@ BEGIN dup RSMAX <> WHILE \ go through return stack
     dup ( =preserve rsp@) 
-    dup @ ( =value in rstack) .f\"  $.ux  :: ${ xt>name? .s } \n\"
+    dup @ ( =value in rstack) .f\"  $.ux  :: ${ &code>name? .s } \n\"
     cell+ \ go to next item
   REPEAT drop ;
 
-: foo .rstack ; foo
+: baz .rstack ;
+: bar baz ;
+: foo bar ; foo
 
 \ : runTest
 \   &latest @ nt>xt execute
