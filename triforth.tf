@@ -424,9 +424,9 @@ MARKER -test
   ' _n? findMap nip dup IF nt>name ELSE drop "???" THEN ;
 : .rstack ( -- ) \ print the return stack, trying to find the names of the words
   RSMAX RSP@ - 4/ ( =rstack depth) .f\" RSTACK < x$.ux >:\n\"
-  RSP@ BEGIN dup RSMAX <> WHILE \ go through return stack
+  RSMAX cell - BEGIN dup RSP@ cell - <> WHILE \ go through return stack
     .f\"   ${ dup @ .ux }  :: ${ dup @ &code>name? .s } \n\"
-    cell+ \ next Rstack cell
+    cell - \ next Rstack cell
   REPEAT drop ;
 
 : baz .rstack ;

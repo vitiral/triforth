@@ -3656,13 +3656,6 @@ testInterpret:
   callXt $xt_testInterpret_inputstream
   call closeKeyFd
 
-  dpush $triforthFile
-  call pntSNtln
-  movl $triforthFile, %ebx
-  call openNtEbx
-  callXt $xt_testInterpret_inputstream
-  call closeKeyFd
-
   callXt $xt_testInterpret_pnt
   ret
 
@@ -3677,6 +3670,7 @@ def_asmword "QUIT",   4,    0, quit
 
 ##############################
 # Main Entrypoint
+# This exists just so the 
 .globl _start
 _start:
   movl $heapMin, var_REFhere
@@ -3693,6 +3687,13 @@ _start:
   movl $dstackMax, %ebp  # clear dstack
   # movl $ERR_OKAY, panicErr
   # call *(panic)
+
+  dpush $triforthFile
+  call pntSNtln
+  movl $triforthFile, %ebx
+  call openNtEbx
+  callXt $xt_testInterpret_inputstream
+  # no need to close file
   jmp exit0
 
 .data
