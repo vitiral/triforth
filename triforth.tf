@@ -418,25 +418,15 @@ MARKER -test
 -test
 
 : "???" \" ???\" ;
-: _n? ( &prevNt &code nt -- &prev &code flag )
-  2dup >= IF ( found, don't update &prevNt) drop true
-  ELSE 0x 2 pick ! ( store xt in &prevNt) false
-  THEN ;
-\ : &code>name? ( &code -- addr count )
-\   dup &here @ >= IF drop "???" EXIT THEN
-\   &latest @ >R ( =prevNt) RSP@ ( =&prevNt) swap ' _n? findMap
-\   rrot 2drop
-\   IF R> ( =prevNt) nt>name ELSE Rdrop "???" THEN ;
+: _n? ( &code nt -- &code flag:nt<=&code )  over <= ;
 : &code>name? ( &code -- addr count )
   dup &here @ >= IF drop "???" EXIT THEN
-  &latest @ &testCache ! ( =prevNt) &testCache ( =&prevNt) swap ' _n? findMap
-  rrot 2drop
-  IF &testCache @ ( =prevNt) nt>name ELSE "???" THEN ;
+  ' _n? findMap nip dup IF nt>name ELSE drop "???" THEN ;
 : .rstack ( -- ) \ print the return stack, trying to find the names of the words
   RSMAX RSP@ - 4/ ( =rstack depth) .f\" RSTACK < x$.ux >:\n\"
   RSP@ BEGIN dup RSMAX <> WHILE \ go through return stack
-    .f\"  ${ dup @ .ux }  :: ${ dup @ &code>name? .s } \n\"
-    cell+ \ go to next item
+    .f\"   ${ dup @ .ux }  :: ${ dup @ &code>name? .s } \n\"
+    cell+ \ next Rstack cell
   REPEAT drop ;
 
 : baz .rstack ;
