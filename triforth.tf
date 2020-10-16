@@ -430,8 +430,7 @@ MARKER -test
   dup UNTIL drop R@1 R@ - 1+ ( &tmp-index+1) R> ( addr index) 2Rdrop ;
 : .ui ( u -- ) 0x A uBASE>ascii .s ; \ print as unsigned integer
 : .ub ( u -- ) 0x 2 uBASE>ascii .s ; \ print as binary
-
-0x A .ui .ln     0x A .ub .ln 
+\ 0x A .ui .ln     0x A .ub .ln   \ Uncomment to see
 
 : "???" \" ???\" ;
 : _n? ( &code nt -- &code flag:nt<=&code )  over <= ;
@@ -443,7 +442,7 @@ MARKER -test
   \ be completely accurate, but it will probably help when panicing.
   \ Also, we print the values of the data, which will be helpful when debugging
   \ values on the return stack.
-  RSMAX RSP@ - 4/ ( =rstack depth) .f\" RSTACK < x$.ux >:\n\"
+  RSMAX RSP@ - 4/ ( =rstack depth) .f\" RSTACK < i$.ui >:\n\"
   RSMAX cell - BEGIN dup RSP@ cell - <> WHILE \ go through return stack
     .f\"   ${ dup @ .ux }  :: ${ dup @ &code>name? .s } \n\"
     cell - \ next Rstack cell
