@@ -417,21 +417,40 @@ MARKER -test
   ; testXtExists
 -test
 
+: uBASE>ascii ( u base -- addr count )
+  \ Converts the unsigned integer with the base to ascii. Note:
+  \ This uses space 12 cells above the data stack for temp storage.
+  \ The number should be used or moved quickly.
+  >R ( R@2=base)
+  dup =0 IF .ux EXIT THEN
+  DSP@ 0x 10 cells - 1- >R ( R@1=&tmp ) 0 >R ( R@=index)
+  \ Note: we write DOWN because we read least-significant digits first
+  BEGIN ( dstack: u ) R@2 ( =base) /MOD swap ( quot remainder)
+    u>ascii  R@1 R@ - ( =&tmp-index) b!   RSP@ +! ( inc index)
+  dup UNTIL drop R@1 R@ - 1+ ( &tmp-index+1) R> ( addr index) 2Rdrop ;
+: .ui ( u -- ) 0x A uBASE>ascii .s ; \ print as unsigned integer
+: .ub ( u -- ) 0x 2 uBASE>ascii .s ; \ print as binary
+
+0x A .ui .ln     0x A .ub .ln 
+
 : "???" \" ???\" ;
 : _n? ( &code nt -- &code flag:nt<=&code )  over <= ;
 : &code>name? ( &code -- addr count )
   dup &here @ >= IF drop "???" EXIT THEN
   ' _n? findMap nip dup IF nt>name ELSE drop "???" THEN ;
 : .rstack ( -- ) \ print the return stack, trying to find the names of the words
+  \ Since data as well as code addresses are on the return stack, we won't
+  \ be completely accurate, but it will probably help when panicing.
+  \ Also, we print the values of the data, which will be helpful when debugging
+  \ values on the return stack.
   RSMAX RSP@ - 4/ ( =rstack depth) .f\" RSTACK < x$.ux >:\n\"
   RSMAX cell - BEGIN dup RSP@ cell - <> WHILE \ go through return stack
     .f\"   ${ dup @ .ux }  :: ${ dup @ &code>name? .s } \n\"
     cell - \ next Rstack cell
   REPEAT drop ;
+\ You can see it in action if you uncomment below:
+\ : baz .rstack ; : bar baz ; : foo bar ; foo
 
-: baz .rstack ;
-: bar baz ;
-: foo bar ; foo
 
 \ : runTest
 \   &latest @ nt>xt execute

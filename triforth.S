@@ -1783,6 +1783,14 @@ def_asmword "U16@" ,  4 ,  0 ,  u16FETCH
 #           ascii, len, flag, label
 def_callword ".ux" ,  3 ,  0 ,  pntUx
 
+# ( u -- ascii ) \ converts unsigned number to ascii
+#               ascii, len, flag, label
+def_asmword "u>ascii",   7,    0, uTOascii
+  dpop %ebx
+  call ebx_toascii
+  dpush %ebx
+  NEXT
+
 # ( -- ) \ fail test
 #                 ascii, len, flag, label
 def_callword "FAILTEST",  8,    0, failTest
@@ -2047,7 +2055,7 @@ def_asmword "16SHR",   5,    0, _16shr
   dpush %eax
   NEXT
 
-# ( u:a u:b -- u:quot u:rem ) \ divide a/b -> quotient remainder
+# ( u:a u:b -- u:rem u:quot ) \ divide a/b -> quotient remainder
 #           ascii  , len, flag, label
 def_asmword "/MOD" , 4  ,  0 ,  DIVmod
   call DIVmod
