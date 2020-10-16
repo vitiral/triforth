@@ -233,6 +233,9 @@ assertEmpty
           2R>   0 asserteq   0x 42 assertEq assertEmpty ; test2>R
 : testR@2 0x 42 >R 0 >R 0 >R assertEmpty R@2 0x 42 assertEq 2Rdrop Rdrop
   ; testR@2
+: testRSP@ \ test some assumptions about RSP
+  0x 2 >R RSP@ @ 0x 2 assertEq   0x 3 RSP@ ! ( store 3)
+  RSP@ @ 0x 3 assertEq R> 0x 3 assertEq ; testRSP@
 \ TODO: testSwapAB
 -test
 
@@ -430,10 +433,9 @@ MARKER -test
   rrot 2drop
   IF &testCache @ ( =prevNt) nt>name ELSE "???" THEN ;
 : .rstack ( -- ) \ print the return stack, trying to find the names of the words
-  RSMAX RSP@ - ( =rstack depth) .f\" RSTACK < $.ux  >:\n\"
+  RSMAX RSP@ - 4/ ( =rstack depth) .f\" RSTACK < x$.ux >:\n\"
   RSP@ BEGIN dup RSMAX <> WHILE \ go through return stack
-    dup ( =preserve rsp@) 
-    dup @ ( =value in rstack) .f\"  $.ux  :: ${ &code>name? .s } \n\"
+    .f\"  ${ dup @ .ux }  :: ${ dup @ &code>name? .s } \n\"
     cell+ \ go to next item
   REPEAT drop ;
 
