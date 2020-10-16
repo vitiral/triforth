@@ -203,15 +203,21 @@ assertEmpty -test
 
 \ #########################
 \ # Stack Operations
-: R@ ( -- u ) IMM  compile, rsp@   compile, @ ;
+: R@ ( -- u ) rsp@ cell + @ ; \ add cell to skip caller's address
 : R@1 ( -- u ) rsp@ 0x 2 cells + @ ; \ 2 cells because we have to skip caller's address
 : R@2 ( -- u ) rsp@ 0x 3 cells + @ ;
 : 2>R ( u:a u:b -- ) IMM compile, swap  compile, >R  compile, >R ; \ R: ( -- a b)
 : 2R> ( -- u:a u:b ) IMM compile, R>  compile, R>  compile, swap ; \ R: ( a b -- )
+\ TODO: this would be nice but doesn't work
+\ : 2R> ( -- u:a u:b )
+\   R@2 R@1 ( get R@1 R@0 of caller)
+\   RSP@ cell+ cell+ ( new RSP@, 2 cells "down" stack) 
+\   R@ over ! ( move caller's &code there)  RSP! ( and set RSP to the new value) ;
 : >R@ ( u -- u \ store+fetch) IMM compile, dup  compile, >R ; \ same as >R R@
 : 2>R@ ( u64 -- u64 \ store+fetch) IMM compile, 2dup  compile, 2>R ;
 : Rdrop ( -- \ drop cell on R) IMM  compile, R>  compile, drop ;
 : 2Rdrop ( -- \ drop 2cells on R) IMM  [compile] 2R>  compile, 2drop ;
+: -R@ ( -- \decrement R@ ) rsp@ cell + -! ;
 : swapAB ( ... A B -- ... ) \ swap size A with size B
   \ TODO: check that memory is large enough and no stack overflow
   \ Naming: B is the size, &B is a pointer to the data. Same with A
@@ -224,6 +230,7 @@ assertEmpty -test
   R> ( =A) R@1 ( =&B) + ( =dst &A)  R> ( =&tmp src) swap Rdrop R> ( =B )
   cellmove ;
 
+
 MARKER -test
 assertEmpty
 : testR@ 0x 42 >R   r@ 0x 42 assertEq    R> 0x 42 assertEq ; testR@
@@ -233,6 +240,7 @@ assertEmpty
           2R>   0 asserteq   0x 42 assertEq assertEmpty ; test2>R
 : testR@2 0x 42 >R 0 >R 0 >R assertEmpty R@2 0x 42 assertEq 2Rdrop Rdrop
   ; testR@2
+: test-R@ 0x 42 >R -R@ 0x 41 R> assertEq ; test-R@
 : testRSP@ \ test some assumptions about RSP
   0x 2 >R RSP@ @ 0x 2 assertEq   0x 3 RSP@ ! ( store 3)
   RSP@ @ 0x 3 assertEq R> 0x 3 assertEq ; testRSP@
@@ -417,20 +425,30 @@ MARKER -test
   ; testXtExists
 -test
 
-: uBASE>ascii ( u base -- addr count )
+: R@..0 ( u -- ) \ repeat the next block R@ times, decrementing R@ each time.
+  [compile] BEGIN compile, R@  [compile] WHILE
+    word find nt>xt exec|compile  compile, compile, -R@
+  [compile] REPEAT compile, Rdrop ;
+
+: uBASE>ascii ( u base -- quot ascii ) 
+  \ convert integer to the remaining integer and ascii character.
+  /mod swap ( quot remainder ) u>ascii ;
+: uBASE>str ( u base -- addr count )
   \ Converts the unsigned integer with the base to ascii. Note:
-  \ This uses space 12 cells above the data stack for temp storage.
+  \ This uses space 6 cells above the return stack for temp storage.
   \ The number should be used or moved quickly.
   >R ( R@2=base)
-  dup =0 IF .ux EXIT THEN
-  DSP@ 0x 10 cells - 1- >R ( R@1=&tmp ) 0 >R ( R@=index)
+  dup =0 IF u>ascii emit EXIT THEN
+  RSP@ 0x 6 cells - 1- >R ( R@1=&tmp ) 0 >R ( R@=index)
   \ Note: we write DOWN because we read least-significant digits first
-  BEGIN ( dstack: u ) R@2 ( =base) /MOD swap ( quot remainder)
-    u>ascii  R@1 R@ - ( =&tmp-index) b!   RSP@ +! ( inc index)
+  BEGIN ( dstack: u ) R@2 ( =base) uBASE>ascii
+     R@1 R@ - ( =&tmp-index) b!   RSP@ +! ( inc index)
   dup UNTIL drop R@1 R@ - 1+ ( &tmp-index+1) R> ( addr index) 2Rdrop ;
-: .ui ( u -- ) 0x A uBASE>ascii .s ; \ print as unsigned integer
-: .ub ( u -- ) 0x 2 uBASE>ascii .s ; \ print as binary
-\ 0x A .ui .ln     0x A .ub .ln   \ Uncomment to see
+: .ui ( u -- ) 0x A uBASE>str .s ; \ print as unsigned integer
+: .ub ( u -- ) 0x 2 uBASE>str .s ; \ print as binary
+\ : .uxalignl ( u alignl -- ) \ print number but aligned left
+\   0x 10 uBASE>str nip ;( just get count to determine spaces)
+0x A .ui .spc     0x A .ub .ln   \ Uncomment to see
 
 : "???" \" ???\" ;
 : _n? ( &code nt -- &code flag:nt<=&code )  over <= ;
@@ -442,13 +460,13 @@ MARKER -test
   \ be completely accurate, but it will probably help when panicing.
   \ Also, we print the values of the data, which will be helpful when debugging
   \ values on the return stack.
-  RSMAX RSP@ - 4/ ( =rstack depth) .f\" RSTACK < i$.ui >:\n\"
+  RSMAX RSP@ - 4/ ( =rstack depth) .f\" RSTACK < I$.ui  >:\n\"
   RSMAX cell - BEGIN dup RSP@ cell - <> WHILE \ go through return stack
     .f\"   ${ dup @ .ux }  :: ${ dup @ &code>name? .s } \n\"
     cell - \ next Rstack cell
   REPEAT drop ;
 \ You can see it in action if you uncomment below:
-\ : baz .rstack ; : bar baz ; : foo bar ; foo
+: baz .rstack ; : bar baz ; : foo bar ; foo
 
 
 \ : runTest

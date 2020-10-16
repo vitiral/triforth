@@ -961,14 +961,10 @@ pntUx_ret:
   dpush %eax
   call swap
   call pntS
-  dpush $' '
-  call emit
   ret
 pntUx_zero:
   call drop
   dpush $'0'
-  call emit
-  dpush $' '
   call emit
   ret
 
