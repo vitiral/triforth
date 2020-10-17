@@ -1698,9 +1698,9 @@ def_asmword "R>",   2,    0,  rpop
 def_asmword "n>R",   3,    0,  Nrpush
   dpop %eax # N
   call checkStackSize
-  call dbgexit
   movl %eax, %ebx
   shl $2, %ebx # ebx=ebx*4
+  call dbgexit
   movl %ebp, %ecx # cache dstack
   addl %ebx, %ebp # move dstack pointer up (reduce dstack)
   subl %ebx, %esp # move rstack pointer down (increase rstack)
