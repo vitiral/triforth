@@ -207,12 +207,13 @@ assertEmpty -test
 : R@ ( -- u ) rsp@ cell + @ ; \ add cell to skip caller's address
 : R@1 ( -- u ) rsp@ 2 cells + @ ; \ 2 cells because we have to skip caller's address
 : R@2 ( -- u ) rsp@ 0x 3 cells + @ ;
-: 2>R ( u:a u:b -- R: a b ) IMM compile, lit  2 , compile, n>R ; \ R: ( -- a b)
-: 2R> ( -- u:a u:b ) IMM compile, lit  2 ,  compile, nR> ; \ R ( a b -- )
+: -R@ ( -- \increment R@ ) rsp@ cell + +! ;
+: -R@ ( -- \decrement R@ ) rsp@ cell + -! ;
+: 2>R ( u:a u:b -- R: a b ) IMM compile, 2 compile, n>R ; \ R: ( -- a b)
+: 2R> ( -- u:a u:b ) IMM        compile, 2 compile, nR> ; \ R ( a b -- )
 : 2Rdrop ( -- \ drop 2cells on R) IMM  [compile] 2R>  compile, 2drop ;
 : >R@ ( u -- u \ store+fetch) IMM compile, dup  compile, >R ; \ same as >R R@
 : 2>R@ ( u64 -- u64 \ store+fetch) IMM compile, 2dup  compile, 2>R ;
-: -R@ ( -- \decrement R@ ) rsp@ cell + -! ;
 : swapAB ( ... A B -- ... ) \ swap size A with size B
   \ TODO: check that memory is large enough and no stack overflow
   \ Naming: B is the size, &B is a pointer to the data. Same with A
