@@ -50,16 +50,16 @@ VARIABLE &testCache 0 , 0 , 0 , \ temp storage for tests
 \ # Addressing and Indexing mechanisms
 \ These not only allow more brevity, they are also faster since they don't use
 \ multiplication or division at runtime.
-: cell   0x 4 ;        \ ( -- u ) the cell size
+: cell IMM   compile, 4 ;        \ ( -- u ) the cell size
 : cell+  cell + ;  \ ( u -- u ) increment by cell size
 : cell-  cell - ;  \ ( u -- u ) decrement by cell size
 : cells  4* ;  \ ( u -- u ) multiply by cell size
 : @i     cells + @ ; \ ( addr i -- u ) fetch at index=i of addr
 : @1     cell+ @ ; \ ( addr -- u ) fetch at index=1 of addr
-: @2     [ 0x 2 CELLS ] LITERAL + @ ; \ ( addr -- u ) fetch at index=1 of addr
+: @2     [ 2 CELLS ] LITERAL + @ ; \ ( addr -- u ) fetch at index=1 of addr
 : !i     cells + ! ; \ ( u addr i -- ) store u at index=i of addr
 : !1     cell+ ! ; \ ( u addr -- u ) store u at index=1 of addr
-: !2     [ 0x 2 CELLS ] LITERAL + ! ; \ ( u addr -- u ) store u at index=2 of addr
+: !2     [ 2 CELLS ] LITERAL + ! ; \ ( u addr -- u ) store u at index=2 of addr
 : +1!     dup @ 1+ swap ! ; \ ( addr -- ) increment value inside address by 1
 : +4!    dup @ 4+ swap ! ; \ ( addr -- ) increment value inside address by 4
 : align \ ( addr -- addr ) align address by four bytes
@@ -67,16 +67,16 @@ VARIABLE &testCache 0 , 0 , 0 , \ temp storage for tests
 : aligned  &here @ align &here ! ; \ ( -- ) align HERE by four bytes
 : b@i     + b@ ;  \ ( addr i -- b ) fetch byte at index=i of addr
 : b@1     1+ b@ ;  \ ( addr -- b ) fetch byte at index=1 of addr
-: b@2     0x 2 + b@ ; \ ( addr -- u ) fetch byte at index=2 of addr
+: b@2     2 + b@ ; \ ( addr -- u ) fetch byte at index=2 of addr
 
 0x 42 &testCache !         &testCache @ 0x 42 assertEq
 0x 43 &testCache !1        &testCache @1 0x 43 assertEq
 0x 51 &testCache !2        &testCache @2 0x 51 assertEq
-0x 50 &testCache 0x 1 !i   &testCache 0x 1 @i 0x 50 assertEq
+0x 50 &testCache 1 !i      &testCache 1 @i 0x 50 assertEq
 0x 20 &testCache !   &testCache +1!   &testCache @ 0x 21 assertEq
 0x 20 &testCache !   &testCache +4!  &testCache @ 0x 24 assertEq
-0x 2 align 0x 4 assertEq     0x 4 align 0x 4 assertEq
-0x 11 align 0x 14 assertEq   0x 7 align 0x 8 assertEq
+2 align 4 assertEq     4 align 4 assertEq
+0x 11 align 0x 14 assertEq   0x 7 align 8 assertEq
 assertEmpty
 
 \ MARKER allows us to define a checkpoint to forget dictionary items. It has
@@ -149,14 +149,14 @@ MARKER -test
   BEGIN
     swap dup + swap 1-  \ ( (a+a) (b-1) )
   dup UNTIL drop ;
-0x 10 0x 1 testBeginUntil 0x 20 assertEq
+0x 10 1    testBeginUntil 0x 20 assertEq
 0x 10 0x 3 testBeginUntil 0x 80 assertEq
 : testBeginAgain \ same as above
   BEGIN
     swap dup + swap 1-        \ ( (a+a) (b-1) )
     dup =0 IF drop EXIT  THEN \ if b=0 exit
   AGAIN ;
-0x 10 0x 1 testBeginAgain 0x 20 assertEq
+0x 10 1    testBeginAgain 0x 20 assertEq
 0x 10 0x 3 testBeginAgain 0x 80 assertEq
 assertEmpty -test
 
@@ -173,14 +173,14 @@ MARKER -test
   BEGIN 1- dup 0x 0 >= WHILE
     swap dup + swap
   REPEAT drop ;
-0x 10 0x 1 testWhileRepeat 0x 20 assertEq
+0x 10 1 testWhileRepeat 0x 20 assertEq
 0x 10 0x 3 testWhileRepeat 0x 80 assertEq
 assertEmpty -test
 
 \ #########################
 \ # Comments - after this we can use ( block ( comments ))
 : ( IMM
-  0x 1 \ keep track of depth of comments
+  1 \ keep track of depth of comments
   BEGIN 
     key dup '(' = IF \ If key=open comment
       drop    1+ \ drop paren, increase depth
@@ -205,17 +205,11 @@ assertEmpty -test
 \ # Stack Operations
 : Rdrop ( -- \ drop cell on R) IMM  compile, R>  compile, drop ;
 : R@ ( -- u ) rsp@ cell + @ ; \ add cell to skip caller's address
-: R@1 ( -- u ) rsp@ 0x 2 cells + @ ; \ 2 cells because we have to skip caller's address
+: R@1 ( -- u ) rsp@ 2 cells + @ ; \ 2 cells because we have to skip caller's address
 : R@2 ( -- u ) rsp@ 0x 3 cells + @ ;
-: 2>R ( u:a u:b -- R: a b ) IMM compile, lit 0x 2 , compile, n>R ; \ R: ( -- a b)
-  \ TODO: Segfaults:
-  \ dumpInfo R@ RSP@ cell- cell- ! dumpInfo ( <- store caller's &code)
-  \ RSP@ cell- ! ( <-store b) RSP@ ! ( <-store a) RSP@ cell- cell- RSP! dbgexit ;
-: 2R> ( -- u:a u:b )
-  R@2 R@1 ( get R@1 R@ of caller)
-  RSP@ cell+ cell+ ( new RSP@, 2 cells "down" stack) 
-  R@ over ! ( move caller's &code there)  RSP! ( and set RSP to the new value) ;
-: 2Rdrop ( -- \ drop 2cells on R) IMM  compile, 2R>  compile, 2drop ;
+: 2>R ( u:a u:b -- R: a b ) IMM compile, lit  2 , compile, n>R ; \ R: ( -- a b)
+: 2R> ( -- u:a u:b ) IMM compile, lit  2 ,  compile, nR> ; \ R ( a b -- )
+: 2Rdrop ( -- \ drop 2cells on R) IMM  [compile] 2R>  compile, 2drop ;
 : >R@ ( u -- u \ store+fetch) IMM compile, dup  compile, >R ; \ same as >R R@
 : 2>R@ ( u64 -- u64 \ store+fetch) IMM compile, 2dup  compile, 2>R ;
 : -R@ ( -- \decrement R@ ) rsp@ cell + -! ;
@@ -223,7 +217,7 @@ assertEmpty -test
   \ TODO: check that memory is large enough and no stack overflow
   \ Naming: B is the size, &B is a pointer to the data. Same with A
   \ So, we want to move &A -> &B and &B -> &A. We use temporary storage on the stack
-  >R@ ( =B) DSP@ 0x 2 cells + >R@ ( =&B)
+  >R@ ( =B) DSP@ 2 cells + >R@ ( =&B)
   dup over 0x 16 + - >R@ ( =tmp dest) lrot cellmove \ move B to tmp stack
   \ D: ( A)  R: ( B &B &tmp) -- we now want to move &A down to &B
   R@1 ( =&B) R@2 ( =B) cells + ( =&A src) R@1 ( =&B dst) lrot >R@ ( =A) cellmove
@@ -237,7 +231,7 @@ assertEmpty
 : testR@ 0x 42 >R   r@ 0x 42 assertEq    R> 0x 42 assertEq ; testR@
 : testR@1 0x 42 >R 0x 43 >R  r@ 0x 43 assertEq    r@1 0x 42 assertEq
   R> 0x 43 assertEq   R> 0x 42 assertEq assertEmpty ; testR@1
-: test2>R 0x 42 0  0x 2 n>R   R@ 0 assertEq  R@1 0x 42 assertEq
+: test2>R 0x 42 0  2 n>R   R@ 0 assertEq  R@1 0x 42 assertEq
           2R>  0 asserteq   0x 42 assertEq assertEmpty ; test2>R
 : testR@2 0x 42 >R 0 >R 0 >R assertEmpty R@2 0x 42 assertEq 2Rdrop Rdrop
   ; testR@2

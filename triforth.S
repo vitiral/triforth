@@ -1691,25 +1691,55 @@ def_asmword "R>",   2,    0,  rpop
   dpush %eax
   NEXT
 
-# ( aN-1 ... a0 N --   R: aN-1 ... a0 )
+# This is required for nR> -- we can't call something since it will
+# corrupt the rstack!
+.macro CELLMOVE   # %ecx:count %ebx:dst %eax:src ( -- )
+  # Move count cells from src to dst
+  movl $0, %edi # index
+1:
+  cmpl %ecx, %edi
+  jge 2f
+  movl (%eax,%edi,4), %edx
+  movl %edx, (%ebx,%edi,4)
+  inc %edi
+  jmp 1b
+2:
+.endm
+
+# ( aN-1 ... a0 N --   R: -- aN-1 ... a0 )
 # \ put n values onto the return stack. This kind of operation is extremely
 # \ unperformant in forth (requiring >12 calls) because it can be very hard
-# \ to keep track of the values.
-#         ascii , len, flag, label
+# \ to keep track of what values are on the stack.
+#           ascii, len, flag, label
 def_asmword "n>R",   3,    0,  Nrpush
   dpop %ecx # N
   movl %ecx, %eax
   call checkStackSize
-  movl %ecx, %ebx
-  shl $2, %ebx # ebx=ebx*4
-  call dumpInfo
+  movl %ecx, %edx
+  shl $2, %edx # edx=edx*4
   # Dstack in memory: a0 | ... | aN-1
   #                   ^ ebp
   movl %ebp, %eax # eax=dstack which is src
-  addl %ebx, %ebp # move dstack pointer up (reduce dstack)
-  subl %ebx, %esp # move rstack pointer down (increase rstack)
+  addl %edx, %ebp # move dstack pointer up (reduce dstack)
+  subl %edx, %esp # move rstack pointer down (increase rstack)
   movl %esp, %ebx # ebx=new rstack, which is dst, Note: ecx=count
-  call cellmove
+  CELLMOVE
+  NEXT
+
+# ( N -- aN-1 ... a0   R: aN-1 ... a0 -- )
+# \ pop n values onto the return stack.
+#           ascii, len, flag, label
+def_asmword "nR>",   3,    0,  Nrpop
+  dpop %ecx # N
+  movl %ecx, %edx
+  shl $2, %edx # edx=edx*4
+  # Dstack in memory: a0 | ... | aN-1
+  #                   ^ ebp
+  movl %esp, %eax # eax=rstack which is src
+  subl %edx, %ebp # move dstack pointer down (increase dstack)
+  addl %edx, %esp # move rstack pointer up (decrease rstack)
+  movl %ebp, %ebx # ebx=new dstack, which is dst, Note: ecx=count
+  CELLMOVE
   NEXT
 
 # ( -- addr ) \ get the return stack pointer
@@ -2334,28 +2364,13 @@ def_asmword "BMOVE>",   6,   0 , bmoveRIGHT
 #                ascii    , len, flag, label
 def_callword "BMOVEUPPER" , 10 ,    0, bmoveUpper
 
-cellmove: # %ecx: count %ebx:dst %eax:src  ( -- )
-  # This is one of the few pure assembly functions which does not
-  # use the stack. We keep it this way so we can use in n>R and nR>
-  # which have very tricky operations with the stack.
-  movl $0, %edi # index
-1:
-  cmpl %ecx, %edi
-  jge 2f
-  movl (%eax,%edi,4), %edx
-  movl %edx, (%ebx,%edi,4)
-  inc %edi
-  jmp 1b
-2:
-  ret
-
 # ( src dst count -- ) \ Move count cells from src to dst
 #               ascii , len, flag, label
 def_asmword "CELLMOVE",   8,    0, cellmove
   dpop %ecx # count/index
   dpop %ebx # dst
   dpop %eax # src
-  call cellmove
+  CELLMOVE
   NEXT
 
 testCellmove:
@@ -3006,8 +3021,11 @@ def_asmword \name , \namelen , 0, \label
 .endm
 
 #         ascii  ,              len, label
-def_const "0",                    1, 0
+def_const "0",                    1, 0 # Defining as const saves 1 cell per use
 def_const "1",                    1, 1
+def_const "2",                    1, 2
+def_const "4",                    1, 4
+def_const "8",                    1, 8
 def_const "TRUE" ,                4, TRUE
 def_const "FALSE" ,               5, FALSE
 def_const "RSMIN" ,               5, rstackMin
