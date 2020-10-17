@@ -233,7 +233,7 @@ panicStr: .ascii "!! PANIC ENCOUNTERED code=\0"
 registersAdStr: .ascii "Registers e(a-d)x: \0"
 registersDsStr: .ascii "e[ds]i: \0"
 wordStr: .ascii "word: \0"
-stackStr: .ascii "Stack< \0"
+stackStr: .ascii "Stack<\0"
 maxWordLenErrorStr: .ascii "Maximum word length exceeded\0"
 _0xWordNeededStr: .ascii "Word needed for 0x\0"
 _0xNotNumberStr: .ascii "Not a valid hex number: \0"
@@ -968,6 +968,12 @@ pntUx_zero:
   call emit
   ret
 
+pntUxSpc:
+  call pntUx
+  dpush $' '
+  call emit
+  ret
+
 ebx_toascii: # ( u -- c )
   # convert a number (typically 1-16) into ascii equivalent
   # This is used with pntUx (above)
@@ -990,11 +996,11 @@ ebx_toascii: # ( u -- c )
 
 testpntUx:
   dpush $1
-  call pntUx
+  call pntUxSpc
   dpush $0x12
-  call pntUx
+  call pntUxSpc
   dpush $0xDEADBEEF
-  call pntUx
+  call pntUxSpc
   dpush $'\n'
   call emit
 
@@ -1024,17 +1030,14 @@ testMUL:
 pntStack: # ( -- )
   # Forth .S, prints the current stack
   dpush $stackStr
-  # "Stack< DEPTH > "
+  # "Stack<DEPTH> "
   call pntSNt
-
   call depth 
   call pntUx
-
   dpush $'>'
   call emit
   dpush $' '
   call emit
-
   call depth # 4(%ebp) is depth
   dpush $0   # (%ebp) is index
 1:
@@ -1052,15 +1055,13 @@ pntStack: # ( -- )
   # print the number in hex
   movl (%ebx), %eax
   dpush %eax
-  call pntUx
+  call pntUxSpc
 
   addl $1, (%ebp) # increment index
   jmp 1b # loop
 
 2:
   call _2drop
-  dpush $'\n'
-  call emit
   ret
 
 testPntStack:
@@ -1069,6 +1070,8 @@ testPntStack:
   dpush $0xAA
   dpush $0x1A2B
   call pntStack
+  dpush $'\n'
+  call emit
   call _2drop
   call _2drop
   dpush $testPntStackStr
@@ -1144,22 +1147,22 @@ dumpInfo:
   movl $registerSnapshot, %ebx
   movl (%ebx), %eax  # eax
   dpush %eax
-  call pntUx
+  call pntUxSpc
 
   movl $registerSnapshot, %ebx
   movl 4(%ebx), %eax # ebx
   dpush %eax
-  call pntUx
+  call pntUxSpc
 
   movl $registerSnapshot, %ebx
   movl 8(%ebx), %eax # ecx
   dpush %eax
-  call pntUx
+  call pntUxSpc
 
   movl $registerSnapshot, %ebx
   movl 12(%ebx), %eax # edx
   dpush %eax
-  call pntUx
+  call pntUxSpc
 
   movl $registerSnapshot, %ebx
   dpush $registersDsStr
@@ -1167,7 +1170,7 @@ dumpInfo:
   movl $registerSnapshot, %ebx
   movl 16(%ebx), %eax # edi
   dpush %eax
-  call pntUx
+  call pntUxSpc
 
   movl $registerSnapshot, %ebx
   movl 20(%ebx), %eax # esi
@@ -1178,6 +1181,8 @@ dumpInfo:
 
   # Stack
   call pntStack
+  dpush $'\n'
+  call emit
   # current word
   dpush $wordStr
   call pntSNt
@@ -1683,6 +1688,26 @@ def_asmword ">R",   2,    0,  rpush
 def_asmword "R>",   2,    0,  rpop
   popl %eax
   dpush %eax
+  NEXT
+
+# ( aN aN-1 ... a0 N -- R: aN aN-1 ... a0 )
+# \ put n values onto the return stack. This kind of operation is extremely
+# \ unperformant in forth (requiring >12 calls) because it can be very hard
+# \ to keep track of the values.
+#         ascii , len, flag, label
+def_asmword "n>R",   3,    0,  Nrpush
+  dpop %eax # N
+  call checkStackSize
+  call dbgexit
+  movl %eax, %ebx
+  shl $2, %ebx # ebx=ebx*4
+  movl %ebp, %ecx # cache dstack
+  addl %ebx, %ebp # move dstack pointer up (reduce dstack)
+  subl %ebx, %esp # move rstack pointer down (increase rstack)
+  dpush %ecx # src, previous dstack
+  dpush %esp # dst, new rstack
+  dpush %eax # N
+  callXt $xt_cellmove
   NEXT
 
 # ( -- addr ) \ get the return stack pointer
