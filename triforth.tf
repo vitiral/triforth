@@ -440,11 +440,7 @@ MARKER -test
   BEGIN ( dstack: u ) R@2 ( =base) uBASE>ascii
      R@1 R@ - ( =&tmp-index) b!   RSP@ +! ( inc index)
   dup UNTIL drop R@1 R@ - 1+ ( &tmp-index+1) R> ( addr index) 2Rdrop ;
-: .ui ( u -- ) 0x A uBASE>str .s ; \ print as unsigned integer
 : .ub ( u -- ) 0x 2 uBASE>str .s ; \ print as binary
-\ : .uxalignl ( u alignl -- ) \ print number but aligned left
-\   0x 10 uBASE>str nip ;( just get count to determine spaces)
-0x A .ui .spc     0x A .ub .ln   \ Uncomment to see
 
 : "???" \" ???\" ;
 : _n? ( &code nt -- &code flag:nt<=&code )  over <= ;
@@ -456,20 +452,21 @@ MARKER -test
   \ be completely accurate, but it will probably help when panicing.
   \ Also, we print the values of the data, which will be helpful when debugging
   \ values on the return stack.
-  RSMAX RSP@ - 4/ ( =rstack depth) .f\" RSTACK < I$.ui  >:\n\"
+  RSMAX RSP@ - 4/ ( =rstack depth) .f\" RSTACK <$.ux >:\n\"
   RSMAX cell - BEGIN dup RSP@ cell - <> WHILE \ go through return stack
     .f\"   ${ dup @ .ux }  :: ${ dup @ &code>name? .s } \n\"
     cell - \ next Rstack cell
   REPEAT drop ;
-\ You can see it in action if you uncomment below:
-\ : baz .rstack ; : bar baz ; : foo bar ; foo
+: panicHandler ( -- ) .rstack asmpanic ;
+&latest @ nt>xt &'PANIC ! \ set panic to new handler
+: .!!panic .f\" \n!!!!!!!!!!!\n!! PANIC: \" ;
+: panicf\" IMM  compile, .!!panic  [compile] .fln\"  compile, panic ;
+\ : doPanic 2 panicf\" This $.ux  Rocks!\" ; doPanic  \ uncomment to see in action
 
-
-\ : runTest
-\   &latest @ nt>xt execute
-\   &latest @ @ 
-\   TEST_PREFIX_STR countnt .s  &latest @ nt>name .s TEST_PASS_STR countnt .s
-\   R> &here !  R> &latest ! ; \ restore dict state
+: runAsTest
+  &latest @ nt>name  &wordLen ! wordBuf &wordLen @ bmove
+  &latest @ nt>xt execute assertEmpty
+  TEST_PREFIX_NT countnt .s   &latest @ nt>name .s   TEST_PASS_NT countnt .s ;
 
 
 \ #########################
@@ -482,7 +479,6 @@ MARKER -test
 \   clean up any leftover state.
 \ - Result enum type. This has two possible values: Ok and Error and uses the
 \   ? operator (which uses ?0BRANCH) to handle errors cleanly.
-
 
 : IF? IMM  \ ( flagu8 -- flagu8 ) Check IF least-significant-byte of stack is 0.
   compile, ?0BRANCH  &here @  0 , ;   \ see IF for explanation
@@ -509,47 +505,56 @@ MARKER -test
   F_ERR         IF? F_ERR assertEq          ELSE failTest THEN
   true          IF? true assertEq           ELSE failTest THEN
   F_ERR 0x FF01 OR IF? 0x 8000FF01 assertEq           ELSE failTest THEN
-  ;  testIF?
+  ;  runAsTest
 : test?  0     ? failTest              0 assertEq
   false        ? failTest              false assertEq
   0x FF00      ? failTest              0x FF00 assertEq
-  F_ERR        ? { drop }              assertEmpty
-  true         ? { true assertEq }     assertEmpty
-  0x FF010000  ? { 0x FF010000 assertEq }  assertEmpty
-  ; test?
+  F_ERR        ? { drop }              failTest ; RUNASTEST
+: test?2 true         ? { true assertEq }     failTest ; RUNASTEST
+: test?3 0x FF010000  ? { 0x FF010000 assertEq }  failTest ; RUNASTEST
 -test
 
-\ The Result enum which has two values: Error and Result. The F_ERR flag takes
-\ up a single bit, the highest one, leaving 31 bits to be used for data, an
-\ error code or even a pointer.
+\ The Result enum which has two possible values: Ok<V> or Error<E>.  The F_ERR
+\ flag takes up a single bit, the highest one, leaving 31 bits to be used for
+\ any kind of data (V or E).
 : Error ( u -- Error ) F_ERR OR ;  \ sets the F_ERR bit
 : Ok    ( u -- Ok )    F_ERR INVERT AND ; \ clears the F_ERR bit
+
+\ Similar to Result there is the Option enum which has two values:
+\   None: 0 means there is no value
+\   Some: any other value is Some, the value is obtained by subtracting 1
+\ You "create" an option with None (which is just 0) or  v Some which
+\ just adds 1 to v. You then "get" the value using IFsome which will
+\ automatically subtract 1 inside the "IF" block and otherwise drop the value.
+\ 
+\ One negative (pun intended): you negative values are more difficult to store,
+\ because  -1 Some None =  Therefore Option is not a good container for negative
+\ values (or you have to do special handling, like create a NegOption type)
+: None IMM  compile, 0 ;
+: Some IMM  compile, 1+ ;
+: IFsome IMM  compile, NONEBRANCH  &here @  0 , ; \ see IF for explanation
+
+MARKER -test
+: testNone  None IFsome failTest THEN ; RUNASTEST
+: testSome  1 Some IFsome 1 assertEq ELSE failTest THEN  ; RUNASTEST
+: testSome2  0x 100 Some IFsome 0x 100 assertEq ELSE failTest THEN  ; RUNASTEST
+: testSome-1  1 negate Some IFsome failTest THEN ; RUNASTEST \ demonstrate odd behavior
+: testSomeOk 0x 42 Ok Some  ( Some<Ok<0x42>>) 
+  IFsome ? failTest  0x 42 assertEq ELSE failTest THEN ; RUNASTEST
+: testSomeErr 0x 666 Error Some  ( Some<Error<0x666>>)
+  IFsome ? { 0x 666 Error assertEq } failTest ELSE failTest THEN ; RUNASTEST
+-test
 
 : syswrite ( count addr fd -- eax )
   \ Calls syswrite which returns the count written or a negative errno
   SYS_WRITE SYSCALL3 ;
-: write ( addr count fd -- u24Result )
+: writefd ( addr count fd -- u24Result )
   rrot swap lrot ( count addr fd )
   3dup syswrite dup 
   0 < IF negate F_ERR THEN ; \ if <0 set F_ERR flag
-\ : writeall ( addr count fd -- numWritten|err ) 
-\   \ Call write until all bytes written or an error is encountered
-\   over 0x 3 roll ( count addr count fd )
-\   BEGIN  swap dup R@ <= WHILE \ while count<=numWritten
-\     3dup write ? { >R 4drop R> } \ on error drop values and numWritten, preserve count
-\     ignoreErr ( =count) R> + >R ( <- increment numWritten)
-\   REPEAT 3drop ;
+\ TODO: writefdall would be nice
 
 
-
-\ TODO next: 
-\ - create indirection for (syswrite, sysread, emit, readKey)
-\ - create &'NAME variables to modify the above in forth, as well as &'PANIC
-\ - Allow core XXX\" types to operate at runtime. \" will write to ioBuffer
-\   (rename iob, iobPush, etc), fmt\" will directly emit characters, etc
-\ - have readKey keep track of current line. Add &LINENO, &FNAME, and &MODID 
-\   variables.
-\ - create better panic: rstack printer with name lookup, etc
 
 
 \ : requireEqual ( u u -- u ) 2dup <> IF .fln\" !! $.ux  != $.ux \" panic THEN drop ;

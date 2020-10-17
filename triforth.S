@@ -280,7 +280,7 @@ testCreatedWordDifferent: .ascii "creat3dword\0"
 test3Str: .ascii "3\0"
 test3CStr: .ascii "3C\0"
 test42Str: .ascii "42\0"
-testNewDefinedWordStr: .ascii "NEWDEFINEDWORD\0"
+testNewDefinedWordStr: .ascii "newDefinedWord\0"
 
 .align 4
 
@@ -2568,7 +2568,10 @@ def_asmword ".SLN",   4,    0, pntSln
 # ( -- ) \ The default panic handler
 #            ascii   , len, flag, label
 def_asmword "ASMPANIC", 8,  0, asmpanic
+  cmpl $0, panicErr
+  jne 1f
   movl $ERR_SEE_MSG, panicErr
+1:
   call defaultPanic
 
 # ( -- ) \ Calls the variable (defined later) allowing us to override the default
@@ -3009,8 +3012,13 @@ def_var "&STATE"     ,   6,    0, REFstate  , 0
 def_var "&HERE"      ,   5,    0, REFhere   , 0
 def_var "&LATEST"    ,   7,    0, REFlatest , 0 # initialized in _start
 def_var "&RSTACK_MAX",  10,    0, REFrstack_max , 0 # initialized in _start
-def_var "&'PANIC"    ,   7,    0, REFXTpanic , 0 # initialized in _start
-
+def_asmword "&'PANIC",   7,    0, REFXTpanic # def_var doesn't work for some reason
+  dpush $var_REFXTpanic
+  NEXT
+  .data
+  .align 4
+var_REFXTpanic:
+  .int 0
 ##############################
 # Builtin Constants
 # These simply return a constant value when run
@@ -3048,6 +3056,8 @@ def_const "F_ERR",                5, F_ERR
 def_const "TEST_PREFIX_NT",      14, testPrefixStr
 def_const "TEST_PASS_NT",        12, testPassStr
 def_const "&PANIC_ERR",          10, panicErr  # mem address is a constant :D
+def_const "WORDBUF",              7, wordBuffer
+def_const "&WORDLEN",             8, wordCount
 
 testConst:
   callXt $xt_FR_TIME_IMM
@@ -3392,8 +3402,8 @@ def_asmword "CREATE" ,  6 ,    0 , create
   call tuck   # ( nt namelen addr namelen ) note: doesn't touch edi
   movl %edi, var_REFhere # store edi in HERE, as bmove will destroy
   dpush %edi  # addr2
-  call swap           # stack: ( nt namelen addr addr2 namelen )
-  call bmoveUpper     # dict: put name string
+  call swap         # stack: ( nt namelen addr addr2 namelen )
+  call bmove        # dict: put name string
   dpop %ecx         # namelen. stack: ( nt )
   movl var_REFhere, %eax   # restore HERE into eax
   addl %ecx, %eax       # add namelen to HERE and align
@@ -3426,9 +3436,8 @@ xt_testCreate:
 # stack: ( nt )
 # Flags are as expected (namelen)
 .int xt_dup, xt_ntTOf0, xt_FETCH, xt_lit, 11<<F0_NAMELEN_SHR, xt_assertEq
-# Stored name is uppercased
-.int xt_ntTOname, xt_lit, testCreatedWordUpper, xt_countnt
-.int xt_ceq, xt_assertTrue
+# Stored name has same case
+.int xt_ntTOname, xt_lit, testCreatedWord, xt_countnt, xt_ceq, xt_assertTrue
 .int xt_lit, testCreateStr, xt_countnt, xt_pntTestPass
 .int xt_EXIT
 testCreate:
@@ -3639,14 +3648,26 @@ def_asmword "0BRANCH",   7,    0, _0branch
   NEXT
 
 .equ F_ERR, 0x80000000 # most-significant-bit will flag an error
-# ( flag -- ) \ perform BRANCH iff the most-sig-bit=0. Don't
-# \ consume first word. This will be used for our error handling.
-#                 ascii, len, flag, label
+# ( flag -- ) \ perform BRANCH iff the most-sig-bit=0. Doesn't consume stack.
+#                ascii, len, flag, label
 def_asmword "?0BRANCH",   8,    0, QUESTIONbranch
   # NOTE: %eax contains xt of current instruction from NEXT. Don't override it!
   testl $F_ERR, (%ebp) # does AND setting flags, discards the AND
   jz word_branch
   lodsl           # otherwise skip the offset
+  NEXT
+
+# ( flag -- ) \ perform BRANCH iff the stack is 0, else subtract 1.
+#  \ Doesn't consume stack. This is usd for the Option type.
+#                  ascii, len, flag, label
+def_asmword "NONEBRANCH",  10,   0, NONEbranch
+  # NOTE: %eax contains xt of current instruction from NEXT. Don't override it!
+  dpop %ebx
+  cmpl $0, %ebx
+  je word_branch  # if 0, jump to code in BRANCH above
+  lodsl           # otherwise skip the offset
+  dec %ebx
+  dpush %ebx # subtract 1 to "unwrap" value and push back to stack
   NEXT
 
 # ( xt -- ??? ) \ Execute the given xt
@@ -3767,8 +3788,8 @@ _start:
   movl $nt_quit, var_REFlatest
   movl $rstackMax, %esp  # clear rstack
   movl $dstackMax, %ebp  # clear dstack
-  # movl $ERR_OKAY, panicErr
-  # call *(panic)
+  movl $xt_asmpanic, var_REFXTpanic
+  movl $word_panic, panic
 
   dpush $triforthFile
   call pntSNtln
