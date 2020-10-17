@@ -52,6 +52,7 @@ VARIABLE &testCache 0 , 0 , 0 , \ temp storage for tests
 \ multiplication or division at runtime.
 : cell   0x 4 ;        \ ( -- u ) the cell size
 : cell+  cell + ;  \ ( u -- u ) increment by cell size
+: cell-  cell - ;  \ ( u -- u ) decrement by cell size
 : cells  4* ;  \ ( u -- u ) multiply by cell size
 : @i     cells + @ ; \ ( addr i -- u ) fetch at index=i of addr
 : @1     cell+ @ ; \ ( addr -- u ) fetch at index=1 of addr
@@ -105,7 +106,6 @@ MARKER -test  -test \ test mark+unmark works
 \ Using our BRANCH and 0BRANCH words we can create IF (ELSE?) THEN and LOOP
 \ control structures. We do this by putting HERE on the stack at compile time
 \ and using its value to branch backwards.
-
 
 \ ####
 \ # IF ( ELSE ) THEN
@@ -190,33 +190,34 @@ assertEmpty -test
 ( test: this is (now a ) comment )
 
 \ #########################
-\ # Mathematical functions
+\ # Additional Mathematical Functions
 : /       /mod swap drop ; \ ( a b -- a/b )
 : mod     /mod drop ;   \ ( a b -- a%b )
 : negate  0 SWAP - ; \ get negative of the number
 : u8 ( u -- u8 ) 0x FF AND ; \ mask upper bits
 : land ( flag flag -- flag \logical and)
   IF IF true ELSE false THEN
-  ELSE drop false THEN ;
+     ELSE drop false THEN ;
 : lor ( flag flag -- flag \logical or)
   IF drop true ELSE IF true ELSE false THEN THEN ;
 
 \ #########################
 \ # Stack Operations
+: Rdrop ( -- \ drop cell on R) IMM  compile, R>  compile, drop ;
 : R@ ( -- u ) rsp@ cell + @ ; \ add cell to skip caller's address
 : R@1 ( -- u ) rsp@ 0x 2 cells + @ ; \ 2 cells because we have to skip caller's address
 : R@2 ( -- u ) rsp@ 0x 3 cells + @ ;
-: 2>R ( u:a u:b -- ) IMM compile, swap  compile, >R  compile, >R ; \ R: ( -- a b)
-: 2R> ( -- u:a u:b ) IMM compile, R>  compile, R>  compile, swap ; \ R: ( a b -- )
-\ TODO: this would be nice but doesn't work
-\ : 2R> ( -- u:a u:b )
-\   R@2 R@1 ( get R@1 R@0 of caller)
-\   RSP@ cell+ cell+ ( new RSP@, 2 cells "down" stack) 
-\   R@ over ! ( move caller's &code there)  RSP! ( and set RSP to the new value) ;
+: 2>R ( u:a u:b -- R: a b ) IMM compile, swap  compile, >R  compile, >R ; \ R: ( -- a b)
+  \ TODO: Segfaults:
+  \ dumpInfo R@ RSP@ cell- cell- ! dumpInfo ( <- store caller's &code)
+  \ RSP@ cell- ! ( <-store b) RSP@ ! ( <-store a) RSP@ cell- cell- RSP! dbgexit ;
+: 2R> ( -- u:a u:b )
+  R@2 R@1 ( get R@1 R@ of caller)
+  RSP@ cell+ cell+ ( new RSP@, 2 cells "down" stack) 
+  R@ over ! ( move caller's &code there)  RSP! ( and set RSP to the new value) ;
+: 2Rdrop ( -- \ drop 2cells on R) IMM  compile, 2R>  compile, 2drop ;
 : >R@ ( u -- u \ store+fetch) IMM compile, dup  compile, >R ; \ same as >R R@
 : 2>R@ ( u64 -- u64 \ store+fetch) IMM compile, 2dup  compile, 2>R ;
-: Rdrop ( -- \ drop cell on R) IMM  compile, R>  compile, drop ;
-: 2Rdrop ( -- \ drop 2cells on R) IMM  [compile] 2R>  compile, 2drop ;
 : -R@ ( -- \decrement R@ ) rsp@ cell + -! ;
 : swapAB ( ... A B -- ... ) \ swap size A with size B
   \ TODO: check that memory is large enough and no stack overflow
@@ -237,7 +238,7 @@ assertEmpty
 : testR@1 0x 42 >R 0x 43 >R  r@ 0x 43 assertEq    r@1 0x 42 assertEq
   R> 0x 43 assertEq   R> 0x 42 assertEq assertEmpty ; testR@1
 : test2>R 0x 42 0  2>R   R@ 0 assertEq  R@1 0x 42 assertEq
-          2R>   0 asserteq   0x 42 assertEq assertEmpty ; test2>R
+          2R>  0 asserteq   0x 42 assertEq assertEmpty ; test2>R
 : testR@2 0x 42 >R 0 >R 0 >R assertEmpty R@2 0x 42 assertEq 2Rdrop Rdrop
   ; testR@2
 : test-R@ 0x 42 >R -R@ 0x 41 R> assertEq ; test-R@
@@ -466,7 +467,7 @@ MARKER -test
     cell - \ next Rstack cell
   REPEAT drop ;
 \ You can see it in action if you uncomment below:
-: baz .rstack ; : bar baz ; : foo bar ; foo
+\ : baz .rstack ; : bar baz ; : foo bar ; foo
 
 
 \ : runTest
@@ -544,40 +545,6 @@ MARKER -test
 \     ignoreErr ( =count) R> + >R ( <- increment numWritten)
 \   REPEAT 3drop ;
 
-
-\ \ Maniuplating "IOB" buffer defined in assembly. Useful for small formatting
-\ \ operations.
-\ VARIABLE &iobLen 0 ,  \ max=1024=0x400
-\ : iobLen &iobLen @ ;
-\ : iobClear   &iobLen 0 ! ; \ clear the io buffer
-\ : iobPanic .f\" IO Buffer full\n\" panic ;
-\ : iob.b ( u8 -- flag ) \ push a byte to iob, panics on failure
-\   iobLen 0x 400 >= IF iobPanic THEN
-\   iob iobLen + b! ( <-store byte at iob+len) &iobLen +1! ( <-inc len) ;
-\ : iob.s ( addr count -- flag ) \ push a string to iob, panics on failure
-\   ( check for overflow) dup iobLen + 0x 400 >= IF iobPanic THEN
-\   ( preserve count) tuck ( move bytes) iob iobLen + swap cmove
-\   ( inc len) iobLen + &iobLen ! ;
-\ : _iobf ( addr count -- ) iobExtend NOT IF .f\" IO Buffer full\n\" panic THEN ;
-\ : iobFmt\" IMM ( 'write -- ) \ Formats the string into iob. Panics on failure.
-\   ' _iobf  [compile] exec\" ;
-
-
-
-\ Example: /" foo $( 's>> |? ) bar\"
-
-\ Hmm... I really like that approach, but it makes the stack non-deterministic.
-\ A better approach for typed functions might be that functions have a "stream"
-\ version, i.e. foo and |foo or something. The "stream" version will simply
-\ call "drop" on all types that are supposed to be consumed... oh but that
-\ wouldn't fix other issues... drat.
-\ NO! In code which does error handling all the stack changes will happen
-\ "up front" or be pushed into local vars.
-\ The error handling can go one better --  |?' cleanup  -- "cleanup" is the
-\ xt to call on failure before exiting. It is given the point to the locals in the current
-\ function so it can clean them up -- basically it is a closure. I really
-\ need a way to define closures... maybe :: myClosure ; ?
-\ Never-the-less, I think this should actually work -- although it is slightly crazy :D
 
 
 \ TODO next: 
