@@ -1096,23 +1096,6 @@ bmove: # ( addr1 addr2 count -- )
 2:
   ret
 
-bmoveUpper: # ( addr1 addr2 count -- )
-  # Move count bytes from addr1 -> addr2 as uppercase
-  dpop %ecx # count
-  dpop %edx # addr2
-  dpop %eax # addr1
-  movl $0, %edi  # index
-1:
-  cmpl %edi, %ecx
-  je 2f
-  movb (%eax,%edi,1), %bl
-  call bl_toupper
-  movb %bl, (%edx,%edi,1)
-  inc %edi
-  jmp 1b
-2:
-  ret
-
 ##############################
 # Debug Helpers
 # These will help us as we develop to view the state of the stack and registers
@@ -1585,19 +1568,19 @@ xt_\label :
 
 # ( a b -- b a )
 #           ascii ,  len, flag, label
-def_callword "SWAP" , 4 ,  0 ,   swap
+def_callword "swap" , 4 ,  0 ,   swap
 
 # ( a -- a a )
 #           ascii , len, flag, label
-def_callword "DUP" , 3 ,  0 ,   dup
+def_callword "dup" , 3 ,  0 ,   dup
 
 # ( a b -- a b a b )
 #           ascii , len, flag, label
-def_callword "2DUP" , 4 ,  0 ,   _2dup
+def_callword "2dup" , 4 ,  0 ,   _2dup
 
 # ( a b c -- a b c a b c )
 #           ascii , len, flag, label
-def_asmword "3DUP" , 4 ,  0 ,   _3dup
+def_asmword "3dup" , 4 ,  0 ,   _3dup
   movl $12, %eax
   call checkStackSize
   movl 8(%ebp), %eax
@@ -1610,27 +1593,27 @@ def_asmword "3DUP" , 4 ,  0 ,   _3dup
 
 # ( a -- )
 #           ascii ,  len, flag, label
-def_callword "DROP" , 4 ,  0 ,   drop
+def_callword "drop" , 4 ,  0 ,   drop
 
 # ( a b -- )
 #           ascii ,  len, flag, label
-def_callword "2DROP" , 5 ,  0 ,   _2drop
+def_callword "2drop" , 5 ,  0 ,   _2drop
 
 # ( a b c -- b c a ) \ rotates left
 #           ascii ,  len, flag, label
-def_callword "LROT" , 4 ,  0 ,   lrot
+def_callword "lrot" , 4 ,  0 ,   lrot
 
 # ( a b c -- c a b ) \ rotates right
 #           ascii  , len, flag, label
-def_callword "RROT" , 4 ,  0 ,   rrot
+def_callword "rrot" , 4 ,  0 ,   rrot
 
 # ( a b -- a b a )
 #           ascii  , len, flag, label
-def_callword "OVER" , 4 ,  0 ,   over
+def_callword "over" , 4 ,  0 ,   over
 
 # ( a b -- b ) \ drops item below top of stack
 #           ascii , len, flag, label
-def_callword "NIP" , 3 ,  0   , nip
+def_callword "nip" , 3 ,  0   , nip
 
 tuck: # ( a b -- b a b ) \ copy the top stack item below the second stack item
   dpop %ebx
@@ -1642,11 +1625,11 @@ tuck: # ( a b -- b a b ) \ copy the top stack item below the second stack item
 
 # ( a b -- b a b ) \ copy the top stack item below the second stack item
 #            ascii  , len, flag, label
-def_callword "TUCK" , 4 ,  0 ,   tuck
+def_callword "tuck" , 4 ,  0 ,   tuck
 
 # ( i -- u ) \ fetch the index of the stack.
 #            ascii  , len, flag, label
-def_asmword "PICK" , 4 ,  0 ,   pick
+def_asmword "pick" , 4 ,  0 ,   pick
   dpop %eax   # index
   shl  $2, %eax # multiply by 4
   call checkStackSize # check that access is valid
@@ -1657,7 +1640,7 @@ def_asmword "PICK" , 4 ,  0 ,   pick
 
 # ( u i -- ) \ store value at the index on the stack (minus these params)
 #              ascii  , len, flag, label
-def_asmword "REPLACE" ,   7,    0 , replace
+def_asmword "replace" ,   7,    0 , replace
   dpop %eax   # index
   dpop %ecx   # value, don't use ebx because checkStackSize
   shl  $2, %eax # multiply by 4 (cell size)
@@ -1668,7 +1651,7 @@ def_asmword "REPLACE" ,   7,    0 , replace
 
 # ( a -- a a? ) \ duplicate top of stack if non-zero
 #           ascii  , len, flag, label
-def_asmword "?DUP" , 4 ,  0 ,   QDUP
+def_asmword "?dup" , 4 ,  0 ,   QDUP
   movl $4, %eax
   call checkStackSize
   cmpl $0, (%ebp)
@@ -1770,7 +1753,7 @@ def_asmword "DSP!",   4,    0, dstackSTORE
 
 # ( -- u ) \ depth of the stack
 #           ascii   , len, flag, label
-def_callword "DEPTH" , 5 ,  0 ,   depth
+def_callword "depth" , 5 ,  0 ,   depth
 
 # ( u addr -- ) \ stores the value at address
 #         ascii , len, flag, label
@@ -1804,11 +1787,11 @@ def_asmword "-!" ,  2 ,  0 ,  SUBSTORE
 
 # ( u8 addr -- ) \ stores a byte at address
 #           ascii , len, flag, label
-def_callword "B!" ,  2 ,  0 ,  bSTORE
+def_callword "b!" ,  2 ,  0 ,  bSTORE
 
 # ( u16 addr -- ) \ store 16bit value at address
 #         ascii , len, flag, label
-def_asmword "U16!" ,  4 ,  0 ,  u16STORE
+def_asmword "u16!" ,  4 ,  0 ,  u16STORE
   dpop %eax # addr
   dpop %ebx # value
   movw %bx, (%eax)
@@ -1816,7 +1799,7 @@ def_asmword "U16!" ,  4 ,  0 ,  u16STORE
 
 # ( addr -- u8 ) \ fetches a byte at address
 #           ascii , len, flag, label
-def_asmword "B@" ,  2 ,  0 ,  bFETCH
+def_asmword "b@" ,  2 ,  0 ,  bFETCH
   dpop %eax # addr
   movl $0, %ebx
   movb (%eax), %bl
@@ -1825,7 +1808,7 @@ def_asmword "B@" ,  2 ,  0 ,  bFETCH
 
 # ( addr -- u16 ) \ fetches 16bit value at address
 #         ascii , len, flag, label
-def_asmword "U16@" ,  4 ,  0 ,  u16FETCH
+def_asmword "u16@" ,  4 ,  0 ,  u16FETCH
   dpop %eax
   movl $0, %ebx
   mov (%eax), %bx
@@ -1846,11 +1829,11 @@ def_asmword "u>ascii",   7,    0, uTOascii
 
 # ( -- ) \ fail test
 #                 ascii, len, flag, label
-def_callword "FAILTEST",  8,    0, failTest
+def_callword "failTest",  8,    0, failTest
 
 # ( flag -- ) \ true or fail test
 #           ascii,        len, flag, label
-def_asmword "ASSERTTRUE",  10,    0, assertTrue
+def_asmword "assertTrue",  10,    0, assertTrue
   dpop %eax
   cmpl $0, %eax
   je 1f
@@ -1861,7 +1844,7 @@ def_asmword "ASSERTTRUE",  10,    0, assertTrue
 
 # ( flag -- ) \ false or fail test
 #           ascii,         len, flag, label
-def_asmword "ASSERTFALSE",  11,    0, assertFalse
+def_asmword "assertFalse",  11,    0, assertFalse
   dpop %eax
   cmpl $0, %eax
   jne 1f
@@ -1872,7 +1855,7 @@ def_asmword "ASSERTFALSE",  11,    0, assertFalse
 
 # ( u u -- ) \ equal or fail test
 #           ascii,     len, flag, label
-def_asmword "ASSERTEQ",  8,    0, assertEq
+def_asmword "assertEq",  8,    0, assertEq
   dpop %eax
   dpop %ebx
   call assertEaxEbxEq
@@ -1880,11 +1863,11 @@ def_asmword "ASSERTEQ",  8,    0, assertEq
 
 # ( -- ) \ asserts that stack is empty
 #                    ascii,len, flag, label
-def_callword "ASSERTEMPTY", 11,  0, assertEmpty
+def_callword "assertEmpty", 11,  0, assertEmpty
 
 # ( addr -- ) \ assert the address is aligned by 4
 #                     ascii,     len, flag, label
-def_asmword "ASSERTALIGN4", 13, 0, assertAlign4
+def_asmword "assertAlign4", 13, 0, assertAlign4
   dpop %eax
   andl $3, %eax
   movl $0, %ebx
@@ -1912,31 +1895,31 @@ assertCleanState:
 
 # ( -- ) \ assert the state is clean
 #                     ascii,     len, flag, label
-def_callword "ASSERTCLEANSTATE", 16, 0, assertCleanState
+def_callword "assertCleanState", 16, 0, assertCleanState
 
 # ( n u -- ) \ prints a number with the given base to emitFd
 #           ascii          , len, flag, label
-def_callword "PNTTESTPASS" ,  11 ,  0 ,  pntTestPass
+def_callword ".testPass" ,  9 ,  0 ,  pntTestPass
 
 # ( -- ) \ prints the current stack
 #           ascii , len, flag, label
-def_callword "PNTSTACK" ,  8 ,  0 ,  pntStack
+def_callword ".stack" ,  6 ,  0 ,  pntStack
 
 # ( -- ) \ prints current stack/register/etc info
 #           ascii       , len, flag, label
-def_callword "DUMPINFO" ,  8 ,  0 ,  dumpInfo
+def_callword "dumpInfo" ,  8 ,  0 ,  dumpInfo
 
 # ( addr count -- ) \ dump contents of address
 #            ascii     , len, flag, label
-def_callword "DUMP" ,  4 ,  0 ,  dump
+def_callword "dump" ,  4 ,  0 ,  dump
 
 # ( -- ) \ exits immediately, printing info
 #            ascii     , len, flag, label
-def_callword "DBGEXIT" ,  7 ,  0 ,  dbgexit
+def_callword "dbgexit" ,  7 ,  0 ,  dbgexit
 
 # ( sc -- eax ) \ Call a syscall with no arguments
 #            ascii     , len, flag, label
-def_asmword "SYSCALL0",   8,    0, syscall0
+def_asmword "syscall0",   8,    0, syscall0
   dpop %eax
   int $LINUX_SYSCALL
   dpush %eax
@@ -1944,7 +1927,7 @@ def_asmword "SYSCALL0",   8,    0, syscall0
 
 # ( arg0 sc -- eax ) \ Call a syscall with one argument
 #            ascii     , len, flag, label
-def_asmword "SYSCALL1",   8,    0, syscall1
+def_asmword "syscall1",   8,    0, syscall1
   dpop %eax
   dpop %ebx
   int $LINUX_SYSCALL
@@ -1953,7 +1936,7 @@ def_asmword "SYSCALL1",   8,    0, syscall1
 
 # ( arg1 arg0 sc -- eax ) \ Call a syscall with two arguments
 #            ascii     , len, flag, label
-def_asmword "SYSCALL2",   8,    0, syscall2
+def_asmword "syscall2",   8,    0, syscall2
   dpop %eax
   dpop %ebx
   dpop %ecx
@@ -1963,7 +1946,7 @@ def_asmword "SYSCALL2",   8,    0, syscall2
 
 # ( arg2 arg1 arg0 sc -- eax ) \ Call a syscall with three arguments
 #            ascii     , len, flag, label
-def_asmword "SYSCALL3",   8,    0, syscall3
+def_asmword "syscall3",   8,    0, syscall3
   dpop %eax
   dpop %ebx
   dpop %ecx
@@ -2078,7 +2061,7 @@ def_asmword "16*" , 3  ,  0 ,  _16MUL
 
 # ( u -- u ) \ shift bits left by 8
 #          ascii  , len, flag, label
-def_asmword "8SHL",   4,    0, _8shl
+def_asmword "8shl",   4,    0, _8shl
   dpop %eax
   shl $8, %eax
   dpush %eax
@@ -2086,7 +2069,7 @@ def_asmword "8SHL",   4,    0, _8shl
 
 # ( u -- u ) \ shift bits left by 16
 #          ascii   , len, flag, label
-def_asmword "16SHL",   6,    0, _16shl
+def_asmword "16shl",   6,    0, _16shl
   dpop %eax
   shl $16, %eax
   dpush %eax
@@ -2094,7 +2077,7 @@ def_asmword "16SHL",   6,    0, _16shl
 
 # ( u -- u ) \ shift bits right by 8
 #          ascii  , len, flag, label
-def_asmword "8SHR",   4,    0, _8shr
+def_asmword "8shr",   4,    0, _8shr
   dpop %eax
   shr $8, %eax
   dpush %eax
@@ -2102,7 +2085,7 @@ def_asmword "8SHR",   4,    0, _8shr
 
 # ( u -- u ) \ shift bits right by 16
 #           ascii  , len, flag, label
-def_asmword "16SHR",   5,    0, _16shr
+def_asmword "16shr",   5,    0, _16shr
   dpop %eax
   shr $16, %eax
   dpush %eax
@@ -2110,7 +2093,7 @@ def_asmword "16SHR",   5,    0, _16shr
 
 # ( u:a u:b -- u:rem u:quot ) \ divide a/b -> quotient remainder
 #           ascii  , len, flag, label
-def_asmword "/MOD" , 4  ,  0 ,  DIVmod
+def_asmword "/mod" , 4  ,  0 ,  DIVmod
   call DIVmod
   NEXT
 
@@ -2124,7 +2107,7 @@ def_asmword "INC",   3,    0, inc
 
 # ( u -- u ) \ increment by 4
 #            ascii, len, flag, label
-def_asmword "INC4",   4,    0, inc4
+def_asmword "inc4",   4,    0, inc4
   movl $4, %eax
   call checkStackSize
   addl $4, (%ebp)
@@ -2132,7 +2115,7 @@ def_asmword "INC4",   4,    0, inc4
 
 # ( u -- u ) \ increment by 1
 #           ascii, len, flag, label
-def_asmword "DEC",   3,    0, dec
+def_asmword "dec",   3,    0, dec
   movl $4, %eax
   call checkStackSize
   subl $1, (%ebp)
@@ -2140,7 +2123,7 @@ def_asmword "DEC",   3,    0, dec
 
 # ( u -- u ) \ increment by 4
 #            ascii, len, flag, label
-def_asmword "DEC4",   4,    0, dec4
+def_asmword "dec4",   4,    0, dec4
   movl $4, %eax
   call checkStackSize
   subl $4, (%ebp)
@@ -2148,7 +2131,7 @@ def_asmword "DEC4",   4,    0, dec4
 
 # ( u u -- u ) \ bitwise AND
 #          ascii  , len, flag, label
-def_asmword "AND" ,  3 ,   0 , and
+def_asmword "and" ,  3 ,   0 , and
   dpop %eax
   dpop %ebx
   andl %eax, %ebx
@@ -2157,7 +2140,7 @@ def_asmword "AND" ,  3 ,   0 , and
 
 # ( u u -- u ) \ bitwise OR
 #          ascii , len, flag, label
-def_asmword "OR" ,  2 ,   0 , or
+def_asmword "or" ,  2 ,   0 , or
   dpop %eax
   dpop %ebx
   orl %eax, %ebx
@@ -2166,7 +2149,7 @@ def_asmword "OR" ,  2 ,   0 , or
 
 # ( u u -- u ) \ bitwise XOR (exclusive OR)
 #          ascii , len, flag, label
-def_asmword "XOR" ,  3 ,   0 , xor
+def_asmword "xor" ,  3 ,   0 , xor
   movl $8, %eax
   call checkStackSize
   dpop %eax
@@ -2175,7 +2158,7 @@ def_asmword "XOR" ,  3 ,   0 , xor
 
 # ( u -- u ) \ bitwise INVERT (switch all bits)
 #          ascii     , len, flag, label
-def_asmword "INVERT" ,  6 ,   0 , invert
+def_asmword "invert" ,  6 ,   0 , invert
   dpop %eax
   notl %eax
   dpush %eax
@@ -2193,11 +2176,11 @@ not:
 
 # ( u -- flag ) \ equal to 0?
 #          ascii   , len, flag, label
-def_callword "NOT" , 3 ,   0 , not
+DEF_CALLWORD "not" , 3 ,   0 , not
 
 # ( u -- flag ) \ equal to 0?
 #          ascii , len, flag, label
-def_asmword "=0",  2 ,   0 , EQ0
+Def_asmword "=0",  2 ,   0 , EQ0
   call not
   NEXT
 
@@ -2210,7 +2193,7 @@ bool: # ( n -- flag )  \ convert integer to TRUE or FALSE
 
 # ( u -- flag ) \ convert integer to TRUE or FALSE
 #          ascii  , len, flag, label
-def_callword "BOOL",   4,   0, bool
+DEF_CALLWORD "bool",   4,   0, bool
 
 # Macro for defining comparisons, which are identical except their jmp
 # conditions.
@@ -2255,7 +2238,7 @@ def_asmcmp ">="  , 2 ,   0 , GTE , jge
 # ( -- u ) \ used to compile literal values. Simply returns the value in the next
 # "instruction", skipping its execution.
 #           ascii , len, flag, label
-def_asmword "LIT",    3,   0,    lit
+def_asmword "lit",    3,   0,    lit
   lodsl  # %eax=(%esi) %esi+=4, see NEXT
   dpush %eax
   NEXT
@@ -2264,7 +2247,7 @@ def_asmword "LIT",    3,   0,    lit
 # \ to LIT above. The memory looks like this:
 # \    xt_litbytes | len | cell0 | cell1 | cell2 | ... | cellN
 #               ascii , len, flag, label
-def_asmword "LITBYTES",   8,    0, litbytes
+def_asmword "litbytes",   8,    0, litbytes
   lodsl  # %eax=(%esi) %esi+=4, see NEXT
   dpush %esi  # address
   dpush %eax  # count
@@ -2278,7 +2261,7 @@ def_asmword "LITBYTES",   8,    0, litbytes
 # \ to LIT above. The memory looks like this:
 # \    xt_litcarru8 | u8:count | u8 | u8 | u8 | ... | cellN
 #                 ascii, len, flag, label
-def_asmword "LITCARRU8",   9,    0, litcarru8
+def_asmword "litcarru8",   9,    0, litcarru8
   movl $0, %eax
   movb (%esi), %al # count
   inc %esi
@@ -2339,11 +2322,11 @@ testLitbytes:
 
 # ( src dst count -- ) \ Moves bytes from src to dst
 #           ascii    , len, flag, label
-def_callword "BMOVE" ,  5 ,  0 ,  bmove
+def_callword "bmove" ,  5 ,  0 ,  bmove
 
 # ( src dst count -- ) \ Moves bytes from src to dst starting at right-most bytes
 #           ascii    , len, flag, label
-def_asmword "BMOVE>",   6,   0 , bmoveRIGHT
+def_asmword "bmove>",   6,   0 , bmoveRIGHT
   # Forth BMOVE, move count bytes from addr1 -> addr2.
   dpop %edi # count/index
   dpop %ecx # addr2
@@ -2360,13 +2343,9 @@ def_asmword "BMOVE>",   6,   0 , bmoveRIGHT
 2:
   ret
 
-# ( src dst count -- ) \ Moves bytes as uppercase from src to dst
-#                ascii    , len, flag, label
-def_callword "BMOVEUPPER" , 10 ,    0, bmoveUpper
-
 # ( src dst count -- ) \ Move count cells from src to dst
 #               ascii , len, flag, label
-def_asmword "CELLMOVE",   8,    0, cellmove
+def_asmword "cellmove",   8,    0, cellmove
   dpop %ecx # count/index
   dpop %ebx # dst
   dpop %eax # src
@@ -2393,20 +2372,13 @@ testCellmove:
   call assertEaxEbxEq
   ret
 
-
-
-
-  
-
-
-
 # ( addr -- addr count ) \ counts a null-terminated (c-style) string.
 #           ascii      , len, flag, label
-def_callword "COUNTNT" ,  7 ,  0 ,  countnt
+def_callword "countNt" ,  7 ,  0 ,  countnt
 
 # ( addr -- addr count ) \ convert carrayu8 (8bit counted bytes) to addr count
 #           ascii  , len, flag, label
-def_asmword "COUNT",   5,   0 , count
+def_asmword "count",   5,   0 , count
   dpop %eax        # addr
   movl $0, %ebx
   movb (%eax), %bl # count
@@ -2418,7 +2390,7 @@ def_asmword "COUNT",   5,   0 , count
 # \ forth COMPARE, returns -1 if str1<str2, 0 iff ==, 1 otherwise
 # ( addr1 count1 addr2 count2 -- i ) 
 #           ascii    , len, flag, label
-def_asmword "COMPARE",   7,   0 , compare
+def_asmword "compare",   7,   0 , compare
   movl 12(%ebp), %eax  # addr1
   movl 4(%ebp), %ebx  # addr2
   movl $0, %edi  # index
@@ -2455,7 +2427,7 @@ compare_done:
 
 # ( addr1 count1 addr2 count2 -- flag ) \ return whether bytes1==bytes2
 #         ascii  , len, flag, label
-def_asmword "CEQ",   3,   0 , ceq
+def_asmword "ceq",   3,   0 , ceq
   movl $16, %eax
   call checkStackSize
   movl (%ebp), %eax
@@ -2472,7 +2444,7 @@ ceq_ne:
 # ( addr1 count1 addr2 count2 -- flag )
 # \ return whether bytes1==bytes2 with case ignored
 #                     ascii, len, flag, label
-def_asmword "BYTESEQNOCASE",  13,    0, bytesEqNoCase
+def_asmword "byteseqnocase",  13,    0, bytesEqNoCase
   movl $16, %eax
   call checkStackSize
   movl (%ebp), %eax
@@ -2533,7 +2505,7 @@ testBytesEqNoCase:
 
 # ( addr count -- addr count ) \ remove trailing spaces
 #               ascii  , len, flag, label
-def_asmword "-TRAILING",   9,    0, SUBtrailing
+def_asmword "-trailing",   9,    0, SUBtrailing
   movl 4(%ebp), %eax  # address
   movl (%ebp), %ebx   # count
   dec %ebx            # index (last index first)
@@ -2551,15 +2523,15 @@ SUBtrailing_done:
 
 # ( c -- ) \ emit a byte
 #           ascii   , len, flag, label
-def_callword "EMIT" , 4  ,   0 , emit
+def_callword "emit" , 4  ,   0 , emit
 
 # ( addr count -- ) \ print a string to emitFd
 #           ascii   , len, flag, label
-def_callword ".S" ,  2 ,  0 ,  pntS
+def_callword ".s" ,  2 ,  0 ,  pntS
 
 # ( addr count -- ) \ pnts a string to emitFd with newline
 #           ascii , len, flag, label
-def_asmword ".SLN",   4,    0, pntSln
+def_asmword ".sln",   4,    0, pntSln
   callXt $xt_pntS
   dpush $'\n'
   call emit
@@ -2567,7 +2539,7 @@ def_asmword ".SLN",   4,    0, pntSln
 
 # ( -- ) \ The default panic handler
 #            ascii   , len, flag, label
-def_asmword "ASMPANIC", 8,  0, asmpanic
+def_asmword "asmpanic", 8,  0, asmpanic
   cmpl $0, panicErr
   jne 1f
   movl $ERR_SEE_MSG, panicErr
@@ -2577,7 +2549,7 @@ def_asmword "ASMPANIC", 8,  0, asmpanic
 # ( -- ) \ Calls the variable (defined later) allowing us to override the default
 #        \ panic handler
 #            ascii   , len, flag, label
-def_asmword "PANIC" ,  5 ,  0 ,  panic
+def_asmword "panic" ,  5 ,  0 ,  panic
   movl var_REFXTpanic, %eax
   call _callXt
   call unreachable
@@ -2660,7 +2632,7 @@ readKeyErr:
   jmp unreachable
 
 #           ascii , len, flag, label
-def_asmword "KEY" ,   3,    0, key
+def_asmword "key" ,   3,    0, key
   call readKey
   cmpl $0, %eax
   je 1f # EOF reached, interpret as "0"
@@ -2749,7 +2721,7 @@ bl_toupper: # %bl:b ( -- ) %bl:b
 
 # ( addr count -- addr count ) \ Convert to upper ASCII case
 #              ascii ,  len, flag, label
-def_asmword "TOUPPER",    7,    0, toupper
+def_asmword "toupper",    7,    0, toupper
   movl (%ebp), %ecx   # count
   movl 4(%ebp), %edx  # addr
   movl $0, %edi       # index
@@ -2765,7 +2737,7 @@ def_asmword "TOUPPER",    7,    0, toupper
 
 # ( -- addr count ) \ Get the next WORD on the input stream
 #            ascii ,  len, flag, label
-def_asmword "WORD",    4,    0, word
+def_asmword "word",    4,    0, word
   dpush $0        # count
 word_loop:
   cmpl $MAX_WORD_LEN, (%ebp)
@@ -2873,7 +2845,7 @@ def_asmword "\\",   1, FR_TIME_IMM, linecomment
 # ( -- c ) \ Convert the single-byte "word" to it's ASCII representation
 #   \ panics if the next word has len > 1
 #            ascii, len, flag, label
-def_asmword "ASCII",   5,    0, ascii
+def_asmword "ascii",   5,    0, ascii
   callXt $xt_word # ( addr count )
   dpop %eax
   cmpl $1, %eax  # see if length <> 1
@@ -2890,7 +2862,7 @@ def_asmword "ASCII",   5,    0, ascii
 # ( -- u ) \ Convert the next hex word to an unsigned number, compiling it if state!=0
 #   \ panics if the next word is not completely representable by hex
 #          ascii, len,        flag, label
-def_asmword "0X",   2, FR_TIME_IMM, _0x
+def_asmword "0x",   2, FR_TIME_IMM, _0x
   callXt $xt_word # ( addr count )
   call strTOhex
   cmpl $0, var_REFstate
@@ -3156,7 +3128,7 @@ testAlign4:
 
 # ( addr -- addr ) \ align on 4 byte boundary
 #           ascii  , len, flag, label
-def_asmword "ALIGN4",  6,    0, align4
+def_asmword "align4",  6,    0, align4
   dpop %eax
   call eax_align4
   dpush %eax
@@ -3164,7 +3136,7 @@ def_asmword "ALIGN4",  6,    0, align4
 
 # ( nt -- F0 ) \ given the nt return the address of F0
 #            ascii  , len, flag, label
-def_asmword "NT>&F0",   6,    0, ntTOf0
+def_asmword "nt>&F0",   6,    0, ntTOf0
   dpop %eax           # address of nt
   cmpl $0, %eax
   je 1f
@@ -3184,7 +3156,7 @@ def_asmword "NT>&F0",   6,    0, ntTOf0
 
 # ( nt -- FR ) \ given the nt return the address of FR
 #            ascii  , len, flag, label
-def_asmword "NT>&FR",   6,    0, ntTOfr
+def_asmword "nt>&FR",   6,    0, ntTOfr
   callXt $xt_ntTOf0
   addl $4, (%ebp)
   NEXT
@@ -3192,21 +3164,21 @@ def_asmword "NT>&FR",   6,    0, ntTOfr
 
 # ( nt -- xt ) \ given the nt return the xt
 #           ascii  , len, flag, label
-def_asmword "NT>XT",   5,    0, ntTOxt
+def_asmword "nt>xt",   5,    0, ntTOxt
   callXt $xt_ntTOfr
   addl $4, (%ebp) # xt is directly after right-most flag (FR)
   NEXT
 
 # ( nt -- addr count ) \ given the nt return the name
 #             ascii  , len, flag, label
-def_asmword "NT>NAME",   7,    0, ntTOname
+def_asmword "nt>name",   7,    0, ntTOname
   addl $4, (%ebp) # name is directly after nt
   callXt $xt_count
   NEXT
 
 # ( &fr -- addr count ) \ given the nt return the name
 #                   ascii, len, flag, label
-def_asmword "&F0>NAMELEN",  11,    0, frTOnamelen
+def_asmword "&F0>namelen",  11,    0, frTOnamelen
   dpop %eax
   movl (%eax), %eax
   andl $F0_NAMELEN_MASK, %eax
@@ -3229,13 +3201,13 @@ def_doword ">DFA",   4,    0, TOdfa
 
 # ( xt -- FR ) \ get FR flags of the word
 #           ascii  , len, flag, label
-def_doword "XT>&FR",   5,    0, xtTOfr
+def_doword "xt>&FR",   5,    0, xtTOfr
   .int xt_dec4
   .int xt_EXIT
 
 # ( xt -- FR ) \ get FR flags of the word
 #           ascii  , len, flag, label
-def_doword "XT>&F0",   5,    0, xtTOf0
+def_doword "xt>&F0",   5,    0, xtTOf0
   .int xt_dec4
   .int xt_dec4
   .int xt_EXIT
@@ -3324,7 +3296,7 @@ test_ntTOother_constructed: # ( nt -- )
 # ( addr count -- nt ) \ finds the string in the dictionary, returning it's nt (name token)
 #                      \ or 0 if not found
 #           ascii  , len, flag, label
-def_asmword "FIND" , 4 ,    0 , find
+def_asmword "find" , 4 ,    0 , find
   movl $8, %eax
   call checkStackSize
   movl var_REFlatest, %eax
@@ -3384,7 +3356,7 @@ DOCREATE: # ( -- xt-body ) \ the (default) execution word for CREATE. Simply
 
 # ( addr namelen -- nt ) \ create the given string in the dictionary
 #             ascii  , len, flag, label
-def_asmword "CREATE" ,  6 ,    0 , create
+def_asmword "create" ,  6 ,    0 , create
   movl $8, %eax
   call checkStackSize
   cmpl $MAX_WORD_LEN, (%ebp) # check if namelen > max
@@ -3478,7 +3450,7 @@ def_asmword "]" ,  1 ,    0, statecompile
 
 # ( -- ) \ Used by ':' or anyone to create a word with xt=DOCOL
 #               ascii  , len, flag, label
-def_doword "CREATEWORD",  10,    0, createWord
+def_doword "createword",  10,    0, createWord
   .int xt_word # ( addr count )
   .int xt_create, xt_ntTOxt # ( xt )
   # replace DOCREATE with DOCOL
@@ -3488,7 +3460,7 @@ def_doword "CREATEWORD",  10,    0, createWord
 
 # ( -- ) \ require the state to be in run mode
 #                ascii  , len, flag, label
-def_asmword "REQUIRERUN",  10,    0, requireRun
+def_asmword "requireRun",  10,    0, requireRun
   cmpl $0, var_REFstate
   jne 1f
   NEXT
@@ -3498,7 +3470,7 @@ def_asmword "REQUIRERUN",  10,    0, requireRun
 
 # ( -- ) \ require the state to be in compile mode
 #                 ascii  , len, flag, label
-def_asmword "REQUIRECOMP",  11,    0, requireComp
+def_asmword "requireComp",  11,    0, requireComp
   cmpl $0, var_REFstate
   je 1f
   NEXT
@@ -3517,7 +3489,7 @@ def_doword ":",   1,    0, COLON
 
 # ( -- ) \ require the stack to be empty or panic
 #                  ascii  , len, flag, label
-def_asmword "REQUIREEMPTY",  12,    0, requireEmpty
+def_asmword "requirEempty",  12,    0, requireEmpty
   call depth
   dpop %eax
   cmpl $0, %eax
@@ -3672,7 +3644,7 @@ def_asmword "NONEBRANCH",  10,   0, NONEbranch
 
 # ( xt -- ??? ) \ Execute the given xt
 #               ascii, len, flag, label
-def_asmword "EXECUTE",   7,    0, execute
+def_asmword "execute",   7,    0, execute
   # NOTE: %eax contains xt of current instruction from NEXT. Don't override it!
   dpop %eax  # xt
   call _callXt # expects %eax=xt
@@ -3680,7 +3652,7 @@ def_asmword "EXECUTE",   7,    0, execute
 
 # ( xt -- ??? ) \ exec or compile the given xt given STATE and the xt's TIME_IMM
 #                     ascii, len, flag, label
-def_callword "EXEC|COMPILE",  12,    0, execORcompile
+def_callword "exec|compile",  12,    0, execORcompile
 execORcompile:
   movl $4, %eax
   call checkStackSize
