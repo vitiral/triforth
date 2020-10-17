@@ -237,9 +237,8 @@ assertEmpty
 : testR@ 0x 42 >R   r@ 0x 42 assertEq    R> 0x 42 assertEq ; testR@
 : testR@1 0x 42 >R 0x 43 >R  r@ 0x 43 assertEq    r@1 0x 42 assertEq
   R> 0x 43 assertEq   R> 0x 42 assertEq assertEmpty ; testR@1
-: test2>R 0x 42 0  0x 2 n>R   R@ 0 dbgexit assertEq  R@1 0x 42 assertEq
+: test2>R 0x 42 0  0x 2 n>R   R@ 0 assertEq  R@1 0x 42 assertEq
           2R>  0 asserteq   0x 42 assertEq assertEmpty ; test2>R
-dbgexit
 : testR@2 0x 42 >R 0 >R 0 >R assertEmpty R@2 0x 42 assertEq 2Rdrop Rdrop
   ; testR@2
 : test-R@ 0x 42 >R -R@ 0x 41 R> assertEq ; test-R@

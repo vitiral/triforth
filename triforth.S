@@ -318,6 +318,7 @@ testSuite: # ( -- )
   call testNEXT
   call testEXIT
   call testDictSimple
+  call testCellmove
   call testBytesEqNoCase
   call assertCleanState
 
@@ -1690,24 +1691,25 @@ def_asmword "R>",   2,    0,  rpop
   dpush %eax
   NEXT
 
-# ( aN aN-1 ... a0 N -- R: aN aN-1 ... a0 )
+# ( aN-1 ... a0 N --   R: aN-1 ... a0 )
 # \ put n values onto the return stack. This kind of operation is extremely
 # \ unperformant in forth (requiring >12 calls) because it can be very hard
 # \ to keep track of the values.
 #         ascii , len, flag, label
 def_asmword "n>R",   3,    0,  Nrpush
-  dpop %eax # N
+  dpop %ecx # N
+  movl %ecx, %eax
   call checkStackSize
-  movl %eax, %ebx
+  movl %ecx, %ebx
   shl $2, %ebx # ebx=ebx*4
-  call dbgexit
-  movl %ebp, %ecx # cache dstack
+  call dumpInfo
+  # Dstack in memory: a0 | ... | aN-1
+  #                   ^ ebp
+  movl %ebp, %eax # eax=dstack which is src
   addl %ebx, %ebp # move dstack pointer up (reduce dstack)
   subl %ebx, %esp # move rstack pointer down (increase rstack)
-  dpush %ecx # src, previous dstack
-  dpush %esp # dst, new rstack
-  dpush %eax # N
-  callXt $xt_cellmove
+  movl %esp, %ebx # ebx=new rstack, which is dst, Note: ecx=count
+  call cellmove
   NEXT
 
 # ( -- addr ) \ get the return stack pointer
@@ -2332,22 +2334,55 @@ def_asmword "BMOVE>",   6,   0 , bmoveRIGHT
 #                ascii    , len, flag, label
 def_callword "BMOVEUPPER" , 10 ,    0, bmoveUpper
 
-# ( src dst count -- ) \ Move count cells from src to dst
-#               ascii , len, flag, label
-def_asmword "CELLMOVE",   8,    0, cellmove
-  dpop %ecx # count/index
-  dpop %ebx # dst
-  dpop %eax # src
+cellmove: # %ecx: count %ebx:dst %eax:src  ( -- )
+  # This is one of the few pure assembly functions which does not
+  # use the stack. We keep it this way so we can use in n>R and nR>
+  # which have very tricky operations with the stack.
   movl $0, %edi # index
 1:
-  cmpl %edi, %ecx
+  cmpl %ecx, %edi
   jge 2f
   movl (%eax,%edi,4), %edx
   movl %edx, (%ebx,%edi,4)
   inc %edi
   jmp 1b
 2:
+  ret
+
+# ( src dst count -- ) \ Move count cells from src to dst
+#               ascii , len, flag, label
+def_asmword "CELLMOVE",   8,    0, cellmove
+  dpop %ecx # count/index
+  dpop %ebx # dst
+  dpop %eax # src
+  call cellmove
   NEXT
+
+testCellmove:
+  movl $heapMin, %eax
+  movl $0x42, (%eax)
+  movl $0x500, 4(%eax)
+  dpush %eax # src
+  addl $8, %eax
+  dpush %eax # dst
+  dpush $2   # count
+  callXt $xt_cellmove
+  movl $heapMin, %ecx
+  addl $8, %ecx
+  movl (%ecx), %eax
+  movl $0x42, %ebx
+  call assertEaxEbxEq
+
+  movl 4(%ecx), %eax
+  movl $0x500, %ebx
+  call assertEaxEbxEq
+  ret
+
+
+
+
+  
+
 
 
 # ( addr -- addr count ) \ counts a null-terminated (c-style) string.
