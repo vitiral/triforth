@@ -623,34 +623,63 @@ VARIABLE &root 0 ,  VARIABLE &values 0 , 0 ,    0 , 0 ,
     &root @ 0 ( root=0) assertEq ; RUNASTEST
 -test
 
-: a1k.Po2i ( po2 -- po2i ) \ get the checked Po2 index ( byte increment from &self)
+: a1k.po2Chk ( po2 -- po2 ) \ check the po2 is valid.
   dup 2 0x 9 lrot between
-  NOT IF panicf\" po2 invalid: $.ux \" THEN 
+  NOT IF panicf\" po2 invalid: $.ux \" THEN  ;
+: a1k.isPo2Max ( po2 -- flag ) 0x A = ; \ only root provides max Po2 blocks
+: a1k.Po2i ( po2 -- po2i ) \ get the Po2 index ( byte increment from &self)
   2- ( 2^0 and 2^1 not supported) cells ;
 : a1k.alloc1k ( &self -- ptr ) \ only root can hold 1k blocks
   \ TODO
   ;
-: a1k.free1k ( &self -- ptr ) \ only root can hold 1k blocks
+: a1k.Po2SllRoot ( po2 &self -- &root \return &root for sll of Po2) swap a1k.Po2i + ;
+: a1k.free1k ( &mem &self -- ) \ only root can hold 1k blocks
   \ TODO
   ;
 : alk.split ( po2 &mem -- &first &second ) \ split memory into two po2 sized chunks
   \ TODO
   ; 
+: a1k.free ( &mem po2 &self -- ) \ mark a block as freed and store in ll
+  swap po2Chk dup a1k.isPo2Max IF drop a1k.free1k EXIT THEN
+  a1k.Po2SllRoot swap sll.insert ;
 : a1k.alloc ( po2 &self -- ptr )
-  swap dup 0x A = IF drop a1k.alloc1k EXIT THEN
-  \ Return the address of free-sll for the specific power of 2
-  swap >R ( R@1=&self)
-  >R@ ( R@=po2) alk.Po2i R@1 + ( =&po2root) sll.poproot ( maybe free block)
+  swap po2Chk dup a1k.isPo2Max IF drop a1k.alloc1k EXIT THEN
+  ( attempt to find free Po2, or create a new one) >R ( R@1=po2)  >R ( R@=&self)
+  R@1 R@ a1k.Po2SllRoot sll.poproot ( maybe free block)
   dup IF ( found free block) 2Rdrop EXIT THEN
   \ Otherwise, we need to ask for memory from the next-size up, and it may have to do
   \ the same. This is a classic solution for recursion, but it might recurse 8x, which
   \ is a high memory cost. Instead, we are going to walk up till we find memory
   \ then walk down.
-  R@ BEGIN 1+ ( 1+po2)
-    dup 0x A = IF drop a1k.alloc1k dup 0= IF 2Rdrop ( alloc1k was 0) EXIT THEN
-    ELSE dup ( =po2) alk.Po2i R@1 + sll.poproot ( po2-found? sll-found?)
+  R@1 ( =po2inc) BEGIN 1+ ( po2inc+=1)
+    dup a1k.isPo2Max IF ( 1k block)
+      a1k.alloc1k dup IF false ( po2=1k &mem1k false \ end loop)
+      ELSE nip 2Rdrop ( could not get 1k block, exit with 0) EXIT THEN
+    ELSE dup ( =po2inc) R@ a1k.Po2SllRoot sll.poproot ( po2 sll-found?)
       dup IF false ( stop loop) ELSE drop true ( continue loop) THEN
     THEN
   UNTIL
+  \ Now we have a block of memory that is po2inc in size, but we need R@1=po2 size.
+  \ Simply split memory, storing free blocks, until we have the right size.
+  ( po2inc &mem_po2inc) BEGIN swap 1- dup ( &mem_po2dec+1 po2dec po2dec) lrot
+    a1k.split ( po2dec &mem_po2dec &mem_po2dec) 2 pick swap a1k.free ( mark 1 block as free)
+    ( po2dec &mem_po2dec) over R@1 = IF ( we've found the memory we need) nip EXIT THEN
+    ( else loop again, splitting the &mem again)
+  AGAIN ;
+
 
 : a1k.&root ( &self -- &root ) 0x 8 cells + ;
+
+
+\ TODO:
+\ - use 16bit chkId instead of everything else. Use a Vec<&Chk> datastructure held within
+\   an allocator to store the type information including moduleId, line num etc. This
+\   can easily be serialized/deserialized, so the arena can be dropped when
+\   running a BIG program that needs the memory.
+\ - This will eliminate FR, F0 will be 
+\   NAME 5b | IMM 1b | RES 2b | RES 8b | ChkId 16b
+\ - The "interpreter" will execute any IMM words, and will run the typechecker on ANY
+\   word that specifies a ChkId. Note that IMM words that want to do their own
+\   typechecking themselves (i.e. generics) but still have a ChkId for metadata
+\   simply have 0 inp/out types and the generic bit set in those flags.
+
