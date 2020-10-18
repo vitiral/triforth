@@ -1599,6 +1599,12 @@ def_callword "drop" , 4 ,  0 ,   drop
 #           ascii ,  len, flag, label
 def_callword "2drop" , 5 ,  0 ,   _2drop
 
+#           ascii ,  len, flag, label
+def_callword "3drop" , 5 ,  0 ,   _3drop
+
+#           ascii ,  len, flag, label
+def_callword "4drop" , 5 ,  0 ,   _4drop
+
 # ( a b c -- b c a ) \ rotates left
 #           ascii ,  len, flag, label
 def_callword "lrot" , 4 ,  0 ,   lrot
@@ -2090,6 +2096,74 @@ def_asmword "16shr",   5,    0, _16shr
   shr $16, %eax
   dpush %eax
   NEXT
+
+.macro NshlMACRO N
+Nshl_\N :
+  shl $\N , %ebx
+  jmp Nshl_ret
+.align 4
+.endm
+
+Nshl: # ( u N -- u ) \ shift bits left by N
+  dpop %eax # N
+  dpop %ebx # value to shift
+  cmp $0x100, %eax # simply return 0 if shifting > 31
+  jge Nshl_ret0
+  # Note: you can get look at size of instrs by uncommenting:
+  # movl $Nshl_4, %edi
+  # movl $Nshl_3, %edx
+  # movl $Nshl_2, %ecx
+  # movl $Nshl_1, %ebx
+  # movl $Nshl_0, %eax
+  # call dbgexit
+  shll $3, %eax # multiply eax by 8, the code size of NshlMACRO
+  addl $Nshl_jt, %eax # and add the jump table to it for indirect branch
+  pushl %eax # push location to jmp to onto "return" stack
+  ret       # and jump to it
+Nshl_ret0:
+  dpush $0
+  ret
+.align 4
+Nshl_jt: # jump table
+  NshlMACRO 0
+  NshlMACRO 1
+  NshlMACRO 2
+  NshlMACRO 3
+  NshlMACRO 4
+  NshlMACRO 5
+  NshlMACRO 6
+  NshlMACRO 7
+  NshlMACRO 8
+  NshlMACRO 9
+  NshlMACRO 0xA
+  NshlMACRO 0xB
+  NshlMACRO 0xC
+  NshlMACRO 0xD
+  NshlMACRO 0xE
+  NshlMACRO 0xF
+  NshlMACRO 0x10
+  NshlMACRO 0x11
+  NshlMACRO 0x12
+  NshlMACRO 0x13
+  NshlMACRO 0x14
+  NshlMACRO 0x15
+  NshlMACRO 0x16
+  NshlMACRO 0x17
+  NshlMACRO 0x18
+  NshlMACRO 0x19
+  NshlMACRO 0x1A
+  NshlMACRO 0x1B
+  NshlMACRO 0x1C
+  NshlMACRO 0x1D
+  NshlMACRO 0x1E
+  NshlMACRO 0x1F
+Nshl_ret:
+  dpush %ebx
+  ret
+
+# ( u N -- u ) \ shift bits left by N
+#           ascii  , len, flag, label
+def_callword "Nshl",   4,    0, Nshl
 
 # ( u:a u:b -- u:rem u:quot ) \ divide a/b -> quotient remainder
 #           ascii  , len, flag, label

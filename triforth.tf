@@ -544,6 +544,7 @@ MARKER -test
   IFsome ? { 0x 666 Error assertEq } failTest ELSE failTest THEN ; RUNASTEST
 -test
 
+: sysexit ( rc -- ) SYS_EXIT SYSCALL1 ;
 : syswrite ( count addr fd -- eax )
   \ Calls syswrite which returns the count written or a negative errno
   SYS_WRITE SYSCALL3 ;
@@ -551,6 +552,7 @@ MARKER -test
   rrot swap lrot ( count addr fd )
   3dup syswrite dup 
   0 < IF negate F_ERR THEN ; \ if <0 set F_ERR flag
+
 \ TODO: writefdall would be nice
 
 \ #########################
@@ -588,8 +590,9 @@ MARKER -test
 
 \ a1k is a 64 byte data structure with the following format:
 \ STRUCT a1k
-\   [8 &sll] \ 8 pointers to singly linked lists
-\   &root    \ pointer to a root, or 0 if this is a root
+\   free: [&sll; 8] \ 8 pointers to singly linked lists containing free po2 mem
+\   root: &root     \ pointer to a root, or 0 if this is root
+\   &sll<arena,&1kmem> \ (root only) sll with which arena is allocating 1k blocks
 \ END
 
 \ Singly linked list. These are insanely simple. You start with a "root" address
@@ -598,7 +601,7 @@ MARKER -test
 
 \ root -> [ next, ...] -> ... -> [ 0, ... ] \ note: root and next are addresses
 : sll.insert ( &prev &self -- \insert item after prev)
-  >R ( R@=self) dup @ ( =next of &prev) R@ ! ( <-store at &self)
+  >R ( R@=&self) dup @ ( =next of &prev) R@ ! ( <-store at &self)
   R> swap ! ( <-store &self in next of prev) ;
 : sll.poproot ( &root -- &sll )
   dup @ =0 IF drop 0 ( empty) EXIT THEN
@@ -623,37 +626,46 @@ VARIABLE &root 0 ,  VARIABLE &values 0 , 0 ,    0 , 0 ,
     &root @ 0 ( root=0) assertEq ; RUNASTEST
 -test
 
+1 sysexit
+
+: a1k.&root ( &self -- &root ) 0x 8 cells + ;
+: a1k.po2Max 8 ; \ 2^8=x400 bytes
+: a1k.po2Min 2 ; \ 2^2=4 bytes
 : a1k.po2Chk ( po2 -- po2 ) \ check the po2 is valid.
-  dup 2 0x 9 lrot between
+  dup a1k.po2Min a1k.po2Max 1+ lrot between
   NOT IF panicf\" po2 invalid: $.ux \" THEN  ;
 : a1k.isPo2Max ( po2 -- flag ) 0x A = ; \ only root provides max Po2 blocks
 : a1k.Po2i ( po2 -- po2i ) \ get the Po2 index ( byte increment from &self)
   2- ( 2^0 and 2^1 not supported) cells ;
-: a1k.alloc1k ( &self -- ptr ) \ only root can hold 1k blocks
-  \ TODO
-  ;
 : a1k.Po2SllRoot ( po2 &self -- &root \return &root for sll of Po2) swap a1k.Po2i + ;
-: a1k.free1k ( &mem &self -- ) \ only root can hold 1k blocks
-  \ TODO
-  ;
+: a1k.allocMax ( &self -- ptr ) \ only root can hold 1k blocks
+  dup a1k.&root @ dup IF ( not root) nip a1k.allocMax EXIT THEN
+  ( is root, drop null &root) drop a1k.po2Max swap ( po2Max &self) 
+  a1k.Po2SllRoot sll.poproot ;
+: a1k.freeMax ( &mem &self -- ) \ only root can hold 1k blocks
+  dup a1k.&root @ dup IF ( not root) nip a1k.freeMax EXIT THEN
+  drop a1k.po2Max swap ( &mem po2Max &self) a1k.Po2SllRoot swap sll.insert ;
 : alk.split ( po2 &mem -- &first &second ) \ split memory into two po2 sized chunks
   \ TODO
   ; 
-: a1k.free ( &mem po2 &self -- ) \ mark a block as freed and store in ll
-  swap po2Chk dup a1k.isPo2Max IF drop a1k.free1k EXIT THEN
-  a1k.Po2SllRoot swap sll.insert ;
+: a1k.freeNoMerge ( &mem po2 &self -- ) \ mark a block as freed and store in ll
+  swap a1k.po2Chk dup a1k.isPo2Max IF drop a1k.freeMax EXIT THEN
+  a1k.Po2SllRoot swap sll.insert   swap ;
+: a1k.free ( &mem po2 &self -- ) \ mark a block as freed and attempt to merge up
+  3drop \ TODO
+  ; 
 : a1k.alloc ( po2 &self -- ptr )
-  swap po2Chk dup a1k.isPo2Max IF drop a1k.alloc1k EXIT THEN
+  swap po2Chk dup a1k.isPo2Max IF drop a1k.allocMax EXIT THEN
   ( attempt to find free Po2, or create a new one) >R ( R@1=po2)  >R ( R@=&self)
   R@1 R@ a1k.Po2SllRoot sll.poproot ( maybe free block)
   dup IF ( found free block) 2Rdrop EXIT THEN
   \ Otherwise, we need to ask for memory from the next-size up, and it may have to do
   \ the same. This is a classic solution for recursion, but it might recurse 8x, which
-  \ is a high memory cost. Instead, we are going to walk up till we find memory
-  \ then walk down.
+  \ is a high memory cost. Instead, we are going to walk up untill we find memory.
+  \ Then walk down, splitting the memory chunks in half.
   R@1 ( =po2inc) BEGIN 1+ ( po2inc+=1)
     dup a1k.isPo2Max IF ( 1k block)
-      a1k.alloc1k dup IF false ( po2=1k &mem1k false \ end loop)
+      a1k.allocMax dup IF false ( po2=1k &mem1k false \ end loop)
       ELSE nip 2Rdrop ( could not get 1k block, exit with 0) EXIT THEN
     ELSE dup ( =po2inc) R@ a1k.Po2SllRoot sll.poproot ( po2 sll-found?)
       dup IF false ( stop loop) ELSE drop true ( continue loop) THEN
@@ -661,15 +673,11 @@ VARIABLE &root 0 ,  VARIABLE &values 0 , 0 ,    0 , 0 ,
   UNTIL
   \ Now we have a block of memory that is po2inc in size, but we need R@1=po2 size.
   \ Simply split memory, storing free blocks, until we have the right size.
-  ( po2inc &mem_po2inc) BEGIN swap 1- dup ( &mem_po2dec+1 po2dec po2dec) lrot
-    a1k.split ( po2dec &mem_po2dec &mem_po2dec) 2 pick swap a1k.free ( mark 1 block as free)
+  ( po2inc &mem_po2inc) BEGIN swap 1- dup ( &mem_po2dec+1 po2dec po2dec) 
+    lrot a1k.split ( po2dec &mem_po2dec &mem_po2dec) 2 pick swap a1k.freeNoMerge
     ( po2dec &mem_po2dec) over R@1 = IF ( we've found the memory we need) nip EXIT THEN
     ( else loop again, splitting the &mem again)
   AGAIN ;
-
-
-: a1k.&root ( &self -- &root ) 0x 8 cells + ;
-
 
 \ TODO:
 \ - use 16bit chkId instead of everything else. Use a Vec<&Chk> datastructure held within
