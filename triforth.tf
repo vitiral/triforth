@@ -459,15 +459,14 @@ MARKER -test
   REPEAT drop ;
 : panicHandler ( -- ) .rstack asmpanic ;
 &latest @ nt>xt &'PANIC ! \ set panic to new handler
-: .!!panic .f\" \n!!!!!!!!!!!\n!! PANIC: \" ;
-: panicf\" IMM  compile, .!!panic  [compile] .fln\"  compile, panic ;
+: .!! .f\" \n!!!!!!!!!!!\n!! PANIC: \" ;
+: panicf\" IMM  compile, .!!  [compile] .fln\"  compile, panic ;
 \ : doPanic 2 panicf\" This $.ux  Rocks!\" ; doPanic  \ uncomment to see in action
 
 : runAsTest
   &latest @ nt>name  &wordLen ! wordBuf &wordLen @ bmove
   &latest @ nt>xt execute assertEmpty
   TEST_PREFIX_NT countnt .s   &latest @ nt>name .s   TEST_PASS_NT countnt .s ;
-
 
 \ #########################
 \ # Errors and Error Hanlding
@@ -527,9 +526,9 @@ MARKER -test
 \ just adds 1 to v. You then "get" the value using IFsome which will
 \ automatically subtract 1 inside the "IF" block and otherwise drop the value.
 \ 
-\ One negative (pun intended): you negative values are more difficult to store,
-\ because  -1 Some None =  Therefore Option is not a good container for negative
-\ values (or you have to do special handling, like create a NegOption type)
+\ One negative (pun intended): negative values are more difficult to store,
+\ because  -1 Some == None. Therefore Option is not a good container for negative
+\ values (but if you really needed them, create a NegOption type)
 : None IMM  compile, 0 ;
 : Some IMM  compile, 1+ ;
 : IFsome IMM  compile, NONEBRANCH  &here @  0 , ; \ see IF for explanation
@@ -554,7 +553,104 @@ MARKER -test
   0 < IF negate F_ERR THEN ; \ if <0 set F_ERR flag
 \ TODO: writefdall would be nice
 
+\ #########################
+\ # Memory Manager
+\ Like most things in this forth, our memory manager is going to be _extremely_
+\ simple. However it should actually be reasonably performant and resistent to
+\ fragmentation. It will have the disandvantage that you can only allocate up
+\ to 1k blocks (0m1024 i.e. 0x400 bytes) of memory. Data structures (besides
+\ the dictionary itself) we create will have to be designed around this
+\ constraint.
+\ 
+\ We are using an **arena** alocator. Arena allocators allow you to
+\ create an Arena and allocate and free memory in powers of 2 from it. We will
+\ also have a basic defrag strategy. The advantage of arenas however is that
+\ you can drop the _entire_ arena at once, which guarantees no fragmentation.
+\ We will call our arena allocator "a1k" meaning "arena 1 killobyte"
+\ 
+\ The primary data type of our arena will be singly-linked lists. Free blocks
+\ will be kept as linked lists. When memory is freed the caller calls
+\   : a1k.free ( ptr po2 &arena -- ) ... ;
+\ where po2 is the "power of 2" size of ref This will convert the first cell to
+\ a pointer to the next free memory, meaning we only have to keep pointers to
+\ the first free memory we find.
+\ 
+\ Allocation happens via the function
+\   : a1k.alloc ( po2 &arena -- Option<ptr> ) ... ;
+\ 
+\ Allowed powers of 2 start at 4 bytes (2^2) and end at 1024 bytes (2^A),
+\ so we need A - 2 = 8 pointers to our free linked lists.
+\ 
+\ There will be two "types" of arenas -- the root arena which is allowed
+\ to hold references to 1k blocks and non-root arenas which are not.
+\ Non-root arenas have a reference to the root arena so they can request
+\ 1k blocks.
 
+\ a1k is a 64 byte data structure with the following format:
+\ STRUCT a1k
+\   [8 &sll] \ 8 pointers to singly linked lists
+\   &root    \ pointer to a root, or 0 if this is a root
+\ END
 
+\ Singly linked list. These are insanely simple. You start with a "root" address
+\ that contains 0 (null) and use it's address as &next for insert. Pop
+\ works in reverse.
 
-\ : requireEqual ( u u -- u ) 2dup <> IF .fln\" !! $.ux  != $.ux \" panic THEN drop ;
+\ root -> [ next, ...] -> ... -> [ 0, ... ] \ note: root and next are addresses
+: sll.insert ( &prev &self -- \insert item after prev)
+  >R ( R@=self) dup @ ( =next of &prev) R@ ! ( <-store at &self)
+  R> swap ! ( <-store &self in next of prev) ;
+: sll.poproot ( &root -- &sll )
+  dup @ =0 IF drop 0 ( empty) EXIT THEN
+  dup @ >R@ ( R@=&sll to return) @ ( =&sll.next) swap ! ( set as root)
+  R> ;
+
+MARKER -test                        ( first)  ( second)
+VARIABLE &root 0 ,  VARIABLE &values 0 , 0 ,    0 , 0 ,
+: testInsert &root &values sll.insert
+  &root @ &values assertEq  &values @ 0 assertEq 
+  &root &values 2 cells + sll.insert \ insert next 
+  &root @ &values 2 cells + assertEq \ root -> second
+    &values 2 @i &values assertEq    \ second -> first
+    &values @ 0 assertEq ; RUNASTEST \ first -> null
+: testPop 0 &root !   &root sll.poproot  0 assertEq
+  &root &values sll.insert   &root &values 2 cells + sll.insert
+  &root sll.poproot dup &values 2 cells + ( ==second) assertEq
+    @ &values ( second.next==first) assertEq
+    &root @ &values ( root now == first) assertEq 
+  &root sll.poproot dup &values ( ==first) assertEq
+    @ 0 ( first.next=0) assertEq
+    &root @ 0 ( root=0) assertEq ; RUNASTEST
+-test
+
+: a1k.Po2i ( po2 -- po2i ) \ get the checked Po2 index ( byte increment from &self)
+  dup 2 0x 9 lrot between
+  NOT IF panicf\" po2 invalid: $.ux \" THEN 
+  2- ( 2^0 and 2^1 not supported) cells ;
+: a1k.alloc1k ( &self -- ptr ) \ only root can hold 1k blocks
+  \ TODO
+  ;
+: a1k.free1k ( &self -- ptr ) \ only root can hold 1k blocks
+  \ TODO
+  ;
+: alk.split ( po2 &mem -- &first &second ) \ split memory into two po2 sized chunks
+  \ TODO
+  ; 
+: a1k.alloc ( po2 &self -- ptr )
+  swap dup 0x A = IF drop a1k.alloc1k EXIT THEN
+  \ Return the address of free-sll for the specific power of 2
+  swap >R ( R@1=&self)
+  >R@ ( R@=po2) alk.Po2i R@1 + ( =&po2root) sll.poproot ( maybe free block)
+  dup IF ( found free block) 2Rdrop EXIT THEN
+  \ Otherwise, we need to ask for memory from the next-size up, and it may have to do
+  \ the same. This is a classic solution for recursion, but it might recurse 8x, which
+  \ is a high memory cost. Instead, we are going to walk up till we find memory
+  \ then walk down.
+  R@ BEGIN 1+ ( 1+po2)
+    dup 0x A = IF drop a1k.alloc1k dup 0= IF 2Rdrop ( alloc1k was 0) EXIT THEN
+    ELSE dup ( =po2) alk.Po2i R@1 + sll.poproot ( po2-found? sll-found?)
+      dup IF false ( stop loop) ELSE drop true ( continue loop) THEN
+    THEN
+  UNTIL
+
+: a1k.&root ( &self -- &root ) 0x 8 cells + ;
