@@ -39,7 +39,7 @@
 : '\' [ascii] \ ;      : '"' [ascii] " ;
 
 ':' 0x 3A assertEq  '(' 0x 28 assertEq  ')' 0x 29 assertEq
-';' 0x 3B assertEq  '\' 0x 5C assertEq  '"' 0x 22 assertEq
+';' 0x 3B assertEq  '\' 0x 5C assertEq  '"' 0x 22 assertEq \ "
 
 \ ########################
 \ # Variables: allow defining variables and constants
@@ -626,7 +626,18 @@ VARIABLE &root 0 ,  VARIABLE &values 0 , 0 ,    0 , 0 ,
     &root @ 0 ( root=0) assertEq ; RUNASTEST
 -test
 
-1 sysexit
+
+: memsplit ( po2 &mem -- &first &second ) \ split memory into two po2 sized chunks
+  dup rrot ( &mem po2 &mem) swap 1
+  ( &mem &mem 1 po2) Nshl  ( &mem &mem 1*2^po2) + ;
+: zero ( addr count -- \zero count cells at address)
+  BEGIN 1- 2dup cells + 0 swap ! UNTIL ;
+
+MARKER -test
+: testZero 4 &testCache !  2 &testCache 2 cells + !
+  &testCache 2 zero   &testCache @ 0 assertEq  
+  &testCache 2 cells + @ 2 assertEq ; RUNASTEST
+
 
 : a1k.&root ( &self -- &root ) 0x 8 cells + ;
 : a1k.po2Max 8 ; \ 2^8=x400 bytes
@@ -645,9 +656,6 @@ VARIABLE &root 0 ,  VARIABLE &values 0 , 0 ,    0 , 0 ,
 : a1k.freeMax ( &mem &self -- ) \ only root can hold 1k blocks
   dup a1k.&root @ dup IF ( not root) nip a1k.freeMax EXIT THEN
   drop a1k.po2Max swap ( &mem po2Max &self) a1k.Po2SllRoot swap sll.insert ;
-: alk.split ( po2 &mem -- &first &second ) \ split memory into two po2 sized chunks
-  \ TODO
-  ; 
 : a1k.freeNoMerge ( &mem po2 &self -- ) \ mark a block as freed and store in ll
   swap a1k.po2Chk dup a1k.isPo2Max IF drop a1k.freeMax EXIT THEN
   a1k.Po2SllRoot swap sll.insert   swap ;
@@ -655,7 +663,7 @@ VARIABLE &root 0 ,  VARIABLE &values 0 , 0 ,    0 , 0 ,
   3drop \ TODO
   ; 
 : a1k.alloc ( po2 &self -- ptr )
-  swap po2Chk dup a1k.isPo2Max IF drop a1k.allocMax EXIT THEN
+  swap a1k.po2Chk dup a1k.isPo2Max IF drop a1k.allocMax EXIT THEN
   ( attempt to find free Po2, or create a new one) >R ( R@1=po2)  >R ( R@=&self)
   R@1 R@ a1k.Po2SllRoot sll.poproot ( maybe free block)
   dup IF ( found free block) 2Rdrop EXIT THEN
@@ -674,10 +682,25 @@ VARIABLE &root 0 ,  VARIABLE &values 0 , 0 ,    0 , 0 ,
   \ Now we have a block of memory that is po2inc in size, but we need R@1=po2 size.
   \ Simply split memory, storing free blocks, until we have the right size.
   ( po2inc &mem_po2inc) BEGIN swap 1- dup ( &mem_po2dec+1 po2dec po2dec) 
-    lrot a1k.split ( po2dec &mem_po2dec &mem_po2dec) 2 pick swap a1k.freeNoMerge
+    lrot memsplit ( po2dec &mem_po2dec &mem_po2dec) 2 pick swap a1k.freeNoMerge
     ( po2dec &mem_po2dec) over R@1 = IF ( we've found the memory we need) nip EXIT THEN
     ( else loop again, splitting the &mem again)
   AGAIN ;
+: a1k.init ( &root &self) >R ( R@=&self) a1k.po2Max \ zero the sll-root array
+  BEGIN 1- ( =po2-index) dup a1k.Po2i R@ + 0 swap dumpInfo !  UNTIL
+  R> a1k.&root ! ( <- store root) ;
+: a1k.initroot ( &memstart, num1kBlocks, &self -- )
+  dup 0 swap a1k.init ( <- init with &root=0)
+  a1k.po2Max swap a1k.Po2SllRoot
+  0x 3 n>R ( R@=&1k-sll-root R@1=num1kBlocks R@2=&memstart) 0 BEGIN dup R@1 < WHILE
+    dup a1k.po2Max Nshl ( =i*0x400) R@2 + ( =&mem) R@ sll.insert
+  1+ REPEAT 0x 3 nR> 3drop ;
+
+VARIABLE &heap HEAPMAX 0x 400 0x 6 Nshl ( 1k * 2^6 = 0x40 KiB = 0m64KiB) - ,
+&heap @ 0x 40 - &heap ! ( 40 bytes = 0m64 bytes for root arena)
+VARIABLE &a1kroot &heap @ ,
+&heap @ 0x 40 + ( =mem)  0x 40 ( =num1kBlocks) &a1kroot @ a1k.initroot
+
 
 \ TODO:
 \ - use 16bit chkId instead of everything else. Use a Vec<&Chk> datastructure held within
