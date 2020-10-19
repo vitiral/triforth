@@ -630,14 +630,13 @@ VARIABLE &root 0 ,  VARIABLE &values 0 , 0 ,    0 , 0 ,
 : memsplit ( po2 &mem -- &first &second ) \ split memory into two po2 sized chunks
   dup rrot ( &mem po2 &mem) swap 1
   ( &mem &mem 1 po2) Nshl  ( &mem &mem 1*2^po2) + ;
-: zero ( addr count -- \zero count cells at address)
-  BEGIN 1- 2dup cells + 0 swap ! UNTIL ;
+: cellerase ( addr count -- \zero count cells at address)
+  BEGIN 1- 2dup cells + 0 swap ! dup UNTIL 2drop ;
 
 MARKER -test
 : testZero 4 &testCache !  2 &testCache 2 cells + !
-  &testCache 2 zero   &testCache @ 0 assertEq  
+  &testCache 2 cellerase   &testCache @ 0 assertEq  
   &testCache 2 cells + @ 2 assertEq ; RUNASTEST
-
 
 : a1k.&root ( &self -- &root ) 0x 8 cells + ;
 : a1k.po2Max 8 ; \ 2^8=x400 bytes
@@ -686,20 +685,25 @@ MARKER -test
     ( po2dec &mem_po2dec) over R@1 = IF ( we've found the memory we need) nip EXIT THEN
     ( else loop again, splitting the &mem again)
   AGAIN ;
-: a1k.init ( &root &self) >R ( R@=&self) a1k.po2Max \ zero the sll-root array
-  BEGIN 1- ( =po2-index) dup a1k.Po2i R@ + 0 swap dumpInfo !  UNTIL
+: a1k.init ( &root &self) >R@ ( R@=&self) a1k.po2Max cellerase ( <-zero sll roots)
   R> a1k.&root ! ( <- store root) ;
-: a1k.initroot ( &memstart, num1kBlocks, &self -- )
+: a1k.initroot ( &memstart num1kBlocks &self -- )
   dup 0 swap a1k.init ( <- init with &root=0)
   a1k.po2Max swap a1k.Po2SllRoot
-  0x 3 n>R ( R@=&1k-sll-root R@1=num1kBlocks R@2=&memstart) 0 BEGIN dup R@1 < WHILE
+  0x 3 n>R ( R@=&1k-sll-root R@1=num1kBlocks R@2=&memstart)
+  0 BEGIN dup R@1 < WHILE
     dup a1k.po2Max Nshl ( =i*0x400) R@2 + ( =&mem) R@ sll.insert
-  1+ REPEAT 0x 3 nR> 3drop ;
+  1+ REPEAT 0x 3 nR> 4drop ;
 
+\ Initialize &a1kroot with 0x40 KiB (0m64KiB) of memory taken from the heap.
 VARIABLE &heap HEAPMAX 0x 400 0x 6 Nshl ( 1k * 2^6 = 0x40 KiB = 0m64KiB) - ,
 &heap @ 0x 40 - &heap ! ( 40 bytes = 0m64 bytes for root arena)
 VARIABLE &a1kroot &heap @ ,
 &heap @ 0x 40 + ( =mem)  0x 40 ( =num1kBlocks) &a1kroot @ a1k.initroot
+
+MARKER -test
+: testA1k.allocPo2=8 ; RUNASTEST
+-test
 
 
 \ TODO:
