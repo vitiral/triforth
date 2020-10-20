@@ -3846,7 +3846,7 @@ _start:
   jmp exit0
 
 .data
-.align 128
+.align 0x400
 # The dictionary grows starting here
-heapMin: .space 131072  # 128 KiB
+heapMin: .space 0x20000  # 0m128 KiB
 heapMax:

@@ -10,7 +10,7 @@
 \ ########################
 \ # Compilation Helpers: these help us create words which compile other words.
 \ In most languages these (and any other IMM word) would be considered macros,
-\ since they are essentially code generators.
+\ since they essentially generate code at compile time.
 : ['] IMM \ immediately get the xt of the next word and put on stack
   word find nt>xt ;
 : [compile] IMM \ ( -- ) immediately compile the next word.
@@ -601,7 +601,7 @@ MARKER -test
 
 \ root -> [ next, ...] -> ... -> [ 0, ... ] \ note: root and next are addresses
 : sll.insert ( &prev &self -- \insert item after prev)
-  >R ( R@=&self) dup @ ( =next of &prev) R@ ! ( <-store at &self)
+  >R ( R@=&self) dup @ ( =next of &prev) ( TODO ERROR! Not 0??) dbgexit R@ ! ( <-store at &self)
   R> swap ! ( <-store &self in next of prev) ;
 : sll.poproot ( &root -- &sll )
   dup @ =0 IF drop 0 ( empty) EXIT THEN
@@ -609,21 +609,21 @@ MARKER -test
   R> ;
 
 MARKER -test                        ( first)  ( second)
-VARIABLE &root 0 ,  VARIABLE &values 0 , 0 ,    0 , 0 ,
-: testInsert &root &values sll.insert
-  &root @ &values assertEq  &values @ 0 assertEq 
-  &root &values 2 cells + sll.insert \ insert next 
-  &root @ &values 2 cells + assertEq \ root -> second
-    &values 2 @i &values assertEq    \ second -> first
-    &values @ 0 assertEq ; RUNASTEST \ first -> null
-: testPop 0 &root !   &root sll.poproot  0 assertEq
-  &root &values sll.insert   &root &values 2 cells + sll.insert
-  &root sll.poproot dup &values 2 cells + ( ==second) assertEq
-    @ &values ( second.next==first) assertEq
-    &root @ &values ( root now == first) assertEq 
-  &root sll.poproot dup &values ( ==first) assertEq
-    @ 0 ( first.next=0) assertEq
-    &root @ 0 ( root=0) assertEq ; RUNASTEST
+\ VARIABLE &root 0 ,  VARIABLE &values 0 , 0 ,    0 , 0 ,
+\ : testInsert &root &values sll.insert
+\   &root @ &values assertEq  &values @ 0 assertEq 
+\   &root &values 2 cells + sll.insert \ insert next 
+\   &root @ &values 2 cells + assertEq \ root -> second
+\     &values 2 @i &values assertEq    \ second -> first
+\     &values @ 0 assertEq ; RUNASTEST \ first -> null
+\ : testPop 0 &root !   &root sll.poproot  0 assertEq
+\   &root &values sll.insert   &root &values 2 cells + sll.insert
+\   &root sll.poproot dup &values 2 cells + ( ==second) assertEq
+\     @ &values ( second.next==first) assertEq
+\     &root @ &values ( root now == first) assertEq 
+\   &root sll.poproot dup &values ( ==first) assertEq
+\     @ 0 ( first.next=0) assertEq
+\     &root @ 0 ( root=0) assertEq ; RUNASTEST
 -test
 
 
@@ -634,8 +634,9 @@ VARIABLE &root 0 ,  VARIABLE &values 0 , 0 ,    0 , 0 ,
   BEGIN 1- 2dup cells + 0 swap ! dup UNTIL 2drop ;
 
 MARKER -test
-: testZero 4 &testCache !  2 &testCache 2 cells + !
-  &testCache 2 cellerase   &testCache @ 0 assertEq  
+: testZero  4 &testCache !  2 &testCache 2 cells + !
+  &testCache 2 cellerase    &testCache @ 0 assertEq
+  &testCache @1 0 assertEq
   &testCache 2 cells + @ 2 assertEq ; RUNASTEST
 
 : a1k.&root ( &self -- &root ) 0x 8 cells + ;
@@ -647,24 +648,24 @@ MARKER -test
 : a1k.isPo2Max ( po2 -- flag ) 0x A = ; \ only root provides max Po2 blocks
 : a1k.Po2i ( po2 -- po2i ) \ get the Po2 index ( byte increment from &self)
   2- ( 2^0 and 2^1 not supported) cells ;
-: a1k.Po2SllRoot ( po2 &self -- &root \return &root for sll of Po2) swap a1k.Po2i + ;
+: a1k.Po2Sll&Root ( po2 &self -- &root \return &root for sll of Po2) swap a1k.Po2i + ;
 : a1k.allocMax ( &self -- ptr ) \ only root can hold 1k blocks
   dup a1k.&root @ dup IF ( not root) nip a1k.allocMax EXIT THEN
   ( is root, drop null &root) drop a1k.po2Max swap ( po2Max &self) 
-  a1k.Po2SllRoot sll.poproot ;
+  a1k.Po2Sll&Root sll.poproot ;
 : a1k.freeMax ( &mem &self -- ) \ only root can hold 1k blocks
   dup a1k.&root @ dup IF ( not root) nip a1k.freeMax EXIT THEN
-  drop a1k.po2Max swap ( &mem po2Max &self) a1k.Po2SllRoot swap sll.insert ;
+  drop a1k.po2Max swap ( &mem po2Max &self) a1k.Po2Sll&Root swap sll.insert ;
 : a1k.freeNoMerge ( &mem po2 &self -- ) \ mark a block as freed and store in ll
   swap a1k.po2Chk dup a1k.isPo2Max IF drop a1k.freeMax EXIT THEN
-  a1k.Po2SllRoot swap sll.insert   swap ;
+  a1k.Po2Sll&Root swap sll.insert   swap ;
 : a1k.free ( &mem po2 &self -- ) \ mark a block as freed and attempt to merge up
   3drop \ TODO
   ; 
 : a1k.alloc ( po2 &self -- ptr )
   swap a1k.po2Chk dup a1k.isPo2Max IF drop a1k.allocMax EXIT THEN
   ( attempt to find free Po2, or create a new one) >R ( R@1=po2)  >R ( R@=&self)
-  R@1 R@ a1k.Po2SllRoot sll.poproot ( maybe free block)
+  R@1 R@ a1k.Po2Sll&Root sll.poproot ( maybe free block)
   dup IF ( found free block) 2Rdrop EXIT THEN
   \ Otherwise, we need to ask for memory from the next-size up, and it may have to do
   \ the same. This is a classic solution for recursion, but it might recurse 8x, which
@@ -674,7 +675,7 @@ MARKER -test
     dup a1k.isPo2Max IF ( 1k block)
       a1k.allocMax dup IF false ( po2=1k &mem1k false \ end loop)
       ELSE nip 2Rdrop ( could not get 1k block, exit with 0) EXIT THEN
-    ELSE dup ( =po2inc) R@ a1k.Po2SllRoot sll.poproot ( po2 sll-found?)
+    ELSE dup ( =po2inc) R@ a1k.Po2Sll&Root sll.poproot ( po2 sll-found?)
       dup IF false ( stop loop) ELSE drop true ( continue loop) THEN
     THEN
   UNTIL
@@ -685,24 +686,50 @@ MARKER -test
     ( po2dec &mem_po2dec) over R@1 = IF ( we've found the memory we need) nip EXIT THEN
     ( else loop again, splitting the &mem again)
   AGAIN ;
-: a1k.init ( &root &self) >R@ ( R@=&self) a1k.po2Max cellerase ( <-zero sll roots)
-  R> a1k.&root ! ( <- store root) ;
+: a1k.init ( &root &self) 
+  >R@ ( R@=&self)   a1k.po2Max a1k.po2Min -  cellerase ( <-zero sll roots)
+  R> a1k.&root ! ( <- store &root) ;
 : a1k.initroot ( &memstart num1kBlocks &self -- )
   dup 0 swap a1k.init ( <- init with &root=0)
-  a1k.po2Max swap a1k.Po2SllRoot
-  0x 3 n>R ( R@=&1k-sll-root R@1=num1kBlocks R@2=&memstart)
+  a1k.po2Max swap a1k.Po2Sll&Root
+  0x 3 n>R ( R@2=&memstart R@1=num1kBlocks R@=&1k-sll-root)
   0 BEGIN dup R@1 < WHILE
     dup a1k.po2Max Nshl ( =i*0x400) R@2 + ( =&mem) R@ sll.insert
   1+ REPEAT 0x 3 nR> 4drop ;
 
 \ Initialize &a1kroot with 0x40 KiB (0m64KiB) of memory taken from the heap.
-VARIABLE &heap HEAPMAX 0x 400 0x 6 Nshl ( 1k * 2^6 = 0x40 KiB = 0m64KiB) - ,
-&heap @ 0x 40 - &heap ! ( 40 bytes = 0m64 bytes for root arena)
-VARIABLE &a1kroot &heap @ ,
-&heap @ 0x 40 + ( =mem)  0x 40 ( =num1kBlocks) &a1kroot @ a1k.initroot
+VARIABLE &heap
+  HEAPMAX  0x 400 0x 6 Nshl ( 0m1KiB * 2^6 = 0x40 KiB = 0m64KiB) - ,
+( test) 0x 400 0x 6 Nshl 0x 10000 assertEq
+( test) &heap @ 0x 10000 + HEAPMAX assertEq
+
+&heap @ 0x 40 - &heap ! ( allocate 0x40 bytes on heap)
+VARIABLE &a1kroot  &heap @ ,
+MARKER -pnt 
+: pnt .fln\" a1kroot=${ &a1kroot @ .ux }  &mem0=${ &a1kroot @ 0x 40 + .ux }
+  heapmax=${ heapmax .ux } \"
+; pnt -pnt
+
+\ initialize root allocator.
+&a1kroot 0x 40 + ( =&mem) 0x 40 ( =num1kBlocks) &a1kroot @ a1k.initroot
 
 MARKER -test
-: testA1k.allocPo2=8 ; RUNASTEST
+VARIABLE &mem0   &heap @ 0x 40 + , ( =start of mem, 1k-block0)
+VARIABLE &mem39  HEAPMAX 0x 400 - , ( last block 0x400 before heapmax)
+VARIABLE a1kroot.&sll1k   &a1kroot 0x 7 cells + ,
+
+: testA1k.init
+  ( &mem0 was first to be added, so it's pointer is null) &mem0 @ @ 0 assertEq
+  &a1kroot @ &heap @ assertEq
+
+  ( The first 1k block should be the last, since we inserted them first->last)
+  \ a1kroot.&sll1k @  &mem39 assertEq
+  ; RUNASTEST
+: testA1k.allocPo2=8 
+  
+
+
+  ; RUNASTEST
 -test
 
 
