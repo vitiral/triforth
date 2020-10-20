@@ -601,7 +601,8 @@ MARKER -test
 
 \ root -> [ next, ...] -> ... -> [ 0, ... ] \ note: root and next are addresses
 : sll.insert ( &prev &self -- \insert item after prev)
-  >R ( R@=&self) dup @ ( =next of &prev) ( TODO ERROR! Not 0??) dbgexit R@ ! ( <-store at &self)
+  \ .fln\"   ?? sll.insert: $.stack &prev@=${ over @ .ux }  &self@=${ dup @ .ux } \"
+  >R ( R@=&self) dup @ ( =&prev.&next) R@ ! ( <-store at &self)
   R> swap ! ( <-store &self in next of prev) ;
 : sll.poproot ( &root -- &sll )
   dup @ =0 IF drop 0 ( empty) EXIT THEN
@@ -609,23 +610,22 @@ MARKER -test
   R> ;
 
 MARKER -test                        ( first)  ( second)
-\ VARIABLE &root 0 ,  VARIABLE &values 0 , 0 ,    0 , 0 ,
-\ : testInsert &root &values sll.insert
-\   &root @ &values assertEq  &values @ 0 assertEq 
-\   &root &values 2 cells + sll.insert \ insert next 
-\   &root @ &values 2 cells + assertEq \ root -> second
-\     &values 2 @i &values assertEq    \ second -> first
-\     &values @ 0 assertEq ; RUNASTEST \ first -> null
-\ : testPop 0 &root !   &root sll.poproot  0 assertEq
-\   &root &values sll.insert   &root &values 2 cells + sll.insert
-\   &root sll.poproot dup &values 2 cells + ( ==second) assertEq
-\     @ &values ( second.next==first) assertEq
-\     &root @ &values ( root now == first) assertEq 
-\   &root sll.poproot dup &values ( ==first) assertEq
-\     @ 0 ( first.next=0) assertEq
-\     &root @ 0 ( root=0) assertEq ; RUNASTEST
+VARIABLE &root 0 ,  VARIABLE &values 1 , 2 ,    0x 3 , 4 ,
+: testInsert &root &values sll.insert
+  &root @ &values assertEq  &values @ 0 assertEq 
+  &root &values 2 cells + sll.insert \ insert next 
+  &root @ &values 2 cells + assertEq \ root -> second
+    &values 2 @i &values assertEq    \ second -> first
+    &values @ 0 assertEq ; RUNASTEST \ first -> null
+: testPop 0 &root !   &root sll.poproot  0 assertEq
+  &root &values sll.insert   &root &values 2 cells + sll.insert
+  &root sll.poproot dup &values 2 cells + ( ==second) assertEq
+    @ &values ( second.next==first) assertEq
+    &root @ &values ( root now == first) assertEq 
+  &root sll.poproot dup &values ( ==first) assertEq
+    @ 0 ( first.next=0) assertEq
+    &root @ 0 ( root=0) assertEq ; RUNASTEST
 -test
-
 
 : memsplit ( po2 &mem -- &first &second ) \ split memory into two po2 sized chunks
   dup rrot ( &mem po2 &mem) swap 1
@@ -690,11 +690,15 @@ MARKER -test
   >R@ ( R@=&self)   a1k.po2Max a1k.po2Min -  cellerase ( <-zero sll roots)
   R> a1k.&root ! ( <- store &root) ;
 : a1k.initroot ( &memstart num1kBlocks &self -- )
+  .fln\" ?? a1k.initroot: $.stack \"
   dup 0 swap a1k.init ( <- init with &root=0)
   a1k.po2Max swap a1k.Po2Sll&Root
   0x 3 n>R ( R@2=&memstart R@1=num1kBlocks R@=&1k-sll-root)
   0 BEGIN dup R@1 < WHILE
-    dup a1k.po2Max Nshl ( =i*0x400) R@2 + ( =&mem) R@ sll.insert
+    dup a1k.po2Max Nshl ( =i*2^po2Max) R@2 + ( =&mem) R@ swap
+    \ .fln\" ?? INSERTING: $.stack &mem@=${ over @ .ux }  &1k-sll-root@=${ R@ @ .ux } \"
+    sll.insert
+    \ .fln\"  ?? after:&1k-sll-root@=${ R@ @ .ux } \"
   1+ REPEAT 0x 3 nR> 4drop ;
 
 \ Initialize &a1kroot with 0x40 KiB (0m64KiB) of memory taken from the heap.
@@ -711,7 +715,7 @@ MARKER -pnt
 ; pnt -pnt
 
 \ initialize root allocator.
-&a1kroot 0x 40 + ( =&mem) 0x 40 ( =num1kBlocks) &a1kroot @ a1k.initroot
+&a1kroot @ 0x 40 + ( =&mem) 0x 40 ( =num1kBlocks) &a1kroot @ a1k.initroot
 
 MARKER -test
 VARIABLE &mem0   &heap @ 0x 40 + , ( =start of mem, 1k-block0)
@@ -726,8 +730,6 @@ VARIABLE a1kroot.&sll1k   &a1kroot 0x 7 cells + ,
   \ a1kroot.&sll1k @  &mem39 assertEq
   ; RUNASTEST
 : testA1k.allocPo2=8 
-  
-
 
   ; RUNASTEST
 -test
