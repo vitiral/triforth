@@ -386,8 +386,8 @@ MARKER -test
 \ dumpInfo: we will replace the old one with one that also prints the return stack
 \   along with the name of the word (or ??? if it doesn't know).
 
-: between ( min max i -- flag ) \ return whether i is bettween [min,max)
-  dup >= IF false THEN   < IF false THEN true ;
+: between ( min max i -- flag ) \ return whether i is between [min,max)
+  dup rrot ( min i max i ) > rrot <= land ;
 : checkRead ( addr -- flag ) \ false if addr is not within valid memory
   RSMIN HEAPMAX lrot between ;
 : XT>&F0 4- 4- ;
@@ -639,22 +639,24 @@ MARKER -test
   &testCache @1 0 assertEq
   &testCache 2 cells + @ 2 assertEq ; RUNASTEST
 
-: a1k.&root ( &self -- &root ) 0x 9 cells + ;
+: a1k.&root ( &self -- &root ) 0x 9 cells + @ ;
 : a1k.po2Max 0x A ; \ 2^10=x400= 1kB (decimal) bytes
 : a1k.po2Min 2 ; \ 2^2=4 bytes
 : a1k.po2Chk ( po2 -- po2 ) \ check the po2 is valid.
   dup a1k.po2Min a1k.po2Max 1+ lrot between
   NOT IF panicf\" po2 invalid: $.ux \" THEN  ;
-: a1k.isPo2Max ( po2 -- flag ) 0x A = ; \ only root provides max Po2 blocks
+: a1k.isPo2Max ( po2 -- flag ) a1k.po2Max = ; \ only root provides max Po2 blocks
 : a1k.Po2i ( po2 -- po2i ) \ get the Po2 index ( byte increment from &self)
   2- ( 2^0 and 2^1 not supported) cells ;
 : a1k.Po2Sll&Root ( po2 &self -- &root \return &root for sll of Po2) swap a1k.Po2i + ;
 : a1k.allocMax ( &self -- ptr ) \ only root can hold 1k blocks
-  dup a1k.&root @ dup IF ( not root) nip a1k.allocMax EXIT THEN
+  dup a1k.&root dup IF ( not root) 
+    ( nip self, alloc from root) nip a1k.allocMax EXIT
+  THEN
   ( is root, drop null &root) drop a1k.po2Max swap ( po2Max &self) 
   a1k.Po2Sll&Root sll.poproot ;
 : a1k.freeMax ( &mem &self -- ) \ only root can hold 1k blocks
-  dup a1k.&root @ dup IF ( not root) nip a1k.freeMax EXIT THEN
+  dup a1k.&root dup IF ( not root) nip a1k.freeMax EXIT THEN
   drop a1k.po2Max swap ( &mem po2Max &self) a1k.Po2Sll&Root swap sll.insert ;
 : a1k.freeNoMerge ( &mem po2 &self -- ) \ mark a block as freed and store in ll
   swap a1k.po2Chk dup a1k.isPo2Max IF drop a1k.freeMax EXIT THEN
@@ -663,7 +665,8 @@ MARKER -test
   3drop \ TODO
   ; 
 : a1k.alloc ( po2 &self -- ptr )
-  swap a1k.po2Chk dup a1k.isPo2Max IF drop a1k.allocMax EXIT THEN
+  .fln\" ?? a1k.alloc: $.stack \"
+  swap a1k.po2Chk dumpInfo dup a1k.isPo2Max IF drop a1k.allocMax EXIT THEN
   ( attempt to find free Po2, or create a new one) >R ( R@1=po2)  >R ( R@=&self)
   R@1 R@ a1k.Po2Sll&Root sll.poproot ( maybe free block)
   dup IF ( found free block) 2Rdrop EXIT THEN
@@ -688,7 +691,7 @@ MARKER -test
   AGAIN ;
 : a1k.init ( &root &self) 
   >R@ ( R@=&self)   a1k.po2Max a1k.po2Min -  cellerase ( <-zero sll roots)
-  R> a1k.&root ! ( <- store &root) ;
+  R> 0x 9 cells + ! ( <- store &root) ;
 : a1k.initroot ( &memstart num1kBlocks &self -- )
   .fln\" ?? a1k.initroot: $.stack \"
   dup 0 swap a1k.init ( <- init with &root=0)
@@ -733,12 +736,11 @@ VARIABLE a1kroot.&sll1k   &&a1kroot @ 8 cells + ,
   ( 2^A) a1kroot.&sll1k @ @  &mem39 @   assertEq
   ; RUNASTEST
 : testA1k.allocPo2=A
-  0x A &&a1kroot @ a1k.alloc   1 sysexit
-  >R@ ( R@=1k mem) &mem39 @ assertEq
-  ( 2^A) a1kroot.&sll1k @ @    &mem39 @ 0x 400 - ( =&mem38)  assertEq
-
-  R> &&a1kroot @ a1k.freeMax
-  a1kroot.&sll1k @ @  &mem39 @   assertEq
+  ( alloc 2^A mem) 0x A &&a1kroot @ a1k.alloc
+  ( assert it's correct region) >R@ &mem39 @ assertEq
+  ( new &sll1k) a1kroot.&sll1k @ @    &mem39 @ 0x 400 - ( =&mem38)  assertEq
+  ( free the memory) R> &&a1kroot @ a1k.freeMax
+  ( assert prev state) a1kroot.&sll1k @ @  &mem39 @   assertEq
   ; RUNASTEST
 -test
 
