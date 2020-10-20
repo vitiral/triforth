@@ -639,8 +639,8 @@ MARKER -test
   &testCache @1 0 assertEq
   &testCache 2 cells + @ 2 assertEq ; RUNASTEST
 
-: a1k.&root ( &self -- &root ) 0x 8 cells + ;
-: a1k.po2Max 8 ; \ 2^8=x400 bytes
+: a1k.&root ( &self -- &root ) 0x 9 cells + ;
+: a1k.po2Max 0x A ; \ 2^10=x400= 1kB (decimal) bytes
 : a1k.po2Min 2 ; \ 2^2=4 bytes
 : a1k.po2Chk ( po2 -- po2 ) \ check the po2 is valid.
   dup a1k.po2Min a1k.po2Max 1+ lrot between
@@ -696,41 +696,49 @@ MARKER -test
   0x 3 n>R ( R@2=&memstart R@1=num1kBlocks R@=&1k-sll-root)
   0 BEGIN dup R@1 < WHILE
     dup a1k.po2Max Nshl ( =i*2^po2Max) R@2 + ( =&mem) R@ swap
-    \ .fln\" ?? INSERTING: $.stack &mem@=${ over @ .ux }  &1k-sll-root@=${ R@ @ .ux } \"
+    .fln\" ?? INSERTING: $.stack &mem@=${ over @ .ux }  &1k-sll-root@=${ R@ @ .ux } \"
     sll.insert
     \ .fln\"  ?? after:&1k-sll-root@=${ R@ @ .ux } \"
   1+ REPEAT 0x 3 nR> 4drop ;
 
-\ Initialize &a1kroot with 0x40 KiB (0m64KiB) of memory taken from the heap.
+\ Initialize &&a1kroot with 0x40 KiB (0m64KiB) of memory taken from the heap.
 VARIABLE &heap
   HEAPMAX  0x 400 0x 6 Nshl ( 0m1KiB * 2^6 = 0x40 KiB = 0m64KiB) - ,
 ( test) 0x 400 0x 6 Nshl 0x 10000 assertEq
 ( test) &heap @ 0x 10000 + HEAPMAX assertEq
 
 &heap @ 0x 40 - &heap ! ( allocate 0x40 bytes on heap)
-VARIABLE &a1kroot  &heap @ ,
+VARIABLE &&a1kroot  &heap @ ,
 MARKER -pnt 
-: pnt .fln\" a1kroot=${ &a1kroot @ .ux }  &mem0=${ &a1kroot @ 0x 40 + .ux }
+: pnt .fln\" a1kroot=${ &&a1kroot @ .ux }  &mem0=${ &&a1kroot @ 0x 40 + .ux }
   heapmax=${ heapmax .ux } \"
 ; pnt -pnt
 
 \ initialize root allocator.
-&a1kroot @ 0x 40 + ( =&mem) 0x 40 ( =num1kBlocks) &a1kroot @ a1k.initroot
+&&a1kroot @ 0x 40 + ( =&mem) 0x 40 ( =num1kBlocks) &&a1kroot @ a1k.initroot
 
 MARKER -test
 VARIABLE &mem0   &heap @ 0x 40 + , ( =start of mem, 1k-block0)
 VARIABLE &mem39  HEAPMAX 0x 400 - , ( last block 0x400 before heapmax)
-VARIABLE a1kroot.&sll1k   &a1kroot 0x 7 cells + ,
+VARIABLE a1kroot.&sll1k   &&a1kroot @ 8 cells + ,
 
 : testA1k.init
+  .fln\" ?? a1kroot.&sll1k ${ a1kroot.&sll1k @ .ux } \"
+  .fln\" ??? DUMP &&a1kroot ${ &&a1kroot @ 0x 40 dump } \"
+  ( &&a1kroot is at the &heap) &&a1kroot @ &heap @ assertEq
   ( &mem0 was first to be added, so it's pointer is null) &mem0 @ @ 0 assertEq
-  &a1kroot @ &heap @ assertEq
-
-  ( The first 1k block should be the last, since we inserted them first->last)
-  a1kroot.&sll1k @  &mem39 assertEq
+  \ Assert cells 0-7 are zero at &&a1kroot
+  0 BEGIN dup cells &&a1kroot @ + @ 0 assertEq 1+ dup 8 < UNTIL drop
+  ( &mem39 was last to be added, so it is at &sll1kroot)
+  ( 2^A) a1kroot.&sll1k @ @  &mem39 @   assertEq
   ; RUNASTEST
-: testA1k.allocPo2=8 
+: testA1k.allocPo2=A
+  0x A &&a1kroot @ a1k.alloc   1 sysexit
+  >R@ ( R@=1k mem) &mem39 @ assertEq
+  ( 2^A) a1kroot.&sll1k @ @    &mem39 @ 0x 400 - ( =&mem38)  assertEq
 
+  R> &&a1kroot @ a1k.freeMax
+  a1kroot.&sll1k @ @  &mem39 @   assertEq
   ; RUNASTEST
 -test
 
