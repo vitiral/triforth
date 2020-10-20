@@ -727,7 +727,7 @@ VARIABLE a1kroot.&sll1k   &a1kroot 0x 7 cells + ,
   &a1kroot @ &heap @ assertEq
 
   ( The first 1k block should be the last, since we inserted them first->last)
-  \ a1kroot.&sll1k @  &mem39 assertEq
+  a1kroot.&sll1k @  &mem39 assertEq
   ; RUNASTEST
 : testA1k.allocPo2=8 
 
