@@ -44,6 +44,7 @@
 \ ########################
 \ # Variables: allow defining variables and constants
 : VARIABLE WORD create drop ; \ Allow defining variables
+: CONSTANT WORD createWord  , compile, @ compile, EXIT ;
 VARIABLE &testCache 0 , 0 , 0 , \ temp storage for tests
 
 \ ########################
@@ -207,8 +208,10 @@ assertEmpty -test
 : R@ ( -- u ) rsp@ cell + @ ; \ add cell to skip caller's address
 : R@1 ( -- u ) rsp@ 2 cells + @ ; \ 2 cells because we have to skip caller's address
 : R@2 ( -- u ) rsp@ 0x 3 cells + @ ;
-: -R@ ( -- \increment R@ ) rsp@ cell + +! ;
-: -R@ ( -- \decrement R@ ) rsp@ cell + -! ;
+: +R@ ( -- \increment R@ ) rsp@ cell+ +! ;
+: -R@ ( -- \decrement R@ ) rsp@ cell+ -! ;
+: R! ( u -- \set R0 ) rsp@ cell+ ! ;
+: R!1 ( u -- \set R0 ) rsp@ 2 cells + ! ;
 : 2>R ( u:a u:b -- R: a b ) IMM compile, 2 compile, n>R ; \ R: ( -- a b)
 : 2R> ( -- u:a u:b ) IMM        compile, 2 compile, nR> ; \ R ( a b -- )
 : 2Rdrop ( -- \ drop 2cells on R) IMM  [compile] 2R>  compile, 2drop ;
@@ -565,17 +568,18 @@ MARKER -test
 \ constraint.
 \ 
 \ We are using an **arena** alocator. Arena allocators allow you to
-\ create an Arena and allocate and free memory in powers of 2 from it. We will
+\ create an Arena and allocate+free memory in powers of 2 from it. We will
 \ also have a basic defrag strategy. The advantage of arenas however is that
 \ you can drop the _entire_ arena at once, which guarantees no fragmentation.
-\ We will call our arena allocator "a1k" meaning "arena 1 killobyte"
+\ We will call our arena allocator "a1k" meaning "arena max 1 killobyte"
 \ 
 \ The primary data type of our arena will be singly-linked lists. Free blocks
 \ will be kept as linked lists. When memory is freed the caller calls
-\   : a1k.free ( ptr po2 &arena -- ) ... ;
-\ where po2 is the "power of 2" size of ref This will convert the first cell to
-\ a pointer to the next free memory, meaning we only have to keep pointers to
-\ the first free memory we find.
+\   : a1k.free ( ptr po2 &arena -- ) ;
+\ where po2 is the "power of 2" size of ptr. This will convert the first cell
+\ in the newly freed memory into a linked list which points the next free
+\ memory, meaning we only have to keep pointers to one piece of free memory per
+\ power of 2.
 \ 
 \ Allocation happens via the function
 \   : a1k.alloc ( po2 &arena -- Option<ptr> ) ... ;
@@ -587,19 +591,29 @@ MARKER -test
 \ to hold references to 1k blocks and non-root arenas which are not.
 \ Non-root arenas have a reference to the root arena so they can request
 \ 1k blocks.
-
-\ a1k is a 64 byte data structure with the following format:
+\ 
+\ Each arena is assigned an id when created from the root (root's id is x00).
+\ When an arena requests 1k blocks, the id is kept in a byte-array, with
+\ unused blocks at xFF. When the arena is droped, the root reclaims the 1k
+\ blocks it had, completely eliminating fragmentation. The used ids are kept in
+\ a 8 byte bitmap, and can be from (hex) 0-40 (decimal 64 max arenas)
+\ 
+\ a1k is a x40 byte data structure with the following format:
 \ STRUCT a1k
-\   free: [&sll; 8] \ 8 pointers to singly linked lists containing free po2 mem
-\   root: &root     \ pointer to a root, or 0 if this is root
-\   &sll<arena,&1kmem> \ (root only) sll with which arena is allocating 1k blocks
+\   free: [&sll; 8] \ x20 bytes: 8 pointers to free sll
+\   flags: cell     \ x4 bytes: flags including arena id
+\   root: &root     \ x4 bytes: pointer to a root, or 0 if this is root
+\   &1kIds          \ (root only) x4 bytes: which arena has which 1k block
+\   ids             \ (root only) 8 bytes: bit array of available ids
 \ END
+\ 
+\ Flags is following: 
+\  | ---unused-----|  ID  |
+\  FFFF FFFF FFFF FF  FF
 
-\ Singly linked list. These are insanely simple. You start with a "root" address
-\ that contains 0 (null) and use it's address as &next for insert. Pop
-\ works in reverse.
 
-\ root -> [ next, ...] -> ... -> [ 0, ... ] \ note: root and next are addresses
+\ ##
+\ # SLL: Singly linked list
 : sll.insert ( &prev &self -- \insert item after prev)
   \ .fln\"   ?? sll.insert: $.stack &prev@=${ over @ .ux }  &self@=${ dup @ .ux } \"
   >R ( R@=&self) dup @ ( =&prev.&next) R@ ! ( <-store at &self)
@@ -608,23 +622,35 @@ MARKER -test
   dup @ =0 IF drop 0 ( empty) EXIT THEN
   dup @ >R@ ( R@=&sll to return) @ ( =&sll.next) swap ! ( set as root)
   R> ;
+: sll.map ( xt &self -- )
+  \ Run an xt on every item. xt's type must be ( ... &sll -- ... bool )
+  \ if bool is false, the loop is stopped.
+  2>R ( R@1=xt R@=&sll) true BEGIN R@  land WHILE
+    R@ R@1 execute R@ @ R!        REPEAT 2Rdrop ;
+: sll.count ( &self -- u \ count number of items including self)
+  0 BEGIN swap ( count &sll) dup WHILE @ swap 1+ REPEAT drop ;
 
 MARKER -test                        ( first)  ( second)
 VARIABLE &root 0 ,  VARIABLE &values 1 , 2 ,    0x 3 , 4 ,
-: testInsert &root &values sll.insert
+: testInsert &root @ sll.count 0 assertEq
+  &root &values sll.insert    &root @ sll.count 1 assertEq
   &root @ &values assertEq  &values @ 0 assertEq 
   &root &values 2 cells + sll.insert \ insert next 
+  &root @ sll.count 2 assertEq
   &root @ &values 2 cells + assertEq \ root -> second
     &values 2 @i &values assertEq    \ second -> first
     &values @ 0 assertEq ; RUNASTEST \ first -> null
 : testPop 0 &root !   &root sll.poproot  0 assertEq
   &root &values sll.insert   &root &values 2 cells + sll.insert
+  &root @ sll.count 2 assertEq
   &root sll.poproot dup &values 2 cells + ( ==second) assertEq
     @ &values ( second.next==first) assertEq
     &root @ &values ( root now == first) assertEq 
+    &root @ sll.count 1 assertEq
   &root sll.poproot dup &values ( ==first) assertEq
     @ 0 ( first.next=0) assertEq
-    &root @ 0 ( root=0) assertEq ; RUNASTEST
+    &root @ 0 ( root=0) assertEq 
+    &root @ sll.count 0 assertEq ; RUNASTEST
 -test
 
 : memsplit ( po2 &mem -- &first &second ) \ split memory into two po2 sized chunks
@@ -639,7 +665,10 @@ MARKER -test
   &testCache @1 0 assertEq
   &testCache 2 cells + @ 2 assertEq ; RUNASTEST
 
+: a1k.flags ( &self -- flags ) 8 cells + @ ;
 : a1k.&root ( &self -- &root ) 0x 9 cells + @ ;
+: a1k.&1kIds ( &self -- &1kIds ) 0x A cells + @ ;
+: a1k.&ids ( &self -- &ids ) 0x B cells + ;
 : a1k.po2Max 0x A ; \ 2^10=x400= 1kB (decimal) bytes
 : a1k.po2Min 2 ; \ 2^2=4 bytes
 : a1k.po2Chk ( po2 -- po2 ) \ check the po2 is valid.
@@ -689,12 +718,13 @@ MARKER -test
     ( po2dec &mem_po2dec) over R@1 = IF ( we've found the memory we need) nip EXIT THEN
     ( else loop again, splitting the &mem again)
   AGAIN ;
-: a1k.init ( &root &self) 
+: a1k.init ( flags &root &self) \ don't call directly, call a1k.new instead
   >R@ ( R@=&self)   a1k.po2Max a1k.po2Min -  cellerase ( <-zero sll roots)
+  R@ 0x 8 cells + ! ( <- store flags)
   R> 0x 9 cells + ! ( <- store &root) ;
 : a1k.initroot ( &memstart num1kBlocks &self -- )
   .fln\" ?? a1k.initroot: $.stack \"
-  dup 0 swap a1k.init ( <- init with &root=0)
+  dup 0 ( =flags) 0 ( =&root) lrot a1k.init
   a1k.po2Max swap a1k.Po2Sll&Root
   0x 3 n>R ( R@2=&memstart R@1=num1kBlocks R@=&1k-sll-root)
   0 BEGIN dup R@1 < WHILE
@@ -710,7 +740,10 @@ VARIABLE &heap
 ( test) 0x 400 0x 6 Nshl 0x 10000 assertEq
 ( test) &heap @ 0x 10000 + HEAPMAX assertEq
 
-&heap @ 0x 40 - &heap ! ( allocate 0x40 bytes on heap)
+\ TODO: do this
+\ &heap @ 0x 40 - &heap ! ( allocate 0x40 bytes for allocated bytearray)
+&heap @ 0x 40 - &heap ! ( allocate 0x40 bytes for root allocator)
+
 VARIABLE &&a1kroot  &heap @ ,
 MARKER -pnt 
 : pnt .fln\" a1kroot=${ &&a1kroot @ .ux }  &mem0=${ &&a1kroot @ 0x 40 + .ux }
@@ -727,7 +760,7 @@ VARIABLE a1kroot.&sll1k   &&a1kroot @ 8 cells + ,
 
 : testA1k.init
   .fln\" ?? a1kroot.&sll1k ${ a1kroot.&sll1k @ .ux } \"
-  .fln\" ??? DUMP &&a1kroot ${ &&a1kroot @ 0x 40 dump } \"
+  \ .fln\" ??? DUMP &&a1kroot ${ &&a1kroot @ 0x 40 dump } \"
   ( &&a1kroot is at the &heap) &&a1kroot @ &heap @ assertEq
   ( &mem0 was first to be added, so it's pointer is null) &mem0 @ @ 0 assertEq
   \ Assert cells 0-7 are zero at &&a1kroot
