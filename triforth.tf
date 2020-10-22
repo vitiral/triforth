@@ -208,6 +208,8 @@ assertEmpty -test
 : R@ ( -- u ) rsp@ cell + @ ; \ add cell to skip caller's address
 : R@1 ( -- u ) rsp@ 2 cells + @ ; \ 2 cells because we have to skip caller's address
 : R@2 ( -- u ) rsp@ 0x 3 cells + @ ;
+: R@3 ( -- u ) rsp@ 4 cells + @ ;
+: R@i ( i -- u ) 1+ cells rsp@ + @ ;
 : +R@ ( -- \increment R@ ) rsp@ cell+ +! ;
 : -R@ ( -- \decrement R@ ) rsp@ cell+ -! ;
 : R! ( u -- \set R0 ) rsp@ cell+ ! ;
@@ -601,10 +603,11 @@ MARKER -test
 \ a1k is a x40 byte data structure with the following format:
 \ STRUCT a1k
 \   free: [&sll; 8] \ x20 bytes: 8 pointers to free sll
-\   flags: cell     \ x4 bytes: flags including arena id
-\   root: &root     \ x4 bytes: pointer to a root, or 0 if this is root
-\   &1kIds          \ (root only) x4 bytes: which arena has which 1k block
-\   ids             \ (root only) 8 bytes: bit array of available ids
+\   flags: cell     \ 4 bytes: flags including arena id
+\   root: &root     \ 4 bytes: pointer to a root, or 0 if this is root
+\   &1kIds          \ (root only) 4 bytes: which arena has which 1k block
+\   &mem0           \ (root only) 4 bytes: location of first memory block
+\   ids             \ (root only) 4 bytes: bit array of used ids
 \ END
 \ 
 \ Flags is following: 
@@ -667,16 +670,21 @@ MARKER -test
   &testCache @1 0 assertEq
   &testCache 2 cells + @ 2 assertEq ; RUNASTEST
 : testFill  0 &testCache !  &testCache 0x 3 0x F8 fill
-  .fln\" testCache: ${ &testCache .ux } \"
-  &testCache @ 0x F8F8F8 assertEq ; RUNASTEST
+  &testCache @ 0x F8F8F8 assertEq    &testCache b@ 0x F8 assertEq
+  0 &testCache !  &testCache 1 0x BE fill
+  &testCache @ 0x BE assertEq        &testCache b@ 0x BE assertEq
+  ; RUNASTEST
 -test
+
+1 sysexit
 
 : a1k.freeb ( -- FREE_BYTE) 0x FF ;
 : a1k.id ( &self -- id ) 8 cells + @ ( =flags) 0x FF and ;
 : a1k.flags ( &self -- flags ) 8 cells + @ ;
 : a1k.&root ( &self -- &root ) 0x 9 cells + @ ;
 : a1k.&1kIds ( &self -- &1kIds ) 0x A cells + @ ;
-: a1k.&ids ( &self -- &ids ) 0x B cells + ;
+: a1k.&mem0 ( &root -- &mem0 ) 0x B cells + @ ;
+: a1k.&ids ( &self -- &ids ) 0x C cells + ;
 : a1k.po2Max 0x A ; \ 2^10=x400= 1kB (decimal) bytes
 : a1k.po2Min 2 ; \ 2^2=4 bytes
 : a1k.po2Chk ( po2 -- po2 ) \ check the po2 is valid.
@@ -686,14 +694,19 @@ MARKER -test
 : a1k.Po2i ( po2 -- po2i ) \ get the Po2 index ( byte increment from &self)
   2- ( 2^0 and 2^1 not supported) cells ;
 : a1k.Po2Sll&Root ( po2 &self -- &root \return &root for sll of Po2) swap a1k.Po2i + ;
+: a1k._allocMax ( id &root -- ptr) \ allocate from root given id
+  >R@ ( R@=&root) a1k.po2Max swap ( id po2Max &root) a1k.Po2Sll&Root sll.poproot
+  ( id &mem) dup a1k.po2Max Nshr ( id &mem memBlockNum) R> a1k.&1kIds +
+  ( id &mem &memId) lrot swap b! ( store id holding block and ret) ;
 : a1k.allocMax ( &self -- ptr ) \ only root can hold 1k blocks
-  dup a1k.&root dup 
-  IF ( not root nip self, alloc from root) nip a1k.allocMax EXIT THEN
-  drop a1k.po2Max swap ( po2Max &self) 
-  a1k.Po2Sll&Root sll.poproot ;
+  dup a1k.&root dup IF ( not root) swap a1k.id swap a1k._allocMax EXIT THEN
+  swap ( 0 &root) a1k._allocMax ;
+: _a1k.freeMax ( &mem &root -- )  2>R@ ( R@1=&mem R@=&root)
+  a1k.po2Max swap ( &mem po2Max &self) a1k.Po2Sll&Root swap sll.insert
+  a1k.freeb 2R> ( freeb &mem &root) swap a1k.po2Max Nrshl swap a1k.&1kIds + b! ;
 : a1k.freeMax ( &mem &self -- ) \ only root can hold 1k blocks
-  dup a1k.&root dup IF ( not root) nip a1k.freeMax EXIT THEN
-  drop a1k.po2Max swap ( &mem po2Max &self) a1k.Po2Sll&Root swap sll.insert ;
+  dup a1k.&root dup IF ( not root) nip ( nip &self) _a1k.freeMax EXIT THEN
+  drop _a1k.freeMax ;
 : a1k.freeNoMerge ( &mem po2 &self -- ) \ mark a block as freed and store in ll
   swap a1k.po2Chk dup a1k.isPo2Max IF drop a1k.freeMax EXIT THEN
   a1k.Po2Sll&Root swap sll.insert   swap ;
@@ -729,19 +742,21 @@ MARKER -test
   >R@ ( R@=&self)   a1k.po2Max a1k.po2Min -  cellerase ( <-zero sll roots)
   R@ 0x 8 cells + ! ( <- store flags)
   R> 0x 9 cells + ! ( <- store &root) ;
-: a1k.initroot ( &1kIds &memstart num1kBlocks &self -- )
+: a1k.initroot ( &1kIds &mem0 num1kBlocks &self -- )
   .fln\" ?? a1k.initroot: $.stack \"
   dup 0 ( =flags) 0 ( =&root) lrot a1k.init
-  a1k.po2Max swap a1k.Po2Sll&Root
-  0x 3 n>R ( R@2=&memstart R@1=num1kBlocks R@=&1k-sll-root)
+  >R@ a1k.po2Max swap a1k.Po2Sll&Root
+  0x 3 n>R ( R@3=&self R@2=&mem0 R@1=num1kBlocks R@=&1k-sll-root)
+  dup 0x A cells R@3 + ! ( store self.&1kIds)
+  R@2 0x B cells R@3 + ! ( store &mem0)
+  dup ( =&1kids) R@1 ( =numBlocks) a1k.freeb fill \ mark blocks as free
   0 BEGIN dup R@1 < WHILE
     dup a1k.po2Max Nshl ( =i*2^po2Max) R@2 + ( =&mem) R@ swap
     \ .fln\" ?? INSERTING: $.stack &mem@=${ over @ .ux }  &1k-sll-root@=${ R@ @ .ux } \"
     sll.insert
     \ .fln\"  ?? after:&1k-sll-root@=${ R@ @ .ux } \"
   1+ REPEAT drop
-  ( &1kIds still on stack) R@1 ( =numBlocks) a1k.freeb fill \ all blocks are free
-  0x 3 nR> 3drop ;
+  0x 4 nR> 4drop ;
 
 \ Initialize &&a1kroot with 0x40 KiB (0m64KiB) of memory taken from the heap.
 VARIABLE &heap
