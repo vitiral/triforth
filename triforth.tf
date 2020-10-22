@@ -657,14 +657,22 @@ VARIABLE &root 0 ,  VARIABLE &values 1 , 2 ,    0x 3 , 4 ,
   dup rrot ( &mem po2 &mem) swap 1
   ( &mem &mem 1 po2) Nshl  ( &mem &mem 1*2^po2) + ;
 : cellerase ( addr count -- \zero count cells at address)
-  BEGIN 1- 2dup cells + 0 swap ! dup UNTIL 2drop ;
+  BEGIN dup WHILE 1- 2dup cells + 0 swap ! REPEAT 2drop ;
+: fill ( baddr u u8 -- ) \ fill the byte address with u8 values
+  >R ( R@=u8) BEGIN dup WHILE 1- 2dup + R@ swap b! REPEAT R> 3drop ;
 
 MARKER -test
-: testZero  4 &testCache !  2 &testCache 2 cells + !
+: testCellerase  4 &testCache !  2 &testCache 2 cells + !
   &testCache 2 cellerase    &testCache @ 0 assertEq
   &testCache @1 0 assertEq
   &testCache 2 cells + @ 2 assertEq ; RUNASTEST
+: testFill  0 &testCache !  &testCache 0x 3 0x F8 fill
+  .fln\" testCache: ${ &testCache .ux } \"
+  &testCache @ 0x F8F8F8 assertEq ; RUNASTEST
+-test
 
+: a1k.freeb ( -- FREE_BYTE) 0x FF ;
+: a1k.id ( &self -- id ) 8 cells + @ ( =flags) 0x FF and ;
 : a1k.flags ( &self -- flags ) 8 cells + @ ;
 : a1k.&root ( &self -- &root ) 0x 9 cells + @ ;
 : a1k.&1kIds ( &self -- &1kIds ) 0x A cells + @ ;
@@ -679,10 +687,9 @@ MARKER -test
   2- ( 2^0 and 2^1 not supported) cells ;
 : a1k.Po2Sll&Root ( po2 &self -- &root \return &root for sll of Po2) swap a1k.Po2i + ;
 : a1k.allocMax ( &self -- ptr ) \ only root can hold 1k blocks
-  dup a1k.&root dup IF ( not root) 
-    ( nip self, alloc from root) nip a1k.allocMax EXIT
-  THEN
-  ( is root, drop null &root) drop a1k.po2Max swap ( po2Max &self) 
+  dup a1k.&root dup 
+  IF ( not root nip self, alloc from root) nip a1k.allocMax EXIT THEN
+  drop a1k.po2Max swap ( po2Max &self) 
   a1k.Po2Sll&Root sll.poproot ;
 : a1k.freeMax ( &mem &self -- ) \ only root can hold 1k blocks
   dup a1k.&root dup IF ( not root) nip a1k.freeMax EXIT THEN
@@ -722,17 +729,19 @@ MARKER -test
   >R@ ( R@=&self)   a1k.po2Max a1k.po2Min -  cellerase ( <-zero sll roots)
   R@ 0x 8 cells + ! ( <- store flags)
   R> 0x 9 cells + ! ( <- store &root) ;
-: a1k.initroot ( &memstart num1kBlocks &self -- )
+: a1k.initroot ( &1kIds &memstart num1kBlocks &self -- )
   .fln\" ?? a1k.initroot: $.stack \"
   dup 0 ( =flags) 0 ( =&root) lrot a1k.init
   a1k.po2Max swap a1k.Po2Sll&Root
   0x 3 n>R ( R@2=&memstart R@1=num1kBlocks R@=&1k-sll-root)
   0 BEGIN dup R@1 < WHILE
     dup a1k.po2Max Nshl ( =i*2^po2Max) R@2 + ( =&mem) R@ swap
-    .fln\" ?? INSERTING: $.stack &mem@=${ over @ .ux }  &1k-sll-root@=${ R@ @ .ux } \"
+    \ .fln\" ?? INSERTING: $.stack &mem@=${ over @ .ux }  &1k-sll-root@=${ R@ @ .ux } \"
     sll.insert
     \ .fln\"  ?? after:&1k-sll-root@=${ R@ @ .ux } \"
-  1+ REPEAT 0x 3 nR> 4drop ;
+  1+ REPEAT drop
+  ( &1kIds still on stack) R@1 ( =numBlocks) a1k.freeb fill \ all blocks are free
+  0x 3 nR> 3drop ;
 
 \ Initialize &&a1kroot with 0x40 KiB (0m64KiB) of memory taken from the heap.
 VARIABLE &heap
@@ -740,23 +749,26 @@ VARIABLE &heap
 ( test) 0x 400 0x 6 Nshl 0x 10000 assertEq
 ( test) &heap @ 0x 10000 + HEAPMAX assertEq
 
-\ TODO: do this
-\ &heap @ 0x 40 - &heap ! ( allocate 0x40 bytes for allocated bytearray)
+&heap @ 0x 40 - &heap ! ( allocate 0x40 bytes for allocated bytearray)
 &heap @ 0x 40 - &heap ! ( allocate 0x40 bytes for root allocator)
 
 VARIABLE &&a1kroot  &heap @ ,
 MARKER -pnt 
 : pnt .fln\" a1kroot=${ &&a1kroot @ .ux }  &mem0=${ &&a1kroot @ 0x 40 + .ux }
   heapmax=${ heapmax .ux } \"
-; pnt -pnt
+; pnt 
+-pnt
 
 \ initialize root allocator.
-&&a1kroot @ 0x 40 + ( =&mem) 0x 40 ( =num1kBlocks) &&a1kroot @ a1k.initroot
+&&a1kroot @ 0x 40 + ( =&1kIds) &&a1kroot @ 0x 80 + ( =&mem)
+0x 40 ( =num1kBlocks)          &&a1kroot @ ( =&self)
+a1k.initroot
 
 MARKER -test
-VARIABLE &mem0   &heap @ 0x 40 + , ( =start of mem, 1k-block0)
+VARIABLE &mem0   &heap @ 0x 80 + , ( =start of mem, 1k-block0)
 VARIABLE &mem39  HEAPMAX 0x 400 - , ( last block 0x400 before heapmax)
 VARIABLE a1kroot.&sll1k   &&a1kroot @ 8 cells + ,
+
 
 : testA1k.init
   .fln\" ?? a1kroot.&sll1k ${ a1kroot.&sll1k @ .ux } \"
@@ -777,6 +789,8 @@ VARIABLE a1kroot.&sll1k   &&a1kroot @ 8 cells + ,
   ; RUNASTEST
 -test
 
+1 sysexit
+
 
 \ TODO:
 \ - use 16bit chkId instead of everything else. Use a Vec<&Chk> datastructure held within
@@ -789,4 +803,8 @@ VARIABLE a1kroot.&sll1k   &&a1kroot @ 8 cells + ,
 \   word that specifies a ChkId. Note that IMM words that want to do their own
 \   typechecking themselves (i.e. generics) but still have a ChkId for metadata
 \   simply have 0 inp/out types and the generic bit set in those flags.
+\
+\ TODO:
+\ Get rid of most items in F0/FR -- we will just be using one flags cell, metadata
+\ will be stored in the metadict in the allocator.
 

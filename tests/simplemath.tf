@@ -63,3 +63,7 @@ tval DSP@ 0x F0F0 swap 2+ u16! 0x F0F05678 assertEq
 0 0x 2 Nshl  0 assertEq         1 0x 5 Nshl 0x 20 assertEq
 1 0x 8 Nshl  0x 100 assertEq    1 0x 2 Nshl  0x 4 assertEq
 1 0x 10 Nshl  0x 10000 assertEq 4 0x 4 Nshl  0x 40 assertEq
+
+0 0x 2 Nshr    0 assertEq       1 0x 5 Nshr     0 assertEq
+0x 100 2 Nshr  0x 40 assertEq   0x 100 0x 5 Nshr     8 assertEq
+8 1 Nshr       0x 4 assertEq    4 2 Nshr  1 assertEq

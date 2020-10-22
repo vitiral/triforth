@@ -2097,6 +2097,10 @@ def_asmword "16shr",   5,    0, _16shr
   dpush %eax
   NEXT
 
+##
+# Nshl and Nshr
+# The shl and shr functions only take a CONSTANT. Therefore we have to create a
+# jump table so that we can shift by 0-31 bits
 .macro NshlMACRO N
 Nshl_\N :
   shl $\N , %ebx
@@ -2109,7 +2113,7 @@ Nshl: # ( u N -- u ) \ shift bits left by N
   dpop %ebx # value to shift
   cmp $0x100, %eax # simply return 0 if shifting > 31
   jge Nshl_ret0
-  # Note: you can get look at size of instrs by uncommenting:
+  # Note: you can get look at size of each by uncommenting:
   # movl $Nshl_4, %edi
   # movl $Nshl_3, %edx
   # movl $Nshl_2, %ecx
@@ -2161,9 +2165,72 @@ Nshl_ret:
   dpush %ebx
   ret
 
+.macro NshrMACRO N
+Nshr_\N :
+  shr $\N , %ebx
+  jmp Nshr_ret
+.align 4
+.endm
+
+Nshr: # ( u N -- u ) \ shift bits right by N
+  call dumpInfo
+  dpop %eax # N
+  dpop %ebx # value to shift
+  cmp $0x100, %eax # simply return 0 if shifting > 31
+  jge Nshr_ret0
+  shll $3, %eax # multiply eax by 8, the code size of NshrMACRO
+  addl $Nshr_jt, %eax # and add the jump table to it for indirect branch
+  pushl %eax # push location to jmp to onto "return" stack
+  ret       # and jump to it
+Nshr_ret0:
+  dpush $0
+  ret
+.align 4
+Nshr_jt: # jump table
+  NshrMACRO 0
+  NshrMACRO 1
+  NshrMACRO 2
+  NshrMACRO 3
+  NshrMACRO 4
+  NshrMACRO 5
+  NshrMACRO 6
+  NshrMACRO 7
+  NshrMACRO 8
+  NshrMACRO 9
+  NshrMACRO 0xA
+  NshrMACRO 0xB
+  NshrMACRO 0xC
+  NshrMACRO 0xD
+  NshrMACRO 0xE
+  NshrMACRO 0xF
+  NshrMACRO 0x10
+  NshrMACRO 0x11
+  NshrMACRO 0x12
+  NshrMACRO 0x13
+  NshrMACRO 0x14
+  NshrMACRO 0x15
+  NshrMACRO 0x16
+  NshrMACRO 0x17
+  NshrMACRO 0x18
+  NshrMACRO 0x19
+  NshrMACRO 0x1A
+  NshrMACRO 0x1B
+  NshrMACRO 0x1C
+  NshrMACRO 0x1D
+  NshrMACRO 0x1E
+  NshrMACRO 0x1F
+Nshr_ret:
+  dpush %ebx
+  call dumpInfo
+  ret
+
 # ( u N -- u ) \ shift bits left by N
 #           ascii  , len, flag, label
 def_callword "Nshl",   4,    0, Nshl
+
+# ( u N -- u ) \ shift bits left by N
+#           ascii  , len, flag, label
+def_callword "Nshr",   4,    0, Nshr
 
 # ( u:a u:b -- u:rem u:quot ) \ divide a/b -> quotient remainder
 #           ascii  , len, flag, label
