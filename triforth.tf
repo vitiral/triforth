@@ -201,6 +201,8 @@ assertEmpty -test
      ELSE drop false THEN ;
 : lor ( flag flag -- flag \logical or)
   IF drop true ELSE IF true ELSE false THEN THEN ;
+: u8max 0x FF ;
+: byte u8max and ;
 
 \ #########################
 \ # Stack Operations
@@ -536,7 +538,10 @@ MARKER -test
 \ values (but if you really needed them, create a NegOption type)
 : None IMM  compile, 0 ;
 : Some IMM  compile, 1+ ;
+: RevSome IMM compile, 1- ; \ reverse the Some operation
 : IFsome IMM  compile, NONEBRANCH  &here @  0 , ; \ see IF for explanation
+: UnSome ( Some<v> -- v \ unwrap Some or panic)
+  IFsome  ELSE panicf\" UnSome was None\" THEN ;
 
 MARKER -test
 : testNone  None IFsome failTest THEN ; RUNASTEST
@@ -575,6 +580,80 @@ MARKER -test
 \ you can drop the _entire_ arena at once, which guarantees no fragmentation.
 \ We will call our arena allocator "a1k" meaning "arena max 1 killobyte"
 \ 
+\ The arena allocator is a little complex. Before we build that, we also need
+\ an allocator that can _only_ allocate and free 1k blocks of memory.
+\ This will be _extremely_ simple, as it doesn't have to worry about
+\ fragmentation at all!
+\ 
+\ Both allocators are built on singly-linked-lists. For the 1k allocator,
+\ we will use a sllb meaning "singly-linked-list-byte" -- it uses a
+\ byte for it's "pointer" (really an index) to the next item.
+
+\ First we need to allocate memory that we can use for both allocators
+\ Initialize &&a1kroot with 0x40 KiB (0m64KiB) of memory taken from the heap.
+VARIABLE &heap \ 0m1KiB * 2^6 = 0x40 KiB = 0m64KiB mem
+  HEAPMAX  0x 400 0x 6 Nshl - ,
+( test) 0x 400 0x 6 Nshl 0x 10000 assertEq
+( test) &heap @ 0x 10000 + HEAPMAX assertEq
+
+
+\ Memory layout: &mem:cell | XXXX XXXX size:byte root:byte
+: sllb.chi ( index &self -- index &self \check index)
+  2dup cell+ @ 8 Nshr >= IF drop panicf\" index $.ux >=len\" THEN ;
+: sllb.noNext 0x FF ; \ 0 is an index so FF represents "no next"
+: sllb.init ( size &mem &self:8bytes -- \initialize a singly-linked-list-byte)
+  2 pick ( =size) 1 sllb.noNext lrot between
+  ( 1<=size<FF) NOT IF panicf\" MUST:0<sllb.size<FF\" THEN
+  rrot swap >R@ ( &self &mem len) ( -> initialize ll by storing inc indexes)
+  BEGIN 1- 2dup + ( &self &mem len-1 baddr) over 1+ ( =next-index) swap b!
+  dup UNTIL drop R> ( &self &mem len)
+  2dup 1- + sllb.noNext swap b! ( <-set noNext at last index) 
+  rrot ( len &self &mem) over ! ( store &mem at &self.)
+  ( len &self ) swap 8 Nshl ( =size|root=0) swap cell+ ! ;
+: sllb.root ( &self -- Option<index> \index at root)
+  cell+ @ byte ( =root) Some byte ( FF + 1 = 100, with byte is 00=None) ;
+: sllb.root! ( index &self -- \ store index as root) 
+  \ cell+ b! ;
+  cell+ dup @ 0x FFFFFF00 and ( index &flags flags) lrot byte + swap ! ;
+: sllb.next ( index &self -- Option<index> \get next at index) @ + b@ dumpInfo Some byte ;
+: sllb.next! ( u8 index &self -- \set index's next to u8) @ + b! ;
+: sllb.pop ( &self -- Option<index> \pop item from root)
+  >R@ ( R@=self) sllb.root IFsome
+    dup ( =return) R@ sllb.next RevSome R@ sllb.root!
+    dup ( store noNext in popped value) sllb.noNext swap R> sllb.next!
+    ( return value) Some
+  ELSE Rdrop None THEN ;
+: sllb.push ( index &self -- \insert an index after root)
+  >R@ sllb.root IFsome
+    over ( index root index ) R@ sllb.next! ( set index.next=root)
+    R> sllb.root! ( set root=index)
+  ELSE 
+    ( root was empty, set index.next=noNext) sllb.noNext over R@ sllb.next!
+    ( and set root to index) R> sllb.root! 
+  THEN ;
+
+&heap @ 0x 40 - &heap ! ( allocate 0x40 bytes for sllb bytes)
+&heap @ ( =&mem)
+&heap @ 0x C  - &heap ! ( allocate 0m12 bytes for 1k allocator)
+&heap @ ( =&self) 0x 40 ( =size) rrot sllb.init
+VARIABLE &&1ksllb &heap @ ,
+: &1ksllb &&1ksllb @ ;
+
+MARKER -test
+: testSllbInit  &1ksllb sllb.root 0 Some assertEq \ test: root=0
+  &1ksllb @ 0x 3F + b@ sllb.noNext assertEq \ test: last index=noNext
+  0x 3F &1ksllb sllb.next None assertEq  \ test: last.next=None
+  &1ksllb @ b@ 1 assertEq                \ test:index0.next=1
+  &1ksllb @ 1+ b@ 2 assertEq             \ test:index1.next=2
+  ; RUNASTEST
+: testPopPush &1ksllb sllb.pop UnSome dup 0 assertEq
+  &1ksllb sllb.pop Unsome dup 1 assertEq
+  &1ksllb sllb.push  &1ksllb sllb.root 1 Some assertEq
+  &1ksllb sllb.push  &1ksllb sllb.root 0 Some assertEq ; RUNASTEST
+-test
+
+2 sysexit
+
 \ The primary data type of our arena will be singly-linked lists. Free blocks
 \ will be kept as linked lists. When memory is freed the caller calls
 \   : a1k.free ( ptr po2 &arena -- ) ;
@@ -678,6 +757,8 @@ MARKER -test
 
 1 sysexit
 
+&heap @ 0x 40 - &heap ! ( allocate 0x40 bytes for root allocator)
+
 : a1k.freeb ( -- FREE_BYTE) 0x FF ;
 : a1k.id ( &self -- id ) 8 cells + @ ( =flags) 0x FF and ;
 : a1k.flags ( &self -- flags ) 8 cells + @ ;
@@ -758,14 +839,6 @@ MARKER -test
   1+ REPEAT drop
   0x 4 nR> 4drop ;
 
-\ Initialize &&a1kroot with 0x40 KiB (0m64KiB) of memory taken from the heap.
-VARIABLE &heap
-  HEAPMAX  0x 400 0x 6 Nshl ( 0m1KiB * 2^6 = 0x40 KiB = 0m64KiB) - ,
-( test) 0x 400 0x 6 Nshl 0x 10000 assertEq
-( test) &heap @ 0x 10000 + HEAPMAX assertEq
-
-&heap @ 0x 40 - &heap ! ( allocate 0x40 bytes for allocated bytearray)
-&heap @ 0x 40 - &heap ! ( allocate 0x40 bytes for root allocator)
 
 VARIABLE &&a1kroot  &heap @ ,
 MARKER -pnt 

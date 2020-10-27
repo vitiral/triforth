@@ -3777,7 +3777,7 @@ def_asmword "NONEBRANCH",  10,   0, NONEbranch
   # NOTE: %eax contains xt of current instruction from NEXT. Don't override it!
   dpop %ebx
   cmpl $0, %ebx
-  je word_branch  # if 0, jump to code in BRANCH above
+  je word_branch  # if 0, jump to code in BRANCH above (with value dropped)
   lodsl           # otherwise skip the offset
   dec %ebx
   dpush %ebx # subtract 1 to "unwrap" value and push back to stack
