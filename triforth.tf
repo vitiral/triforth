@@ -586,7 +586,7 @@ MARKER -test
 \ fragmentation at all!
 \ 
 \ Both allocators are built on singly-linked-lists. For the 1k allocator,
-\ we will use a sllb meaning "singly-linked-list-byte" -- it uses a
+\ we will use a bsll meaning "singly-linked-list-byte" -- it uses a
 \ byte for it's "pointer" (really an index) to the next item.
 
 \ First we need to allocate memory that we can use for both allocators
@@ -598,58 +598,58 @@ VARIABLE &heap \ 0m1KiB * 2^6 = 0x40 KiB = 0m64KiB mem
 
 
 \ Memory layout: &mem:cell | XXXX XXXX size:byte root:byte
-: sllb.chi ( index &self -- index &self \check index)
+: bsll.chi ( index &self -- index &self \check index)
   2dup cell+ @ 8 Nshr >= IF drop panicf\" index $.ux >=len\" THEN ;
-: sllb.noNext 0x FF ; \ 0 is an index so FF represents "no next"
-: sllb.init ( size &mem &self:8bytes -- \initialize a singly-linked-list-byte)
-  2 pick ( =size) 1 sllb.noNext lrot between
-  ( 1<=size<FF) NOT IF panicf\" MUST:0<sllb.size<FF\" THEN
+: bsll.noNext 0x FF ; \ 0 is an index so FF represents "no next"
+: bsll.init ( size &mem &self:8bytes -- \initialize a singly-linked-list-byte)
+  2 pick ( =size) 1 bsll.noNext lrot between
+  ( 1<=size<FF) NOT IF panicf\" MUST:0<bsll.size<FF\" THEN
   rrot swap >R@ ( &self &mem len) ( -> initialize ll by storing inc indexes)
   BEGIN 1- 2dup + ( &self &mem len-1 baddr) over 1+ ( =next-index) swap b!
   dup UNTIL drop R> ( &self &mem len)
-  2dup 1- + sllb.noNext swap b! ( <-set noNext at last index) 
+  2dup 1- + bsll.noNext swap b! ( <-set noNext at last index) 
   rrot ( len &self &mem) over ! ( store &mem at &self.)
   ( len &self ) swap 8 Nshl ( =size|root=0) swap cell+ ! ;
-: sllb.root ( &self -- Option<index> \index at root)
+: bsll.root ( &self -- Option<index> \index at root)
   cell+ @ byte ( =root) Some byte ( FF + 1 = 100, with byte is 00=None) ;
-: sllb.root! ( index &self -- \ store index as root) 
+: bsll.root! ( index &self -- \ store index as root) 
   \ cell+ b! ;
   cell+ dup @ 0x FFFFFF00 and ( index &flags flags) lrot byte + swap ! ;
-: sllb.next ( index &self -- Option<index> \get next at index) @ + b@ dumpInfo Some byte ;
-: sllb.next! ( u8 index &self -- \set index's next to u8) @ + b! ;
-: sllb.pop ( &self -- Option<index> \pop item from root)
-  >R@ ( R@=self) sllb.root IFsome
-    dup ( =return) R@ sllb.next RevSome R@ sllb.root!
-    dup ( store noNext in popped value) sllb.noNext swap R> sllb.next!
+: bsll.next ( index &self -- Option<index> \get next at index) @ + b@ dumpInfo Some byte ;
+: bsll.next! ( u8 index &self -- \set index's next to u8) @ + b! ;
+: bsll.pop ( &self -- Option<index> \pop item from root)
+  >R@ ( R@=self) bsll.root IFsome
+    dup ( =return) R@ bsll.next RevSome R@ bsll.root!
+    dup ( store noNext in popped value) bsll.noNext swap R> bsll.next!
     ( return value) Some
   ELSE Rdrop None THEN ;
-: sllb.push ( index &self -- \insert an index after root)
-  >R@ sllb.root IFsome
-    over ( index root index ) R@ sllb.next! ( set index.next=root)
-    R> sllb.root! ( set root=index)
+: bsll.push ( index &self -- \insert an index after root)
+  >R@ bsll.root IFsome
+    over ( index root index ) R@ bsll.next! ( set index.next=root)
+    R> bsll.root! ( set root=index)
   ELSE 
-    ( root was empty, set index.next=noNext) sllb.noNext over R@ sllb.next!
-    ( and set root to index) R> sllb.root! 
+    ( root was empty, set index.next=noNext) bsll.noNext over R@ bsll.next!
+    ( and set root to index) R> bsll.root! 
   THEN ;
 
-&heap @ 0x 40 - &heap ! ( allocate 0x40 bytes for sllb bytes)
+&heap @ 0x 40 - &heap ! ( allocate 0x40 bytes for bsll bytes)
 &heap @ ( =&mem)
 &heap @ 0x C  - &heap ! ( allocate 0m12 bytes for 1k allocator)
-&heap @ ( =&self) 0x 40 ( =size) rrot sllb.init
-VARIABLE &&1ksllb &heap @ ,
-: &1ksllb &&1ksllb @ ;
+&heap @ ( =&self) 0x 40 ( =size) rrot bsll.init
+VARIABLE &&1kbsll &heap @ ,
+: &1kbsll &&1kbsll @ ;
 
 MARKER -test
-: testSllbInit  &1ksllb sllb.root 0 Some assertEq \ test: root=0
-  &1ksllb @ 0x 3F + b@ sllb.noNext assertEq \ test: last index=noNext
-  0x 3F &1ksllb sllb.next None assertEq  \ test: last.next=None
-  &1ksllb @ b@ 1 assertEq                \ test:index0.next=1
-  &1ksllb @ 1+ b@ 2 assertEq             \ test:index1.next=2
+: testSllbInit  &1kbsll bsll.root 0 Some assertEq \ test: root=0
+  &1kbsll @ 0x 3F + b@ bsll.noNext assertEq \ test: last index=noNext
+  0x 3F &1kbsll bsll.next None assertEq  \ test: last.next=None
+  &1kbsll @ b@ 1 assertEq                \ test:index0.next=1
+  &1kbsll @ 1+ b@ 2 assertEq             \ test:index1.next=2
   ; RUNASTEST
-: testPopPush &1ksllb sllb.pop UnSome dup 0 assertEq
-  &1ksllb sllb.pop Unsome dup 1 assertEq
-  &1ksllb sllb.push  &1ksllb sllb.root 1 Some assertEq
-  &1ksllb sllb.push  &1ksllb sllb.root 0 Some assertEq ; RUNASTEST
+: testPopPush &1kbsll bsll.pop UnSome dup 0 assertEq
+  &1kbsll bsll.pop Unsome dup 1 assertEq
+  &1kbsll bsll.push  &1kbsll bsll.root 1 Some assertEq
+  &1kbsll bsll.push  &1kbsll bsll.root 0 Some assertEq ; RUNASTEST
 -test
 
 2 sysexit
