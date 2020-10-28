@@ -591,96 +591,62 @@ MARKER -test
 \ Both allocators are built on singly-linked-lists. For the 1k allocator,
 \ we will use a bsll meaning "byte-singly-linked-list" -- it uses a
 \ byte for it's "pointer" (really an index) to the next item.
+\ 
+\ Many of these datatypes will be "globally" defined. This is because this
+\ is the core allocator for the type system, as well as the "system" allocator
+\ for operating systems on which triforth runs (typically with <128k RAM).
 
 \ First we need to allocate memory that we can use for both allocators
-\ Initialize &&a1kroot with 0x40 KiB (0m64KiB) of memory taken from the heap.
+\ Initialize &1k with 0x40 KiB (0m64KiB) of memory taken from the heap.
 VARIABLE &heap \ 0m1KiB * 2^6 = 0x40 KiB = 0m64KiB mem
   HEAPMAX  0x 400 0x 6 Nshl - ,
 : &1k [ &heap @ ] literal ;       : 1klen 0x 40 ;  \ 1k memory blocks
 ( test) 0x 400 0x 6 Nshl 0x 10000 assertEq
 ( test) &heap @ 0x 10000 + HEAPMAX assertEq
 
-\ b1k: bsll for 1k blocks
-&heap @ 0x 40 - &heap !   : &b1ki  [ &heap @ ] literal ;  \ indexes for bsll
-&heap @ 4 - &heap !       : &b1k  [ &heap @ ] literal ;    \ root for bsll
-: noNext 0x FF ; \ 0 is an index, FF represents no next link
+\ l1k: bsll for 1k blocks
+&heap @ 0x 40 - &heap !   : &l1ki  [ &heap @ ] literal ;  \ indexes l1k
+&heap @ 4 - &heap !       : &l1k  [ &heap @ ] literal ;   \ root for l1k
 MARKER -init
-: b1k.init \ initialize b1k by having every index point to next.
-  1klen BEGIN 1- dup ( =index) dup &b1ki + ( =b-addr) b! dup UNTIL drop
-  ( last index is noNext) noNext  1klen 1- &b1ki + b! 
-  ( root=0) 0 &b1k ! ;   b1k.init  assertEmpty -init
-
-
-: _ch ( index -- index ) dup 1klen >= IF panicf\" bad-index: $.ux \" THEN ;
-
-
-0 sysexit
-
-
-: bsll.chi ( index &self -- index &self \check index)
-  2dup cell+ @ 8 Nshr >= IF drop panicf\" index $.ux >=len\" THEN ;
-: bsll.noNext 0x FF ; \ 0 is an index so FF represents "no next"
-: bsll.init ( size &barr &self:8bytes -- \initialize a singly-linked-list-byte)
-  2 pick ( =size) 1 bsll.noNext lrot between
-  ( 1<=size<FF) NOT IF panicf\" MUST:0<bsll.size<FF\" THEN
-  rrot swap >R@ ( &self &barr len) ( -> initialize ll by storing inc indexes)
-  BEGIN 1- 2dup + ( &self &barr len-1 baddr) over 1+ ( =next-index) swap b!
-  dup UNTIL drop R> ( &self &barr len)
-  2dup 1- + bsll.noNext swap b! ( <-set noNext at last index) 
-  rrot ( len &self &barr) over ! ( store &barr at &self.)
-  ( len &self ) swap 8 Nshl ( =size|root=0) swap cell+ ! ;
-: bsll.root ( &self -- Option<index> \index at root)
-  cell+ @ byte ( =root) Some byte ( FF + 1 = 100, with byte is 00=None) ;
-: bsll.root! ( index &self -- \ store index as root) 
-  \ cell+ b! ;
-  cell+ dup @ 0x FFFFFF00 and ( index &flags flags) lrot byte + swap ! ;
-: bsll.next ( index &self -- Option<index> \get next at index) @ + b@ dumpInfo Some byte ;
-: bsll.next! ( u8 index &self -- \set index's next to u8) @ + b! ;
-: bsll.pop ( &self -- Option<index> \pop item from root)
-  >R@ ( R@=self) bsll.root IFsome
-    dup ( =return) R@ bsll.next RevSome R@ bsll.root!
-    dup ( store noNext in popped value) bsll.noNext swap R> bsll.next!
-    ( return value) Some
-  ELSE Rdrop None THEN ;
-: bsll.push ( index &self -- \insert an index after root)
-  >R@ bsll.root IFsome
-    over ( index root index ) R@ bsll.next! ( set index.next=root)
-    R> bsll.root! ( set root=index)
-  ELSE 
-    ( root was empty, set index.next=noNext) bsll.noNext over R@ bsll.next!
-    ( and set root to index) R> bsll.root! 
-  THEN ;
-
-&heap @ 0x 40 - &heap ! ( allocate 0x40 bytes for bsll &barr)
-&heap @ ( =&barr)
-&heap @ 0x 8  - &heap ! ( allocate 8 bytes for bsll)
-&heap @ ( =&self) 0x 40 ( =size) rrot bsll.init
-: &1kbsll  [ &heap @ ] literal ;
+: l1k.init \ initialize l1k free-bsll by having every index point to next.
+  1klen BEGIN dup ( =nexti) dup 1- &l1ki + ( =b-addr) b! 1- dup UNTIL drop
+  ( last index is u8max, i.e. noNext) u8max  1klen 1- &l1ki + b!
+  ( root=0) 0 &l1k ! ;
+l1k.init  assertEmpty -init
+: l1k.chi ( index -- index ) dup 1klen >= IF panicf\" bad-index: $.ux \" THEN ;
+: _&b ( index -- &baddr ) &l1ki + ;
+: _nx ( index -- index \ get next index) _&b b@ ;
+: l1k.pop ( &broot -- Option<index> ) dup b@ ( &broot rooti)
+  dup u8max = IF 2drop None EXIT THEN
+  dup _nx ( &broot rooti nexti) lrot ! ( store nexti as root)
+  Some byte ( note: 0xFF+1=0x100 byte=0=None) ;
+: l1k.push ( index &broot -- ) 2dup
+  ( set index.next=rooti) b@ swap &l1ki + b! ( set rooti=index) b! ;
 
 \ The "indexes" we stored in 1kbsll were not just to bytes -- they also
 \ represent the index into &1k blocks of memory. Allocating therefore involves
 \ simply popping an index and converting into a memory address. Here we use raw
 \ indexes. The names are kept short to use minimal space.
-: _a ( -- Option<index> ) &1kbsll bsll.pop ;    \ alloc 1k
-: _f ( index -- ) &1kbsll bsll.chi bsll.push ;  \ free 1k
+: _a ( -- Option<index> ) &l1k l1k.pop ;    \ alloc 1k
+: _f ( index -- ) l1k.chi &l1k l1k.push ;  \ free 1k
 : _i& ( index -- &mem ) 0xA Nshl &1k + ;        \ index > &mem
 : _&i ( &mem -- index) &1k - 0xA Nshr ;         \ &mem > index
 : _ch ( &mem -- &mem ) dup &1k < IF panicf\" <&1k: $.ux \" THEN ; \ check &mem
 
 MARKER -test
-: testSllbInit  &1kbsll bsll.root 0 Some assertEq \ test: root=0
-  &1kbsll @ 0x 3F + b@ bsll.noNext assertEq \ test: last index=noNext
-  0x 3F &1kbsll bsll.next None assertEq  \ test: last.next=None
-  &1kbsll @ b@ 1 assertEq                \ test:index0.next=1
-  &1kbsll @ 1+ b@ 2 assertEq             \ test:index1.next=2
+: testL1kInit  &l1k b@ 0 assertEq \ test: root=0
+  &l1ki 0x 3F + b@ u8max assertEq \ test: last index=noNext
+  0x 3F _nx u8max assertEq        \ test: last.next=noNext
+  &l1ki    b@ 1 assertEq          \ test:index0.next=1
+  &l1ki 1+ b@ 2 assertEq          \ test:index1.next=2
   ; RUNASTEST
-: testPopPush &1kbsll bsll.pop UnSome dup 0 assertEq
-  &1kbsll bsll.pop Unsome dup 1 assertEq
-  &1kbsll bsll.push  &1kbsll bsll.root 1 Some assertEq
-  &1kbsll bsll.push  &1kbsll bsll.root 0 Some assertEq 
-  ( re-test) testSllbInit ; RUNASTEST
+: testL1kPopPush &l1k l1k.pop UnSome dup 0 assertEq
+  &l1k l1k.pop Unsome dup 1 assertEq
+  &l1k l1k.push  &l1k b@ 1 assertEq
+  &l1k l1k.push  &l1k b@ 0 assertEq
+  ( re-test) testL1kInit ; RUNASTEST
 : test1k _a UnSome _i& dup &1k assertEq   _a UnSome _i& dup &1k 0x 400 + assertEq
-  _&i _f _&i _f   ( re-test) testSllbInit ; RUNASTEST
+  _&i _f _&i _f   ( re-test) testL1kInit ; RUNASTEST
 -test
 
 \ ##
@@ -731,7 +697,6 @@ MARKER -test
   &testCache 2 cells + @ 2 assertEq ; RUNASTEST
 -test
 
-
 \ Finally, we can construct our arena "buddy" allocator. This keeps track
 \ of free blocks by using a set of linked lists containing power-of-2 free
 \ blocks. Blocks are allocated by po2, if a free block is not available
@@ -745,17 +710,64 @@ MARKER -test
 \ 
 \ We allow allocating 2^2 - 2^A size blocks (8 sizes). 7 of these have a
 \ linked list, while 2^A uses a single byte to track allocated and the
-\ 1k allocator for free. Therefore we require x1D bytes (x20 to be alligned)
+\ global 1k allocator for free. Therefore we require x1D bytes (x20 to be
+\ alligned)
+
 &heap @ 0x 40 - &heap ! \ allocate 0x20 bytes for &ar0 (root arena)
 : &ar0 [ &heap @ ] literal ;
 
+: po2Max IMM compile, 0xA ;   \ 2^A = x400 bytes = 1KiB
+: po2Min IMM compile, 2 ;     \ 2^2 = 4 bytes
+: isPo2Max ( po2 -- flag ) po2Max = ;
+: po2ch ( po2 -- \ check that po2 is valid)
+  po2Min po2Max 1+ lrot between
+  NOT IF panicf\" bad-po2: $.ux \" THEN ;
+: _1kr ( &self -- &broot) 8 cells + ;
+: ar.init ( &self -- \ initialize an arena)
+  ( no free blocks) dup 0x 7 cellerase
+  ( no allocated 1k) u8max swap _1kb b! ;
+: ar.&Po2 ( po2 &self -- &po2sll ) \ get the Po2 sll root
+  swap 2- ( 2^0 and 2^1 not supported) cells + ;
+: _a=1k ( &self -- Option<&mem> \ alloc 1k, keeping track of it)
+  _a IFsome ( &self memi)
+    ( store in allocated bsll) dup lrot _1kr l1k.push
+    ( return result) _i@ Some
+  ELSE drop None THEN ;
+: ar._a ( po2 &self -- Option<&mem> \ attempt to alloc)
+  over isPo2Max IF nip _a=1k ELSE ar.&Po2 sll.pop THEN ;
+: _f=1k ( &mem &self -- \ free 1k block, removing from tracking)
+  \ Find the index we are freeing and pop it out of our alloc bsll
+  swap _&i ( =freei) swap _1kr ( =&b-root) dup b@ ( =rooti) lrot swap
+  ( &b-prev freei curi) BEGIN 2dup <> WHILE
+    lrot drop dup _&b ( freei curi &b-curr) rrot _nx
+  REPEAT ( store &b-prev.next=freei.next) _nx lrot b! ( free index) _f ;
+: ar._f ( &mem po2 &self -- \free memory block, no merge attempt)
+  over isPo2Max IF nip _f=1k ELSE ar.&Po2 sll.push THEN ;
+: ar.alloc ( po2 &self -- Option<&mem>)
+  \ Attempt to get a free block
+  over po2ch 2dup ar._a IFsome lrot 2drop Some EXIT THEN
+  \ Otherwise ask for next-po2 etc, then walk back down splitting memory
+  2>R R@1 ( =po2inc) BEGIN 1+ ( po2inc+=1)
+    dup po2Max > IF drop 2Rdrop None EXIT THEN
+    dup R@ ar._a IFsome ( po2found &mem) false
+    ELSE ( continue looping) true THEN
+  UNTIL ( po2found &mem_po2) \ found block of memory, split until it is wanted size
+
+  BEGIN swap 1- ( &mem_po2dec+1 po2dec)
+    dup lrot memsplit ( po2dec &mem_po2dec &mem_po2dec) 
+    ( free one split) 2 pick swap R@ ar._f
+    swap dup R@1 =
+  UNTIL ( po2 &mem) 2Rdrop nip Some ;
+
+  
 0 sysexit
 
 
-: _1kb ( &self -- &broot) 8 cells + ;
-: ar.init ( &self -- \ initialize an arena)
-  ( no free blocks) dup 0x 7 cellerase
-  ( no allocated 1k) _1kb bsll.noNext swap ! ;
+
+
+
+
+
 : ar.po2Max compile, 0xA ;  \ 2^10=x400= 1kB (decimal) bytes
 : ar.po2Min compile, 2 ;     \ 2^2=4 bytes
 : ar.po2Chk ( po2 -- po2 ) \ check the po2 is valid.
