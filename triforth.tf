@@ -596,12 +596,27 @@ MARKER -test
 \ Initialize &&a1kroot with 0x40 KiB (0m64KiB) of memory taken from the heap.
 VARIABLE &heap \ 0m1KiB * 2^6 = 0x40 KiB = 0m64KiB mem
   HEAPMAX  0x 400 0x 6 Nshl - ,
-: &1k [ &heap @ ] literal ;       : 1klen 0x 40 ;
+: &1k [ &heap @ ] literal ;       : 1klen 0x 40 ;  \ 1k memory blocks
 ( test) 0x 400 0x 6 Nshl 0x 10000 assertEq
 ( test) &heap @ 0x 10000 + HEAPMAX assertEq
 
+\ b1k: bsll for 1k blocks
+&heap @ 0x 40 - &heap !   : &b1ki  [ &heap @ ] literal ;  \ indexes for bsll
+&heap @ 4 - &heap !       : &b1k  [ &heap @ ] literal ;    \ root for bsll
+: noNext 0x FF ; \ 0 is an index, FF represents no next link
+MARKER -init
+: b1k.init \ initialize b1k by having every index point to next.
+  1klen BEGIN 1- dup ( =index) dup &b1ki + ( =b-addr) b! dup UNTIL drop
+  ( last index is noNext) noNext  1klen 1- &b1ki + b! 
+  ( root=0) 0 &b1k ! ;   b1k.init  assertEmpty -init
 
-\ Memory layout: &barr:cell | XXXX XXXX size:byte root:byte
+
+: _ch ( index -- index ) dup 1klen >= IF panicf\" bad-index: $.ux \" THEN ;
+
+
+0 sysexit
+
+
 : bsll.chi ( index &self -- index &self \check index)
   2dup cell+ @ 8 Nshr >= IF drop panicf\" index $.ux >=len\" THEN ;
 : bsll.noNext 0x FF ; \ 0 is an index so FF represents "no next"
@@ -643,13 +658,14 @@ VARIABLE &heap \ 0m1KiB * 2^6 = 0x40 KiB = 0m64KiB mem
 : &1kbsll  [ &heap @ ] literal ;
 
 \ The "indexes" we stored in 1kbsll were not just to bytes -- they also
-\ represent the index into &1k memory. Allocating therefore involves
-\ simply popping an index and converting into a memory address.
-\ freeing is the reverse.
-: alloc1k ( -- Option<&mem> ) &1kbsll bsll.pop
-  IFsome 0xA Nshl &1k + Some THEN ;
-: free1k ( &mem -- ) dup &1k < IF panicf\" <&1k: $.ux \" THEN
-  &1k - 0xA Nshr &1kbsll bsll.chi bsll.push ;
+\ represent the index into &1k blocks of memory. Allocating therefore involves
+\ simply popping an index and converting into a memory address. Here we use raw
+\ indexes. The names are kept short to use minimal space.
+: _a ( -- Option<index> ) &1kbsll bsll.pop ;    \ alloc 1k
+: _f ( index -- ) &1kbsll bsll.chi bsll.push ;  \ free 1k
+: _i& ( index -- &mem ) 0xA Nshl &1k + ;        \ index > &mem
+: _&i ( &mem -- index) &1k - 0xA Nshr ;         \ &mem > index
+: _ch ( &mem -- &mem ) dup &1k < IF panicf\" <&1k: $.ux \" THEN ; \ check &mem
 
 MARKER -test
 : testSllbInit  &1kbsll bsll.root 0 Some assertEq \ test: root=0
@@ -663,10 +679,101 @@ MARKER -test
   &1kbsll bsll.push  &1kbsll bsll.root 1 Some assertEq
   &1kbsll bsll.push  &1kbsll bsll.root 0 Some assertEq 
   ( re-test) testSllbInit ; RUNASTEST
-: test1k alloc1k UnSome dup &1k assertEq   alloc1k UnSome dup &1k 0x 400 + assertEq
-  free1k free1k   ( re-test) testSllbInit ; RUNASTEST
+: test1k _a UnSome _i& dup &1k assertEq   _a UnSome _i& dup &1k 0x 400 + assertEq
+  _&i _f _&i _f   ( re-test) testSllbInit ; RUNASTEST
 -test
 
+\ ##
+\ # SLL: Singly linked list
+: sll.insert ( &prev &self -- \insert item after prev)
+  >R ( R@=&self) dup @ ( =&prev.&next) R@ ! ( <-store at &self)
+  R> swap ! ( <-store &self in next of prev) ;
+: sll.pop ( &root -- Option<&sll> )
+  dup @ =0 IF drop None EXIT THEN
+  dup @ >R@ ( R@=&sll to return) @ ( =&sll.next) swap ! ( set as root)
+  R> Some ;
+: sll.count ( &self -- u \ count number of items including self)
+  0 BEGIN swap ( count &sll) dup WHILE @ swap 1+ REPEAT drop ;
+
+MARKER -test                        ( first)  ( second)
+VARIABLE &root 0 ,  VARIABLE &values 1 , 2 ,    0x 3 , 4 ,
+: testInsert &root @ sll.count 0 assertEq
+  &root &values sll.insert    &root @ sll.count 1 assertEq
+  &root @ &values assertEq  &values @ 0 assertEq 
+  &root &values 2 cells + sll.insert \ insert next 
+  &root @ sll.count 2 assertEq
+  &root @ &values 2 cells + assertEq \ root -> second
+    &values 2 @i &values assertEq    \ second -> first
+    &values @ 0 assertEq ; RUNASTEST \ first -> null
+: testPop 0 &root !   &root sll.pop  None assertEq
+  &root &values sll.insert   &root &values 2 cells + sll.insert
+  &root @ sll.count 2 assertEq
+  &root sll.pop UnSome dup &values 2 cells + ( ==second) assertEq
+    @ &values ( second.next==first) assertEq
+    &root @ &values ( root now == first) assertEq 
+    &root @ sll.count 1 assertEq
+  &root sll.pop UnSome dup &values ( ==first) assertEq
+    @ 0 ( first.next=0) assertEq
+    &root @ 0 ( root=0) assertEq 
+    &root @ sll.count 0 assertEq ; RUNASTEST
+-test
+
+: memsplit ( po2 &mem -- &first &second ) \ split memory into two po2 sized chunks
+  dup rrot ( &mem po2 &mem) swap 1
+  ( &mem &mem 1 po2) Nshl  ( &mem &mem 1*2^po2) + ;
+: cellerase ( addr count -- \zero count cells at address)
+  BEGIN dup WHILE 1- 2dup cells + 0 swap ! REPEAT 2drop ;
+
+MARKER -test
+: testCellerase  4 &testCache !  2 &testCache 2 cells + !
+  &testCache 2 cellerase    &testCache @ 0 assertEq
+  &testCache @1 0 assertEq
+  &testCache 2 cells + @ 2 assertEq ; RUNASTEST
+-test
+
+
+\ Finally, we can construct our arena "buddy" allocator. This keeps track
+\ of free blocks by using a set of linked lists containing power-of-2 free
+\ blocks. Blocks are allocated by po2, if a free block is not available
+\ it is requested from the next-highest po2, which will ask from the
+\ next highest, etc. When a block is found, it will be split in half to
+\ satisfy the request. When a block is freed, merging will be attempted
+\ on the next available free block.
+\ 
+\ The arenas will also track the 1k blocks they have allocated using a
+\ bsll. When an arena is dropped, all it's allocated 1k blocks are freed.
+\ 
+\ We allow allocating 2^2 - 2^A size blocks (8 sizes). 7 of these have a
+\ linked list, while 2^A uses a single byte to track allocated and the
+\ 1k allocator for free. Therefore we require x1D bytes (x20 to be alligned)
+&heap @ 0x 40 - &heap ! \ allocate 0x20 bytes for &ar0 (root arena)
+: &ar0 [ &heap @ ] literal ;
+
+0 sysexit
+
+
+: _1kb ( &self -- &broot) 8 cells + ;
+: ar.init ( &self -- \ initialize an arena)
+  ( no free blocks) dup 0x 7 cellerase
+  ( no allocated 1k) _1kb bsll.noNext swap ! ;
+: ar.po2Max compile, 0xA ;  \ 2^10=x400= 1kB (decimal) bytes
+: ar.po2Min compile, 2 ;     \ 2^2=4 bytes
+: ar.po2Chk ( po2 -- po2 ) \ check the po2 is valid.
+  dup ar.po2Min ar.po2Max 1+ lrot between
+  NOT IF panicf\" bad-po2: $.ux \" THEN  ;
+: ar.&Po2 ( po2 &self -- &po2sll ) \ get the Po2 sll root
+  swap 2- ( 2^0 and 2^1 not supported) cells + ;
+: ar.isPo2Max ( po2 -- flag ) ar.po2Max = ; \ only root provides max Po2 blocks
+: _a=1k ( &self -- Option<&mem> \ alloc 1k)
+  _a IFsome ( &self index) over _1kb 
+: _a<1k ( po2 &self -- Option<&mem> )
+: ar.alloc ( po2 &self -- Option<&mem>) 
+  over ar.po2Chk ar.isPo2Max IF nip ar._ar EXIT THEN
+  2>R@ ( R@1=po2 R@=self) R@1 
+  ar.&Po2 sll.pop IFsome 2Rdrop Some EXIT THEN
+  \ Otherwise, ask for next-po2, etc then walk back down.
+  R@1 ( =po2inc) BEGIN 1+ ( po2inc+=1)
+    dup 
 
 2 sysexit
 
@@ -716,7 +823,7 @@ MARKER -test
   \ .fln\"   ?? sll.insert: $.stack &prev@=${ over @ .ux }  &self@=${ dup @ .ux } \"
   >R ( R@=&self) dup @ ( =&prev.&next) R@ ! ( <-store at &self)
   R> swap ! ( <-store &self in next of prev) ;
-: sll.poproot ( &root -- &sll )
+: sll.pop ( &root -- &sll )
   dup @ =0 IF drop 0 ( empty) EXIT THEN
   dup @ >R@ ( R@=&sll to return) @ ( =&sll.next) swap ! ( set as root)
   R> ;
@@ -725,8 +832,6 @@ MARKER -test
   \ if bool is false, the loop is stopped.
   2>R ( R@1=xt R@=&sll) true BEGIN R@  land WHILE
     R@ R@1 execute R@ @ R!        REPEAT 2Rdrop ;
-: sll.count ( &self -- u \ count number of items including self)
-  0 BEGIN swap ( count &sll) dup WHILE @ swap 1+ REPEAT drop ;
 
 MARKER -test                        ( first)  ( second)
 VARIABLE &root 0 ,  VARIABLE &values 1 , 2 ,    0x 3 , 4 ,
@@ -751,25 +856,6 @@ VARIABLE &root 0 ,  VARIABLE &values 1 , 2 ,    0x 3 , 4 ,
     &root @ sll.count 0 assertEq ; RUNASTEST
 -test
 
-: memsplit ( po2 &mem -- &first &second ) \ split memory into two po2 sized chunks
-  dup rrot ( &mem po2 &mem) swap 1
-  ( &mem &mem 1 po2) Nshl  ( &mem &mem 1*2^po2) + ;
-: cellerase ( addr count -- \zero count cells at address)
-  BEGIN dup WHILE 1- 2dup cells + 0 swap ! REPEAT 2drop ;
-: fill ( baddr u u8 -- ) \ fill the byte address with u8 values
-  >R ( R@=u8) BEGIN dup WHILE 1- 2dup + R@ swap b! REPEAT R> 3drop ;
-
-MARKER -test
-: testCellerase  4 &testCache !  2 &testCache 2 cells + !
-  &testCache 2 cellerase    &testCache @ 0 assertEq
-  &testCache @1 0 assertEq
-  &testCache 2 cells + @ 2 assertEq ; RUNASTEST
-: testFill  0 &testCache !  &testCache 0x 3 0x F8 fill
-  &testCache @ 0x F8F8F8 assertEq    &testCache b@ 0x F8 assertEq
-  0 &testCache !  &testCache 1 0x BE fill
-  &testCache @ 0x BE assertEq        &testCache b@ 0x BE assertEq
-  ; RUNASTEST
--test
 
 1 sysexit
 
