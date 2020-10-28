@@ -31,6 +31,7 @@
   ascii [compile] literal ; \ note: ascii reads from _input stream_
 
 \ Literal values: saves space if used more than 3 times.
+: 0x3 0x 3 ;
 : 0xA 0x A ;
 
 \ Can't be gotten with [ascii]
@@ -67,7 +68,7 @@ VARIABLE &testCache 0 , 0 , 0 , \ temp storage for tests
 : +1!     dup @ 1+ swap ! ; \ ( addr -- ) increment value inside address by 1
 : +4!    dup @ 4+ swap ! ; \ ( addr -- ) increment value inside address by 4
 : align \ ( addr -- addr ) align address by four bytes
-  0x 3 +   [ 0x 3 invert ] LITERAL and ;
+  0x3 +   [ 0x3 invert ] LITERAL and ;
 : aligned  &here @ align &here ! ; \ ( -- ) align HERE by four bytes
 : b@i     + b@ ;  \ ( addr i -- b ) fetch byte at index=i of addr
 : b@1     1+ b@ ;  \ ( addr -- b ) fetch byte at index=1 of addr
@@ -154,14 +155,14 @@ MARKER -test
     swap dup + swap 1-  \ ( (a+a) (b-1) )
   dup UNTIL drop ;
 0x 10 1    testBeginUntil 0x 20 assertEq
-0x 10 0x 3 testBeginUntil 0x 80 assertEq
+0x 10 0x3 testBeginUntil 0x 80 assertEq
 : testBeginAgain \ same as above
   BEGIN
     swap dup + swap 1-        \ ( (a+a) (b-1) )
     dup =0 IF drop EXIT  THEN \ if b=0 exit
   AGAIN ;
 0x 10 1    testBeginAgain 0x 20 assertEq
-0x 10 0x 3 testBeginAgain 0x 80 assertEq
+0x 10 0x3 testBeginAgain 0x 80 assertEq
 assertEmpty -test
 
 \ ####
@@ -178,7 +179,7 @@ MARKER -test
     swap dup + swap
   REPEAT drop ;
 0x 10 1 testWhileRepeat 0x 20 assertEq
-0x 10 0x 3 testWhileRepeat 0x 80 assertEq
+0x 10 0x3 testWhileRepeat 0x 80 assertEq
 assertEmpty -test
 
 \ #########################
@@ -212,7 +213,7 @@ assertEmpty -test
 : Rdrop ( -- \ drop cell on R) IMM  compile, R>  compile, drop ;
 : R@ ( -- u ) rsp@ cell + @ ; \ add cell to skip caller's address
 : R@1 ( -- u ) rsp@ 2 cells + @ ; \ 2 cells because we have to skip caller's address
-: R@2 ( -- u ) rsp@ 0x 3 cells + @ ;
+: R@2 ( -- u ) rsp@ 0x3 cells + @ ;
 : R@3 ( -- u ) rsp@ 4 cells + @ ;
 : R@i ( i -- u ) 1+ cells rsp@ + @ ;
 : +R@ ( -- \increment R@ ) rsp@ cell+ +! ;
@@ -248,8 +249,8 @@ assertEmpty
   ; testR@2
 : test-R@ 0x 42 >R -R@ 0x 41 R> assertEq ; test-R@
 : testRSP@ \ test some assumptions about RSP
-  0x 2 >R RSP@ @ 0x 2 assertEq   0x 3 RSP@ ! ( store 3)
-  RSP@ @ 0x 3 assertEq R> 0x 3 assertEq ; testRSP@
+  0x 2 >R RSP@ @ 0x 2 assertEq   0x3 RSP@ ! ( store 3)
+  RSP@ @ 0x3 assertEq R> 0x3 assertEq ; testRSP@
 \ TODO: testSwapAB
 -test
 
@@ -321,13 +322,13 @@ aligned    &HERE @ 4-   &testCache @ assertEq \ test: alignment moves here +4
 : \" IMM    _litsStart   ' _lits map\"    _litsFinish ; 
 
 MARKER -test
-: strTest \" str\"          0x 3 assertEq ( count) 
+: strTest \" str\"          0x3 assertEq ( count) 
   dup b@ [ascii] s  assertEq      dup b@1  [ascii] t assertEq
   b@2 [ascii] r assertEq ;                           ( run it) strTest
-: quoteTest \" "q"\"        0x 3 assertEq ( count) 
+: quoteTest \" "q"\"        0x3 assertEq ( count) 
   dup b@ '"'  assertEq      dup b@1  [ascii] q assertEq
   b@2 '"' assertEq ;                                ( run it) quoteTest
-: escapeTest \" \\\n\t\"    0x 3 assertEq ( count) 
+: escapeTest \" \\\n\t\"    0x3 assertEq ( count) 
   dup b@ '\'  assertEq      dup b@1  '\n' assertEq
   b@2 '\t' assertEq ;                               ( run it) escapeTest
 : pntTest \" **TEST \\" string\\" complete\n\"   .s ;        pntTest assertEmpty
@@ -627,19 +628,21 @@ l1k.init  assertEmpty -init
 \ represent the index into &1k blocks of memory. Allocating therefore involves
 \ simply popping an index and converting into a memory address. Here we use raw
 \ indexes. The names are kept short to use minimal space.
-: _a ( -- Option<index> ) &l1k l1k.pop ;    \ alloc 1k
+: _a ( -- Option<index> ) &l1k l1k.pop ;   \ alloc 1k
 : _f ( index -- ) l1k.chi &l1k l1k.push ;  \ free 1k
-: _i& ( index -- &mem ) 0xA Nshl &1k + ;        \ index > &mem
-: _&i ( &mem -- index) &1k - 0xA Nshr ;         \ &mem > index
+: _i& ( index -- &mem ) 0xA Nshl &1k + ;   \ index TO &mem
+: _&i ( &mem -- index) &1k - 0xA Nshr ;    \ &mem TO index
 : _ch ( &mem -- &mem ) dup &1k < IF panicf\" <&1k: $.ux \" THEN ; \ check &mem
 
-MARKER -test
-: testL1kInit  &l1k b@ 0 assertEq \ test: root=0
+: testL1kInit  \ test can be called to assert no memory usage
+  &l1k b@ 0 assertEq \ test: root=0
   &l1ki 0x 3F + b@ u8max assertEq \ test: last index=noNext
   0x 3F _nx u8max assertEq        \ test: last.next=noNext
   &l1ki    b@ 1 assertEq          \ test:index0.next=1
   &l1ki 1+ b@ 2 assertEq          \ test:index1.next=2
   ; RUNASTEST
+
+MARKER -test
 : testL1kPopPush &l1k l1k.pop UnSome dup 0 assertEq
   &l1k l1k.pop Unsome dup 1 assertEq
   &l1k l1k.push  &l1k b@ 1 assertEq
@@ -651,9 +654,9 @@ MARKER -test
 
 \ ##
 \ # SLL: Singly linked list
-: sll.insert ( &prev &self -- \insert item after prev)
-  >R ( R@=&self) dup @ ( =&prev.&next) R@ ! ( <-store at &self)
-  R> swap ! ( <-store &self in next of prev) ;
+: sll.push ( &item &root -- \push item to root)
+  ( store root.next at &item) >R@ @ over !
+  ( store &item at root) R> ! ;
 : sll.pop ( &root -- Option<&sll> )
   dup @ =0 IF drop None EXIT THEN
   dup @ >R@ ( R@=&sll to return) @ ( =&sll.next) swap ! ( set as root)
@@ -662,17 +665,17 @@ MARKER -test
   0 BEGIN swap ( count &sll) dup WHILE @ swap 1+ REPEAT drop ;
 
 MARKER -test                        ( first)  ( second)
-VARIABLE &root 0 ,  VARIABLE &values 1 , 2 ,    0x 3 , 4 ,
-: testInsert &root @ sll.count 0 assertEq
-  &root &values sll.insert    &root @ sll.count 1 assertEq
+VARIABLE &root 0 ,  VARIABLE &values 1 , 2 ,    0x3 , 4 ,
+: testPush &root @ sll.count 0 assertEq
+  &values &root sll.push    &root @ sll.count 1 assertEq
   &root @ &values assertEq  &values @ 0 assertEq 
-  &root &values 2 cells + sll.insert \ insert next 
+  &values 2 cells + &root sll.push \ insert next 
   &root @ sll.count 2 assertEq
   &root @ &values 2 cells + assertEq \ root -> second
     &values 2 @i &values assertEq    \ second -> first
     &values @ 0 assertEq ; RUNASTEST \ first -> null
 : testPop 0 &root !   &root sll.pop  None assertEq
-  &root &values sll.insert   &root &values 2 cells + sll.insert
+  &values &root sll.push   &values 2 cells + &root sll.push
   &root @ sll.count 2 assertEq
   &root sll.pop UnSome dup &values 2 cells + ( ==second) assertEq
     @ &values ( second.next==first) assertEq
@@ -696,7 +699,7 @@ VARIABLE &root 0 ,  VARIABLE &values 1 , 2 ,    0x 3 , 4 ,
 : memjoin ( po2 &mem &mem -- Option<&mem> )
   \ Join memories iff they are contiguous and already aligned with po2+1.
   \ po2 is po2 of each &mem. Result has size po2+1.
-  rsort2 dup 0x 3 pick 1+ ( po2 &memLarge &memSmall &memSmall po2 ) alignPo2
+  rsort2 dup 0x3 pick 1+ ( po2 &memLarge &memSmall &memSmall po2 ) alignPo2
   over <> IF ( memSmall not aligned w/po2+1) 3drop None EXIT THEN
   ( po2 &memLarge &memSmall) >R@ lrot ( &memLarge &memSmall po2)
   2^ + = IF ( memSmall is the right value) R> Some
@@ -706,7 +709,7 @@ MARKER -test
 : testMemSplit
   1 &testCache memsplit       &testCache 2+ assertEq       &testCache assertEq
   2 &testCache memsplit       &testCache 4+ assertEq       &testCache assertEq
-  0x 3 &testCache memsplit    &testCache 8 + assertEq      &testCache assertEq
+  0x3 &testCache memsplit    &testCache 8 + assertEq      &testCache assertEq
   4 &testCache memsplit       &testCache 0x 10 + assertEq  &testCache assertEq
   ; RUNASTEST
 : testCellerase  4 &testCache !  2 &testCache 2 cells + !
@@ -714,18 +717,16 @@ MARKER -test
   &testCache @1 0 assertEq
   &testCache 2 cells + @ 2 assertEq ; RUNASTEST
 : testAlignPo2
-  ( 2^2) 4 2 alignPo2 4 assertEq            4 0x 3 alignPo2 8 assertEq
-  ( 2^4) 0x 10 2 alignPo2 0x 10 assertEq    0x 10 0x 3 alignPo2 0x 10 assertEq
+  ( 2^2) 4 2 alignPo2 4 assertEq            4 0x3 alignPo2 8 assertEq
+  ( 2^4) 0x 10 2 alignPo2 0x 10 assertEq    0x 10 0x3 alignPo2 0x 10 assertEq
     0x 10 4 alignPo2 0x 10 assertEq    0x 10 0x 5 alignPo2 0x 20 assertEq
   ; RUNASTEST
 : testMemjoin
   ( 2^1) 1 0 2 memjoin UnSome 0 assertEq        1 2 4 memjoin None assertEq
   ( 2^2) 2 8 0x C memjoin UnSome 8 assertEq     2 4 8 memjoin None assertEq
-  ( 2^3) 0x 3 8 0 memjoin UnSome 0 assertEq     0x 3 8 0x 20 memjoin None assertEq
+  ( 2^3) 0x3 8 0 memjoin UnSome 0 assertEq     0x3 8 0x 20 memjoin None assertEq
   ; RUNASTEST
 -test
-
-4 sysexit
 
 \ Finally, we can construct our arena "buddy" allocator. This keeps track
 \ of free blocks by using a set of linked lists containing power-of-2 free
@@ -743,7 +744,7 @@ MARKER -test
 \ global 1k allocator for free. Therefore we require x1D bytes (x20 to be
 \ alligned)
 
-&heap @ 0x 40 - &heap ! \ allocate 0x20 bytes for &ar0 (root arena)
+&heap @ 0x 20 - &heap ! \ allocate 0x20 bytes for &ar0 (root arena)
 : &ar0 [ &heap @ ] literal ;
 
 : po2Max IMM compile, 0xA ;   \ 2^A = x400 bytes = 1KiB
@@ -756,7 +757,7 @@ MARKER -test
 : ar.init ( &self -- \ initialize an arena)
   ( no free blocks) dup 0x 7 cellerase
   ( no allocated 1k) u8max swap _1kr b! ;
-: ar.&Po2 ( po2 &self -- &po2sll ) \ get the Po2 sll root
+: ar.&po2 ( po2 &self -- &po2sll ) \ get the Po2 sll root
   swap 2- ( 2^0 and 2^1 not supported) cells + ;
 : _a=1k ( &self -- Option<&mem> \ alloc 1k, keeping track of it)
   _a IFsome ( &self memi)
@@ -764,7 +765,7 @@ MARKER -test
     ( return result) _i& Some
   ELSE drop None THEN ;
 : ar._a ( po2 &self -- Option<&mem> \ attempt to alloc)
-  over isPo2Max IF nip _a=1k ELSE ar.&Po2 sll.pop THEN ;
+  over isPo2Max IF nip _a=1k ELSE ar.&po2 sll.pop THEN ;
 : _f=1k ( &mem &self -- \ free 1k block, removing from tracking)
   \ Find the index we are freeing and pop it out of our alloc bsll
   swap _&i ( =freei) swap _1kr ( =&b-root) dup b@ ( =rooti) lrot swap
@@ -772,26 +773,45 @@ MARKER -test
     lrot drop dup _&b ( freei curi &b-curr) rrot _nx
   REPEAT ( store &b-prev.next=freei.next) _nx lrot b! ( free index) _f ;
 : ar._f ( &mem po2 &self -- \free memory block, no merge attempt)
-  over isPo2Max IF nip _f=1k ELSE ar.&Po2 sll.insert THEN ;
+  over isPo2Max IF nip _f=1k ELSE ar.&po2 sll.push THEN ;
 : ar.alloc ( po2 &self -- Option<&mem>)
   \ Attempt to get a free block
-  over po2ch 2dup ar._a IFsome lrot 2drop Some EXIT THEN
+  over po2ch 2dup ar._a IFsome rrot 2drop Some EXIT THEN
   \ Otherwise ask for next-po2 etc, then walk back down splitting memory
   2>R R@1 ( =po2inc) BEGIN 1+ ( po2inc+=1)
     dup po2Max > IF drop 2Rdrop None EXIT THEN
     dup R@ ar._a IFsome ( po2found &mem) false
     ELSE ( continue looping) true THEN
   UNTIL ( po2found &mem_po2) \ found block of memory, split until it is wanted size
-  BEGIN swap 1- ( &mem_po2dec+1 po2dec)
+  swap BEGIN 1- ( &mem_po2dec+1 po2dec)
     dup lrot memsplit ( po2dec &mem_po2dec &mem_po2dec) 
-    ( free one split) 2 pick swap R@ ar._f
+    ( free one split) 2 pick R@ ar._f
     swap dup R@1 =
-  UNTIL ( po2 &mem) 2Rdrop nip Some ;
-: ar._m ( po2 &mem &mem -- Option<&mem_po2inc> \ attempt to merge two memories)
-  ( put prev one first) 2dup > IF swap THEN
-  
-: ar.free ( TODO) ;
+  UNTIL ( &mem po2) 2Rdrop drop Some ;
+: ar.free ( &mem po2 &self -- ) >R dup po2ch
+  \ stack: ( &mem po2 )   R@=&self
+  BEGIN dup isPo2Max IF drop R> _f=1k EXIT THEN
+    dup R@ ar.&po2 sll.pop lrot ( po2 &mem-free &mem )
+    3dup memjoin IFsome
+      \ memory was joined, drop 2 smaller memories, inc po2, repeat
+      rrot 2drop swap 1+ ( &mem-po2+1 po2+1)
+    ELSE \ mem not joined, just put mem back (prev-free first) and end
+      swap lrot ( &mem &mem-free po2)
+      R@ ar.&po2 >R@ sll.push R> sll.push EXIT
+    THEN
+  AGAIN ;
 
+MARKER -test
+: testAlloc1k
+  0xA &ar0 ar.alloc UnSome dup &1k assertEq
+  0xA &ar0 ar.free  testL1kInit ; RUNASTEST
+dbgexit
+: testAllocX200
+  0x 9 &ar0 ar.alloc UnSome dup &1k assertEq
+    \ first free block is second half
+    0x 9 &ar0 ar.&po2 @ &1k 0x 200 + assertEq
+  0x 9 &ar0 ar.free  testL1kInit ; RUNASTEST
+-test
 0 sysexit
 
 

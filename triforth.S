@@ -2173,7 +2173,6 @@ Nshr_\N :
 .endm
 
 Nshr: # ( u N -- u ) \ shift bits right by N
-  call dumpInfo
   dpop %eax # N
   dpop %ebx # value to shift
   cmp $0x100, %eax # simply return 0 if shifting > 31
@@ -2221,7 +2220,6 @@ Nshr_jt: # jump table
   NshrMACRO 0x1F
 Nshr_ret:
   dpush %ebx
-  call dumpInfo
   ret
 
 # ( u N -- u ) \ shift bits left by N
