@@ -30,8 +30,11 @@
 : [ascii] IMM \ ( -- b ) compile next single-letter word as ascii literal
   ascii [compile] literal ; \ note: ascii reads from _input stream_
 
+\ Literal values: saves space if used more than 3 times.
+: 0xA 0x A ;
+
 \ Can't be gotten with [ascii]
-: '\t' 0x 9 ;     : '\n'  0x A ;    : '\r' 0x D ;
+: '\t' 0x 9 ;     : '\n'  0xA ;    : '\r' 0x D ;
 : spc  0x 20 ; \ the literal ' '
 \ Mess with syntax highlighters and can be hard to read
 : ':' [ascii] : ;      : ';' [ascii] ; ;
@@ -586,29 +589,30 @@ MARKER -test
 \ fragmentation at all!
 \ 
 \ Both allocators are built on singly-linked-lists. For the 1k allocator,
-\ we will use a bsll meaning "singly-linked-list-byte" -- it uses a
+\ we will use a bsll meaning "byte-singly-linked-list" -- it uses a
 \ byte for it's "pointer" (really an index) to the next item.
 
 \ First we need to allocate memory that we can use for both allocators
 \ Initialize &&a1kroot with 0x40 KiB (0m64KiB) of memory taken from the heap.
 VARIABLE &heap \ 0m1KiB * 2^6 = 0x40 KiB = 0m64KiB mem
   HEAPMAX  0x 400 0x 6 Nshl - ,
+: &1k [ &heap @ ] literal ;       : 1klen 0x 40 ;
 ( test) 0x 400 0x 6 Nshl 0x 10000 assertEq
 ( test) &heap @ 0x 10000 + HEAPMAX assertEq
 
 
-\ Memory layout: &mem:cell | XXXX XXXX size:byte root:byte
+\ Memory layout: &barr:cell | XXXX XXXX size:byte root:byte
 : bsll.chi ( index &self -- index &self \check index)
   2dup cell+ @ 8 Nshr >= IF drop panicf\" index $.ux >=len\" THEN ;
 : bsll.noNext 0x FF ; \ 0 is an index so FF represents "no next"
-: bsll.init ( size &mem &self:8bytes -- \initialize a singly-linked-list-byte)
+: bsll.init ( size &barr &self:8bytes -- \initialize a singly-linked-list-byte)
   2 pick ( =size) 1 bsll.noNext lrot between
   ( 1<=size<FF) NOT IF panicf\" MUST:0<bsll.size<FF\" THEN
-  rrot swap >R@ ( &self &mem len) ( -> initialize ll by storing inc indexes)
-  BEGIN 1- 2dup + ( &self &mem len-1 baddr) over 1+ ( =next-index) swap b!
-  dup UNTIL drop R> ( &self &mem len)
+  rrot swap >R@ ( &self &barr len) ( -> initialize ll by storing inc indexes)
+  BEGIN 1- 2dup + ( &self &barr len-1 baddr) over 1+ ( =next-index) swap b!
+  dup UNTIL drop R> ( &self &barr len)
   2dup 1- + bsll.noNext swap b! ( <-set noNext at last index) 
-  rrot ( len &self &mem) over ! ( store &mem at &self.)
+  rrot ( len &self &barr) over ! ( store &barr at &self.)
   ( len &self ) swap 8 Nshl ( =size|root=0) swap cell+ ! ;
 : bsll.root ( &self -- Option<index> \index at root)
   cell+ @ byte ( =root) Some byte ( FF + 1 = 100, with byte is 00=None) ;
@@ -632,12 +636,20 @@ VARIABLE &heap \ 0m1KiB * 2^6 = 0x40 KiB = 0m64KiB mem
     ( and set root to index) R> bsll.root! 
   THEN ;
 
-&heap @ 0x 40 - &heap ! ( allocate 0x40 bytes for bsll bytes)
-&heap @ ( =&mem)
-&heap @ 0x C  - &heap ! ( allocate 0m12 bytes for 1k allocator)
+&heap @ 0x 40 - &heap ! ( allocate 0x40 bytes for bsll &barr)
+&heap @ ( =&barr)
+&heap @ 0x 8  - &heap ! ( allocate 8 bytes for bsll)
 &heap @ ( =&self) 0x 40 ( =size) rrot bsll.init
-VARIABLE &&1kbsll &heap @ ,
-: &1kbsll &&1kbsll @ ;
+: &1kbsll  [ &heap @ ] literal ;
+
+\ The "indexes" we stored in 1kbsll were not just to bytes -- they also
+\ represent the index into &1k memory. Allocating therefore involves
+\ simply popping an index and converting into a memory address.
+\ freeing is the reverse.
+: alloc1k ( -- Option<&mem> ) &1kbsll bsll.pop
+  IFsome 0xA Nshl &1k + Some THEN ;
+: free1k ( &mem -- ) dup &1k < IF panicf\" <&1k: $.ux \" THEN
+  &1k - 0xA Nshr &1kbsll bsll.chi bsll.push ;
 
 MARKER -test
 : testSllbInit  &1kbsll bsll.root 0 Some assertEq \ test: root=0
@@ -649,8 +661,12 @@ MARKER -test
 : testPopPush &1kbsll bsll.pop UnSome dup 0 assertEq
   &1kbsll bsll.pop Unsome dup 1 assertEq
   &1kbsll bsll.push  &1kbsll bsll.root 1 Some assertEq
-  &1kbsll bsll.push  &1kbsll bsll.root 0 Some assertEq ; RUNASTEST
+  &1kbsll bsll.push  &1kbsll bsll.root 0 Some assertEq 
+  ( re-test) testSllbInit ; RUNASTEST
+: test1k alloc1k UnSome dup &1k assertEq   alloc1k UnSome dup &1k 0x 400 + assertEq
+  free1k free1k   ( re-test) testSllbInit ; RUNASTEST
 -test
+
 
 2 sysexit
 
