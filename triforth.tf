@@ -684,18 +684,48 @@ VARIABLE &root 0 ,  VARIABLE &values 1 , 2 ,    0x 3 , 4 ,
     &root @ sll.count 0 assertEq ; RUNASTEST
 -test
 
+: 2^ ( po2 -- u ) 1 swap Nshl ;
 : memsplit ( po2 &mem -- &first &second ) \ split memory into two po2 sized chunks
-  dup rrot ( &mem po2 &mem) swap 1
-  ( &mem &mem 1 po2) Nshl  ( &mem &mem 1*2^po2) + ;
+  dup lrot ( &mem &mem po2 ) 2^ ( &mem &mem 2^po2) + ;
 : cellerase ( addr count -- \zero count cells at address)
   BEGIN dup WHILE 1- 2dup cells + 0 swap ! REPEAT 2drop ;
+: alignPo2 ( u po2 -- u \ align by a power of 2)
+  2^ swap ( 2^po2 u) over 1- + swap 1- invert and ;
+: sort2 ( u u -- u u \ sort two values on stack) 2dup > IF swap THEN ;
+: rsort2 ( u u -- u u \ reverse sort two values on stack) 2dup < IF swap THEN ;
+: memjoin ( po2 &mem &mem -- Option<&mem> )
+  \ Join memories iff they are contiguous and already aligned with po2+1.
+  \ po2 is po2 of each &mem. Result has size po2+1.
+  rsort2 dup 0x 3 pick 1+ ( po2 &memLarge &memSmall &memSmall po2 ) alignPo2
+  over <> IF ( memSmall not aligned w/po2+1) 3drop None EXIT THEN
+  ( po2 &memLarge &memSmall) >R@ lrot ( &memLarge &memSmall po2)
+  2^ + = IF ( memSmall is the right value) R> Some
+  ELSE ( memSmall + 2^po2 != memLarge) Rdrop None THEN ;
 
 MARKER -test
+: testMemSplit
+  1 &testCache memsplit       &testCache 2+ assertEq       &testCache assertEq
+  2 &testCache memsplit       &testCache 4+ assertEq       &testCache assertEq
+  0x 3 &testCache memsplit    &testCache 8 + assertEq      &testCache assertEq
+  4 &testCache memsplit       &testCache 0x 10 + assertEq  &testCache assertEq
+  ; RUNASTEST
 : testCellerase  4 &testCache !  2 &testCache 2 cells + !
   &testCache 2 cellerase    &testCache @ 0 assertEq
   &testCache @1 0 assertEq
   &testCache 2 cells + @ 2 assertEq ; RUNASTEST
+: testAlignPo2
+  ( 2^2) 4 2 alignPo2 4 assertEq            4 0x 3 alignPo2 8 assertEq
+  ( 2^4) 0x 10 2 alignPo2 0x 10 assertEq    0x 10 0x 3 alignPo2 0x 10 assertEq
+    0x 10 4 alignPo2 0x 10 assertEq    0x 10 0x 5 alignPo2 0x 20 assertEq
+  ; RUNASTEST
+: testMemjoin
+  ( 2^1) 1 0 2 memjoin UnSome 0 assertEq        1 2 4 memjoin None assertEq
+  ( 2^2) 2 8 0x C memjoin UnSome 8 assertEq     2 4 8 memjoin None assertEq
+  ( 2^3) 0x 3 8 0 memjoin UnSome 0 assertEq     0x 3 8 0x 20 memjoin None assertEq
+  ; RUNASTEST
 -test
+
+4 sysexit
 
 \ Finally, we can construct our arena "buddy" allocator. This keeps track
 \ of free blocks by using a set of linked lists containing power-of-2 free
@@ -752,12 +782,14 @@ MARKER -test
     dup R@ ar._a IFsome ( po2found &mem) false
     ELSE ( continue looping) true THEN
   UNTIL ( po2found &mem_po2) \ found block of memory, split until it is wanted size
-
   BEGIN swap 1- ( &mem_po2dec+1 po2dec)
     dup lrot memsplit ( po2dec &mem_po2dec &mem_po2dec) 
     ( free one split) 2 pick swap R@ ar._f
     swap dup R@1 =
   UNTIL ( po2 &mem) 2Rdrop nip Some ;
+: ar._m ( po2 &mem &mem -- Option<&mem_po2inc> \ attempt to merge two memories)
+  ( put prev one first) 2dup > IF swap THEN
+  
 : ar.free ( TODO) ;
 
 0 sysexit
