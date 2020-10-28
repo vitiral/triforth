@@ -725,13 +725,13 @@ MARKER -test
 : _1kr ( &self -- &broot) 8 cells + ;
 : ar.init ( &self -- \ initialize an arena)
   ( no free blocks) dup 0x 7 cellerase
-  ( no allocated 1k) u8max swap _1kb b! ;
+  ( no allocated 1k) u8max swap _1kr b! ;
 : ar.&Po2 ( po2 &self -- &po2sll ) \ get the Po2 sll root
   swap 2- ( 2^0 and 2^1 not supported) cells + ;
 : _a=1k ( &self -- Option<&mem> \ alloc 1k, keeping track of it)
   _a IFsome ( &self memi)
     ( store in allocated bsll) dup lrot _1kr l1k.push
-    ( return result) _i@ Some
+    ( return result) _i& Some
   ELSE drop None THEN ;
 : ar._a ( po2 &self -- Option<&mem> \ attempt to alloc)
   over isPo2Max IF nip _a=1k ELSE ar.&Po2 sll.pop THEN ;
@@ -742,7 +742,7 @@ MARKER -test
     lrot drop dup _&b ( freei curi &b-curr) rrot _nx
   REPEAT ( store &b-prev.next=freei.next) _nx lrot b! ( free index) _f ;
 : ar._f ( &mem po2 &self -- \free memory block, no merge attempt)
-  over isPo2Max IF nip _f=1k ELSE ar.&Po2 sll.push THEN ;
+  over isPo2Max IF nip _f=1k ELSE ar.&Po2 sll.insert THEN ;
 : ar.alloc ( po2 &self -- Option<&mem>)
   \ Attempt to get a free block
   over po2ch 2dup ar._a IFsome lrot 2drop Some EXIT THEN
@@ -758,240 +758,9 @@ MARKER -test
     ( free one split) 2 pick swap R@ ar._f
     swap dup R@1 =
   UNTIL ( po2 &mem) 2Rdrop nip Some ;
+: ar.free ( TODO) ;
 
-  
 0 sysexit
-
-
-
-
-
-
-
-: ar.po2Max compile, 0xA ;  \ 2^10=x400= 1kB (decimal) bytes
-: ar.po2Min compile, 2 ;     \ 2^2=4 bytes
-: ar.po2Chk ( po2 -- po2 ) \ check the po2 is valid.
-  dup ar.po2Min ar.po2Max 1+ lrot between
-  NOT IF panicf\" bad-po2: $.ux \" THEN  ;
-: ar.&Po2 ( po2 &self -- &po2sll ) \ get the Po2 sll root
-  swap 2- ( 2^0 and 2^1 not supported) cells + ;
-: ar.isPo2Max ( po2 -- flag ) ar.po2Max = ; \ only root provides max Po2 blocks
-: _a=1k ( &self -- Option<&mem> \ alloc 1k)
-  _a IFsome ( &self index) over _1kb 
-: _a<1k ( po2 &self -- Option<&mem> )
-: ar.alloc ( po2 &self -- Option<&mem>) 
-  over ar.po2Chk ar.isPo2Max IF nip ar._ar EXIT THEN
-  2>R@ ( R@1=po2 R@=self) R@1 
-  ar.&Po2 sll.pop IFsome 2Rdrop Some EXIT THEN
-  \ Otherwise, ask for next-po2, etc then walk back down.
-  R@1 ( =po2inc) BEGIN 1+ ( po2inc+=1)
-    dup 
-
-2 sysexit
-
-\ The primary data type of our arena will be singly-linked lists. Free blocks
-\ will be kept as linked lists. When memory is freed the caller calls
-\   : a1k.free ( ptr po2 &arena -- ) ;
-\ where po2 is the "power of 2" size of ptr. This will convert the first cell
-\ in the newly freed memory into a linked list which points the next free
-\ memory, meaning we only have to keep pointers to one piece of free memory per
-\ power of 2.
-\ 
-\ Allocation happens via the function
-\   : a1k.alloc ( po2 &arena -- Option<ptr> ) ... ;
-\ 
-\ Allowed powers of 2 start at 4 bytes (2^2) and end at 1024 bytes (2^A),
-\ so we need A - 2 = 8 pointers to our free linked lists.
-\ 
-\ There will be two "types" of arenas -- the root arena which is allowed
-\ to hold references to 1k blocks and non-root arenas which are not.
-\ Non-root arenas have a reference to the root arena so they can request
-\ 1k blocks.
-\ 
-\ Each arena is assigned an id when created from the root (root's id is x00).
-\ When an arena requests 1k blocks, the id is kept in a byte-array, with
-\ unused blocks at xFF. When the arena is droped, the root reclaims the 1k
-\ blocks it had, completely eliminating fragmentation. The used ids are kept in
-\ a 8 byte bitmap, and can be from (hex) 0-40 (decimal 64 max arenas)
-\ 
-\ a1k is a x40 byte data structure with the following format:
-\ STRUCT a1k
-\   free: [&sll; 8] \ x20 bytes: 8 pointers to free sll
-\   flags: cell     \ 4 bytes: flags including arena id
-\   root: &root     \ 4 bytes: pointer to a root, or 0 if this is root
-\   &1kIds          \ (root only) 4 bytes: which arena has which 1k block
-\   &mem0           \ (root only) 4 bytes: location of first memory block
-\   ids             \ (root only) 4 bytes: bit array of used ids
-\ END
-\ 
-\ Flags is following: 
-\  | ---unused-----|  ID  |
-\  FFFF FFFF FFFF FF  FF
-
-
-\ ##
-\ # SLL: Singly linked list
-: sll.insert ( &prev &self -- \insert item after prev)
-  \ .fln\"   ?? sll.insert: $.stack &prev@=${ over @ .ux }  &self@=${ dup @ .ux } \"
-  >R ( R@=&self) dup @ ( =&prev.&next) R@ ! ( <-store at &self)
-  R> swap ! ( <-store &self in next of prev) ;
-: sll.pop ( &root -- &sll )
-  dup @ =0 IF drop 0 ( empty) EXIT THEN
-  dup @ >R@ ( R@=&sll to return) @ ( =&sll.next) swap ! ( set as root)
-  R> ;
-: sll.map ( xt &self -- )
-  \ Run an xt on every item. xt's type must be ( ... &sll -- ... bool )
-  \ if bool is false, the loop is stopped.
-  2>R ( R@1=xt R@=&sll) true BEGIN R@  land WHILE
-    R@ R@1 execute R@ @ R!        REPEAT 2Rdrop ;
-
-MARKER -test                        ( first)  ( second)
-VARIABLE &root 0 ,  VARIABLE &values 1 , 2 ,    0x 3 , 4 ,
-: testInsert &root @ sll.count 0 assertEq
-  &root &values sll.insert    &root @ sll.count 1 assertEq
-  &root @ &values assertEq  &values @ 0 assertEq 
-  &root &values 2 cells + sll.insert \ insert next 
-  &root @ sll.count 2 assertEq
-  &root @ &values 2 cells + assertEq \ root -> second
-    &values 2 @i &values assertEq    \ second -> first
-    &values @ 0 assertEq ; RUNASTEST \ first -> null
-: testPop 0 &root !   &root sll.poproot  0 assertEq
-  &root &values sll.insert   &root &values 2 cells + sll.insert
-  &root @ sll.count 2 assertEq
-  &root sll.poproot dup &values 2 cells + ( ==second) assertEq
-    @ &values ( second.next==first) assertEq
-    &root @ &values ( root now == first) assertEq 
-    &root @ sll.count 1 assertEq
-  &root sll.poproot dup &values ( ==first) assertEq
-    @ 0 ( first.next=0) assertEq
-    &root @ 0 ( root=0) assertEq 
-    &root @ sll.count 0 assertEq ; RUNASTEST
--test
-
-
-1 sysexit
-
-&heap @ 0x 40 - &heap ! ( allocate 0x40 bytes for root allocator)
-
-: a1k.freeb ( -- FREE_BYTE) 0x FF ;
-: a1k.id ( &self -- id ) 8 cells + @ ( =flags) 0x FF and ;
-: a1k.flags ( &self -- flags ) 8 cells + @ ;
-: a1k.&root ( &self -- &root ) 0x 9 cells + @ ;
-: a1k.&1kIds ( &self -- &1kIds ) 0x A cells + @ ;
-: a1k.&mem0 ( &root -- &mem0 ) 0x B cells + @ ;
-: a1k.&ids ( &self -- &ids ) 0x C cells + ;
-: a1k.po2Max 0x A ; \ 2^10=x400= 1kB (decimal) bytes
-: a1k.po2Min 2 ; \ 2^2=4 bytes
-: a1k.po2Chk ( po2 -- po2 ) \ check the po2 is valid.
-  dup a1k.po2Min a1k.po2Max 1+ lrot between
-  NOT IF panicf\" po2 invalid: $.ux \" THEN  ;
-: a1k.isPo2Max ( po2 -- flag ) a1k.po2Max = ; \ only root provides max Po2 blocks
-: a1k.Po2i ( po2 -- po2i ) \ get the Po2 index ( byte increment from &self)
-  2- ( 2^0 and 2^1 not supported) cells ;
-: a1k.Po2Sll&Root ( po2 &self -- &root \return &root for sll of Po2) swap a1k.Po2i + ;
-: a1k._allocMax ( id &root -- ptr) \ allocate from root given id
-  >R@ ( R@=&root) a1k.po2Max swap ( id po2Max &root) a1k.Po2Sll&Root sll.poproot
-  ( id &mem) dup a1k.po2Max Nshr ( id &mem memBlockNum) R> a1k.&1kIds +
-  ( id &mem &memId) lrot swap b! ( store id holding block and ret) ;
-: a1k.allocMax ( &self -- ptr ) \ only root can hold 1k blocks
-  dup a1k.&root dup IF ( not root) swap a1k.id swap a1k._allocMax EXIT THEN
-  swap ( 0 &root) a1k._allocMax ;
-: _a1k.freeMax ( &mem &root -- )  2>R@ ( R@1=&mem R@=&root)
-  a1k.po2Max swap ( &mem po2Max &self) a1k.Po2Sll&Root swap sll.insert
-  a1k.freeb 2R> ( freeb &mem &root) swap a1k.po2Max Nrshl swap a1k.&1kIds + b! ;
-: a1k.freeMax ( &mem &self -- ) \ only root can hold 1k blocks
-  dup a1k.&root dup IF ( not root) nip ( nip &self) _a1k.freeMax EXIT THEN
-  drop _a1k.freeMax ;
-: a1k.freeNoMerge ( &mem po2 &self -- ) \ mark a block as freed and store in ll
-  swap a1k.po2Chk dup a1k.isPo2Max IF drop a1k.freeMax EXIT THEN
-  a1k.Po2Sll&Root swap sll.insert   swap ;
-: a1k.free ( &mem po2 &self -- ) \ mark a block as freed and attempt to merge up
-  3drop \ TODO
-  ; 
-: a1k.alloc ( po2 &self -- ptr )
-  .fln\" ?? a1k.alloc: $.stack \"
-  swap a1k.po2Chk dumpInfo dup a1k.isPo2Max IF drop a1k.allocMax EXIT THEN
-  ( attempt to find free Po2, or create a new one) >R ( R@1=po2)  >R ( R@=&self)
-  R@1 R@ a1k.Po2Sll&Root sll.poproot ( maybe free block)
-  dup IF ( found free block) 2Rdrop EXIT THEN
-  \ Otherwise, we need to ask for memory from the next-size up, and it may have to do
-  \ the same. This is a classic solution for recursion, but it might recurse 8x, which
-  \ is a high memory cost. Instead, we are going to walk up untill we find memory.
-  \ Then walk down, splitting the memory chunks in half.
-  R@1 ( =po2inc) BEGIN 1+ ( po2inc+=1)
-    dup a1k.isPo2Max IF ( 1k block)
-      a1k.allocMax dup IF false ( po2=1k &mem1k false \ end loop)
-      ELSE nip 2Rdrop ( could not get 1k block, exit with 0) EXIT THEN
-    ELSE dup ( =po2inc) R@ a1k.Po2Sll&Root sll.poproot ( po2 sll-found?)
-      dup IF false ( stop loop) ELSE drop true ( continue loop) THEN
-    THEN
-  UNTIL
-  \ Now we have a block of memory that is po2inc in size, but we need R@1=po2 size.
-  \ Simply split memory, storing free blocks, until we have the right size.
-  ( po2inc &mem_po2inc) BEGIN swap 1- dup ( &mem_po2dec+1 po2dec po2dec) 
-    lrot memsplit ( po2dec &mem_po2dec &mem_po2dec) 2 pick swap a1k.freeNoMerge
-    ( po2dec &mem_po2dec) over R@1 = IF ( we've found the memory we need) nip EXIT THEN
-    ( else loop again, splitting the &mem again)
-  AGAIN ;
-: a1k.init ( flags &root &self) \ don't call directly, call a1k.new instead
-  >R@ ( R@=&self)   a1k.po2Max a1k.po2Min -  cellerase ( <-zero sll roots)
-  R@ 0x 8 cells + ! ( <- store flags)
-  R> 0x 9 cells + ! ( <- store &root) ;
-: a1k.initroot ( &1kIds &mem0 num1kBlocks &self -- )
-  .fln\" ?? a1k.initroot: $.stack \"
-  dup 0 ( =flags) 0 ( =&root) lrot a1k.init
-  >R@ a1k.po2Max swap a1k.Po2Sll&Root
-  0x 3 n>R ( R@3=&self R@2=&mem0 R@1=num1kBlocks R@=&1k-sll-root)
-  dup 0x A cells R@3 + ! ( store self.&1kIds)
-  R@2 0x B cells R@3 + ! ( store &mem0)
-  dup ( =&1kids) R@1 ( =numBlocks) a1k.freeb fill \ mark blocks as free
-  0 BEGIN dup R@1 < WHILE
-    dup a1k.po2Max Nshl ( =i*2^po2Max) R@2 + ( =&mem) R@ swap
-    \ .fln\" ?? INSERTING: $.stack &mem@=${ over @ .ux }  &1k-sll-root@=${ R@ @ .ux } \"
-    sll.insert
-    \ .fln\"  ?? after:&1k-sll-root@=${ R@ @ .ux } \"
-  1+ REPEAT drop
-  0x 4 nR> 4drop ;
-
-
-VARIABLE &&a1kroot  &heap @ ,
-MARKER -pnt 
-: pnt .fln\" a1kroot=${ &&a1kroot @ .ux }  &mem0=${ &&a1kroot @ 0x 40 + .ux }
-  heapmax=${ heapmax .ux } \"
-; pnt 
--pnt
-
-\ initialize root allocator.
-&&a1kroot @ 0x 40 + ( =&1kIds) &&a1kroot @ 0x 80 + ( =&mem)
-0x 40 ( =num1kBlocks)          &&a1kroot @ ( =&self)
-a1k.initroot
-
-MARKER -test
-VARIABLE &mem0   &heap @ 0x 80 + , ( =start of mem, 1k-block0)
-VARIABLE &mem39  HEAPMAX 0x 400 - , ( last block 0x400 before heapmax)
-VARIABLE a1kroot.&sll1k   &&a1kroot @ 8 cells + ,
-
-
-: testA1k.init
-  .fln\" ?? a1kroot.&sll1k ${ a1kroot.&sll1k @ .ux } \"
-  \ .fln\" ??? DUMP &&a1kroot ${ &&a1kroot @ 0x 40 dump } \"
-  ( &&a1kroot is at the &heap) &&a1kroot @ &heap @ assertEq
-  ( &mem0 was first to be added, so it's pointer is null) &mem0 @ @ 0 assertEq
-  \ Assert cells 0-7 are zero at &&a1kroot
-  0 BEGIN dup cells &&a1kroot @ + @ 0 assertEq 1+ dup 8 < UNTIL drop
-  ( &mem39 was last to be added, so it is at &sll1kroot)
-  ( 2^A) a1kroot.&sll1k @ @  &mem39 @   assertEq
-  ; RUNASTEST
-: testA1k.allocPo2=A
-  ( alloc 2^A mem) 0x A &&a1kroot @ a1k.alloc
-  ( assert it's correct region) >R@ &mem39 @ assertEq
-  ( new &sll1k) a1kroot.&sll1k @ @    &mem39 @ 0x 400 - ( =&mem38)  assertEq
-  ( free the memory) R> &&a1kroot @ a1k.freeMax
-  ( assert prev state) a1kroot.&sll1k @ @  &mem39 @   assertEq
-  ; RUNASTEST
--test
-
-1 sysexit
 
 
 \ TODO:
