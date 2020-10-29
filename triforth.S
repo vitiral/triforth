@@ -1589,7 +1589,7 @@ def_asmword "3dup" , 4 ,  0 ,   _3dup
   dpush %eax
   dpush %ebx
   dpush %ecx
-  ret
+  NEXT
 
 # ( a -- )
 #           ascii ,  len, flag, label

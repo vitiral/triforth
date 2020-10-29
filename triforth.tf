@@ -788,16 +788,17 @@ MARKER -test
     ( free one split) 2 pick R@ ar._f
     swap dup R@1 =
   UNTIL ( &mem po2) 2Rdrop drop Some ;
-: ar.free ( &mem po2 &self -- ) >R dup po2ch
-  \ stack: ( &mem po2 )   R@=&self
-  BEGIN dup isPo2Max IF drop R> _f=1k EXIT THEN
-    dup R@ ar.&po2 sll.pop lrot ( po2 &mem-free &mem )
-    3dup memjoin IFsome
+: ar.free ( &mem po2 &self -- \ free memory)
+  >R dup po2ch \ stack: ( &mem po2 )   R@=&self
+  BEGIN dumpInfo dup isPo2Max IF drop R> _f=1k EXIT THEN
+    dup R@ ar.&po2 sll.pop 
+    IFsome ELSE ( no block to join just free &mem) R> ar._f EXIT THEN
+    lrot ( po2 &mem-free &mem )
+    3dup .fln\" memjoin: $.stack \" memjoin dbgexit IFsome
       \ memory was joined, drop 2 smaller memories, inc po2, repeat
       rrot 2drop swap 1+ ( &mem-po2+1 po2+1)
     ELSE \ mem not joined, just put mem back (prev-free first) and end
-      swap lrot ( &mem &mem-free po2)
-      R@ ar.&po2 >R@ sll.push R> sll.push EXIT
+      swap lrot ( &mem &mem-free po2) tuck R@ ar._f R> ar._f EXIT
     THEN
   AGAIN ;
 
