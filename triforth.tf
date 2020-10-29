@@ -805,7 +805,6 @@ MARKER -test
 : testAlloc1k
   0xA &ar0 ar.alloc UnSome dup &1k assertEq
   0xA &ar0 ar.free  testL1kInit ; RUNASTEST
-dbgexit
 : testAllocX200
   0x 9 &ar0 ar.alloc UnSome dup &1k assertEq
     \ first free block is second half
