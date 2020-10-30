@@ -2103,7 +2103,7 @@ def_asmword "16shr",   5,    0, _16shr
 # jump table so that we can shift by 0-31 bits
 .macro NshlMACRO N
 Nshl_\N :
-  shl $\N , %ebx
+  shl $0x\N , %ebx
   jmp Nshl_ret
 .align 4
 .endm
@@ -2113,22 +2113,44 @@ Nshl: # ( u N -- u ) \ shift bits left by N
   dpop %ebx # value to shift
   cmp $0x100, %eax # simply return 0 if shifting > 31
   jge Nshl_ret0
-  # Note: you can get look at size of each by uncommenting:
-  # movl $Nshl_4, %edi
-  # movl $Nshl_3, %edx
-  # movl $Nshl_2, %ecx
-  # movl $Nshl_1, %ebx
-  # movl $Nshl_0, %eax
-  # call dbgexit
-  shll $3, %eax # multiply eax by 8, the code size of NshlMACRO
-  addl $Nshl_jt, %eax # and add the jump table to it for indirect branch
-  pushl %eax # push location to jmp to onto "return" stack
-  ret       # and jump to it
+  jmp *Nshl_jt(,%eax,4)
 Nshl_ret0:
   dpush $0
   ret
 .align 4
-Nshl_jt: # jump table
+Nshl_jt:
+  .int Nshl_0
+  .int Nshl_1
+  .int Nshl_2
+  .int Nshl_3
+  .int Nshl_4
+  .int Nshl_5
+  .int Nshl_6
+  .int Nshl_7
+  .int Nshl_8
+  .int Nshl_9
+  .int Nshl_A
+  .int Nshl_B
+  .int Nshl_C
+  .int Nshl_D
+  .int Nshl_E
+  .int Nshl_F
+  .int Nshl_10
+  .int Nshl_11
+  .int Nshl_12
+  .int Nshl_13
+  .int Nshl_14
+  .int Nshl_15
+  .int Nshl_16
+  .int Nshl_17
+  .int Nshl_18
+  .int Nshl_19
+  .int Nshl_1A
+  .int Nshl_1B
+  .int Nshl_1C
+  .int Nshl_1D
+  .int Nshl_1E
+  .int Nshl_1F
   NshlMACRO 0
   NshlMACRO 1
   NshlMACRO 2
@@ -2139,35 +2161,35 @@ Nshl_jt: # jump table
   NshlMACRO 7
   NshlMACRO 8
   NshlMACRO 9
-  NshlMACRO 0xA
-  NshlMACRO 0xB
-  NshlMACRO 0xC
-  NshlMACRO 0xD
-  NshlMACRO 0xE
-  NshlMACRO 0xF
-  NshlMACRO 0x10
-  NshlMACRO 0x11
-  NshlMACRO 0x12
-  NshlMACRO 0x13
-  NshlMACRO 0x14
-  NshlMACRO 0x15
-  NshlMACRO 0x16
-  NshlMACRO 0x17
-  NshlMACRO 0x18
-  NshlMACRO 0x19
-  NshlMACRO 0x1A
-  NshlMACRO 0x1B
-  NshlMACRO 0x1C
-  NshlMACRO 0x1D
-  NshlMACRO 0x1E
-  NshlMACRO 0x1F
+  NshlMACRO A
+  NshlMACRO B
+  NshlMACRO C
+  NshlMACRO D
+  NshlMACRO E
+  NshlMACRO F
+  NshlMACRO 10
+  NshlMACRO 11
+  NshlMACRO 12
+  NshlMACRO 13
+  NshlMACRO 14
+  NshlMACRO 15
+  NshlMACRO 16
+  NshlMACRO 17
+  NshlMACRO 18
+  NshlMACRO 19
+  NshlMACRO 1A
+  NshlMACRO 1B
+  NshlMACRO 1C
+  NshlMACRO 1D
+  NshlMACRO 1E
+  NshlMACRO 1F
 Nshl_ret:
   dpush %ebx
   ret
 
 .macro NshrMACRO N
 Nshr_\N :
-  shr $\N , %ebx
+  shr $0x\N , %ebx
   jmp Nshr_ret
 .align 4
 .endm
@@ -2177,15 +2199,44 @@ Nshr: # ( u N -- u ) \ shift bits right by N
   dpop %ebx # value to shift
   cmp $0x100, %eax # simply return 0 if shifting > 31
   jge Nshr_ret0
-  shll $3, %eax # multiply eax by 8, the code size of NshrMACRO
-  addl $Nshr_jt, %eax # and add the jump table to it for indirect branch
-  pushl %eax # push location to jmp to onto "return" stack
-  ret       # and jump to it
+  jmp *Nshr_jt(,%eax,4)
 Nshr_ret0:
   dpush $0
   ret
 .align 4
 Nshr_jt: # jump table
+  .int Nshr_0
+  .int Nshr_1
+  .int Nshr_2
+  .int Nshr_3
+  .int Nshr_4
+  .int Nshr_5
+  .int Nshr_6
+  .int Nshr_7
+  .int Nshr_8
+  .int Nshr_9
+  .int Nshr_A
+  .int Nshr_B
+  .int Nshr_C
+  .int Nshr_D
+  .int Nshr_E
+  .int Nshr_F
+  .int Nshr_10
+  .int Nshr_11
+  .int Nshr_12
+  .int Nshr_13
+  .int Nshr_14
+  .int Nshr_15
+  .int Nshr_16
+  .int Nshr_17
+  .int Nshr_18
+  .int Nshr_19
+  .int Nshr_1A
+  .int Nshr_1B
+  .int Nshr_1C
+  .int Nshr_1D
+  .int Nshr_1E
+  .int Nshr_1F
   NshrMACRO 0
   NshrMACRO 1
   NshrMACRO 2
@@ -2196,28 +2247,28 @@ Nshr_jt: # jump table
   NshrMACRO 7
   NshrMACRO 8
   NshrMACRO 9
-  NshrMACRO 0xA
-  NshrMACRO 0xB
-  NshrMACRO 0xC
-  NshrMACRO 0xD
-  NshrMACRO 0xE
-  NshrMACRO 0xF
-  NshrMACRO 0x10
-  NshrMACRO 0x11
-  NshrMACRO 0x12
-  NshrMACRO 0x13
-  NshrMACRO 0x14
-  NshrMACRO 0x15
-  NshrMACRO 0x16
-  NshrMACRO 0x17
-  NshrMACRO 0x18
-  NshrMACRO 0x19
-  NshrMACRO 0x1A
-  NshrMACRO 0x1B
-  NshrMACRO 0x1C
-  NshrMACRO 0x1D
-  NshrMACRO 0x1E
-  NshrMACRO 0x1F
+  NshrMACRO A
+  NshrMACRO B
+  NshrMACRO C
+  NshrMACRO D
+  NshrMACRO E
+  NshrMACRO F
+  NshrMACRO 10
+  NshrMACRO 11
+  NshrMACRO 12
+  NshrMACRO 13
+  NshrMACRO 14
+  NshrMACRO 15
+  NshrMACRO 16
+  NshrMACRO 17
+  NshrMACRO 18
+  NshrMACRO 19
+  NshrMACRO 1A
+  NshrMACRO 1B
+  NshrMACRO 1C
+  NshrMACRO 1D
+  NshrMACRO 1E
+  NshrMACRO 1F
 Nshr_ret:
   dpush %ebx
   ret
