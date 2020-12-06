@@ -26,3 +26,10 @@ does-infoFlags | does-xt (DOCOL) | does-code... EXIT
 The `xt , ` in the "IMMEDIATE-code" will push does-xt onto the currently
 compiling word.
 
+# Drop semantics
+If I restrict what types can be dropped using drop (basic types and refs) then
+I can require all values to be dropped, since the rstack must be clean and you
+can only drop a type by passing to function that takes its non reference. If it
+is also impossible to clone/copy such values then you MUST clean up after
+yourself! Suddenly there are no memory leaks, although there might still
+be a dangling reference (we aren't tracking lifetimes after all).
