@@ -14,7 +14,7 @@ s pstackSize = 0;
 s* psp;
 
 // Return stack
-s* rstack;
+s* rstackMin;
 s rstackSize = 0;
 s* rsp;
 
@@ -34,7 +34,7 @@ void defaultPanic() {
   exit(100);
 }
 
-void (*panic)() = defaultPanic;
+void (*panic)() = &defaultPanic;
 
 
 // ##################
@@ -62,25 +62,26 @@ s popr() {
 }
 
 
-#define STACK_SIZE (0x400)
+#define PSTACK_SIZE (0x400)
+#define RSTACK_SIZE (0x1000)
 
 int main() {
-  pstackMin = malloc(STACK_SIZE);
-  pstackSize = STACK_SIZE;
-  psp = pstackMin + STACK_SIZE;
+  pstackMin = malloc(PSTACK_SIZE);
+  pstackSize = PSTACK_SIZE;
+  psp = pstackMin + PSTACK_SIZE;
 
-  rstack = malloc(STACK_SIZE);
-  rstackSize = STACK_SIZE;
-  rsp = rstack + STACK_SIZE;
+  rstackMin = malloc(RSTACK_SIZE);
+  rstackSize = RSTACK_SIZE;
+  rsp = rstackMin + RSTACK_SIZE;
 
-  if (!psp || !rsp) {
+  if (!pstackMin || !pstackMin) {
     printf("Could not reserve pstack or rstack\n");
     exit(1);
   }
 
   pushd(0x42);
   pushd(0x43);
-  panic();
+  (*panic)();
 
   return 0;
 }
