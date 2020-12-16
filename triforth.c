@@ -10,16 +10,20 @@
 
 // Parameter stack
 s* pstackMin;
-s pstackSize = 0;
+s* pstackMax;
 s* psp;
 
 // Return stack
 s* rstackMin;
-s rstackSize = 0;
+s* rstackMax;
 s* rsp;
 
+// Base memory of 16bit pointers
+s* base;
+s* vip;  // virtual instruction pointer
+
 void pntStack() {
-  s* ptr = pstackMin + pstackSize;
+  s* ptr = pstackMax;
   printf("DSTACK: ");
   while (ptr != psp) {
     ptr -= sSize;
@@ -38,46 +42,82 @@ void (*panic)() = &defaultPanic;
 
 
 // ##################
-// # Data stack manipulation
+// # Parameter stack manipulation
 void pushd(s value) {
+  if (psp <= pstackMin) {
+    printf("pstack overflow\n");
+    exit(1);
+  }
   psp -= sSize;
   *psp = value;
 }
 
 s popd() {
+  if (psp >= pstackMax) {
+    printf("pstack underflow\n");
+    exit(1);
+  }
   s out = *psp;
   psp += sSize;
   return out;
 }
 
+// ##################
+// # Return stack manipulation
 void pushr(s value) {
+  if (rsp <= rstackMin) {
+    printf("rstack overflow\n");
+    exit(1);
+  }
   rsp -= sSize;
   *rsp = value;
 }
 
 s popr() {
+  if (rsp >= rstackMax) {
+    printf("rstack underflow\n");
+    exit(1);
+  }
   s out = *rsp;
   rsp += sSize;
   return out;
 }
 
+// ##################
+// # Execution. This must contain ALL builtin forth words.
+
+typedef enum {
+  EXIT,
+} Word;
+
+void next() {
+  Word w = (Word) *vip;
+  switch w {
+    case EXIT:
+      printf("EXIT\n");
+  }
+}
+
+// ##################
+// # Main Initialization
 
 #define PSTACK_SIZE (0x400)
 #define RSTACK_SIZE (0x1000)
 
 int main() {
-  pstackMin = malloc(PSTACK_SIZE);
-  pstackSize = PSTACK_SIZE;
-  psp = pstackMin + PSTACK_SIZE;
-
-  rstackMin = malloc(RSTACK_SIZE);
-  rstackSize = RSTACK_SIZE;
-  rsp = rstackMin + RSTACK_SIZE;
-
-  if (!pstackMin || !pstackMin) {
-    printf("Could not reserve pstack or rstack\n");
+  base = malloc(0x10000); // 0i64 kilobytes
+  if (!base) {
+    printf("Could not reserve base 16bit memory\n");
     exit(1);
   }
+
+  pstackMin = base;
+  pstackMax = pstackMin + PSTACK_SIZE;
+  psp = pstackMax;
+
+  rstackMin = pstackMax;
+  rstackMax = rstackMin + RSTACK_SIZE;
+  rsp = rstackMax;
 
   pushd(0x42);
   pushd(0x43);
