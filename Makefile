@@ -4,4 +4,4 @@ triforth: triforth.S
 	@ld out/triforth.o -m elf_i386 -o out/triforth
 
 tfc: triforth.c
-	@$(CC) triforth.c -o out/triforth -Wall -Wextra -pedantic -std=c99
+	@$(CC) -m32  triforth.c -o out/triforth -Wall -Wextra -std=c99

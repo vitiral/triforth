@@ -2,31 +2,28 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <assert.h>
 
-#define s uint16_t // single
-#define sSize 2    // size in bytes
-#define d uint32_t // double
-#define dSize 4    // size in bytes
+#define u32 uint32_t
+#define u64 uint64_t
+#define xt u32
 
 // Parameter stack
-s* pstackMin;
-s* pstackMax;
-s* psp;
+u32* pstackMin;
+u32* pstackMax;
+u32* psp;
 
 // Return stack
-s* rstackMin;
-s* rstackMax;
-s* rsp;
+u32* rstackMin;
+u32* rstackMax;
+u32* rsp;
 
-// Base memory of 16bit pointers
-s* base;
-s* vip;  // virtual instruction pointer
 
 void pntStack() {
-  s* ptr = pstackMax;
+  u32* ptr = pstackMax;
   printf("DSTACK: ");
   while (ptr != psp) {
-    ptr -= sSize;
+    ptr -= sizeof(u32);
     printf("%X ", *ptr);
   }
   printf("\n");
@@ -43,59 +40,87 @@ void (*panic)() = &defaultPanic;
 
 // ##################
 // # Parameter stack manipulation
-void pushd(s value) {
+void pushd(u32 value) {
   if (psp <= pstackMin) {
     printf("pstack overflow\n");
     exit(1);
   }
-  psp -= sSize;
+  psp -= sizeof(u32);
   *psp = value;
 }
 
-s popd() {
+u32 popd() {
   if (psp >= pstackMax) {
     printf("pstack underflow\n");
     exit(1);
   }
-  s out = *psp;
-  psp += sSize;
+  u32 out = *psp;
+  psp += sizeof(u32);
   return out;
 }
 
 // ##################
 // # Return stack manipulation
-void pushr(s value) {
+void pushr(u32 value) {
   if (rsp <= rstackMin) {
     printf("rstack overflow\n");
     exit(1);
   }
-  rsp -= sSize;
+  rsp -= sizeof(u32);
   *rsp = value;
 }
 
-s popr() {
+u32 popr() {
   if (rsp >= rstackMax) {
     printf("rstack underflow\n");
     exit(1);
   }
-  s out = *rsp;
-  rsp += sSize;
+  u32 out = *rsp;
+  rsp += sizeof(u32);
   return out;
 }
 
 // ##################
 // # Execution. This must contain ALL builtin forth words.
 
-typedef enum {
-  EXIT,
-} Word;
+// Where forth code is stored.
+xt* code;
+u32 codeSize;
 
-void next() {
-  Word w = (Word) *vip;
-  switch w {
-    case EXIT:
-      printf("EXIT\n");
+// The c type of a forth "word". It has no inputs/outputs
+// becuase it must use the stack
+u32 codei;  // execution token instruction pointer
+
+typedef enum {
+  EXIT = 0xFFFF0000,
+  MUL,
+} BuiltinWord;
+
+// Execute a forth word
+void execute() {
+  while (rsp < rstackMax) {
+    xt x = code[codei];
+    switch (x) {
+      case EXIT:
+        codei = popr();
+        continue;
+      case MUL:
+        pushd(popd() * popd());
+        break;
+    }
+    codei += 1;
   }
+}
+
+void testExecute() {
+  code[0] = MUL;
+  code[1] = EXIT;
+  codei = 0;
+  pushd(21);
+  pushd(2);
+  pushr(0xFFFFFFFF);
+  execute();
+  assert(popd() == 42);
 }
 
 // ##################
@@ -103,15 +128,14 @@ void next() {
 
 #define PSTACK_SIZE (0x400)
 #define RSTACK_SIZE (0x1000)
+#define CODE_START_SIZE (0x10000)
 
 int main() {
-  base = malloc(0x10000); // 0i64 kilobytes
-  if (!base) {
-    printf("Could not reserve base 16bit memory\n");
+  pstackMin = malloc(PSTACK_SIZE + RSTACK_SIZE);
+  if (!pstackMin) {
+    printf("Could not reserve stacks\n");
     exit(1);
   }
-
-  pstackMin = base;
   pstackMax = pstackMin + PSTACK_SIZE;
   psp = pstackMax;
 
@@ -119,9 +143,14 @@ int main() {
   rstackMax = rstackMin + RSTACK_SIZE;
   rsp = rstackMax;
 
-  pushd(0x42);
-  pushd(0x43);
-  (*panic)();
+  code = malloc(CODE_START_SIZE);
+  codeSize = CODE_START_SIZE;
+  if (!code) {
+    printf("Could not reserve code\n");
+    exit(1);
+  }
+
+  testExecute();
 
   return 0;
 }
