@@ -172,6 +172,7 @@ syswrite: # %ebx:fd %ecx:&buff %edx:bytesToWrite ( -- )
   ret
 
 countntEcx: # %ecx:ntstr ( -- ) %ecx:ntstr %edx:count
+  # Count the number of bytes in a null-terminated string
   movl $-1, %edx
 countntEcx_loop:
   inc %edx
@@ -268,7 +269,7 @@ pushDsInvalid:
   call *(panic)
   EXIT $RC_UNREACHABLE
 
-.macro dpush reg
+.macro DPUSH reg
   subl $4, %ebp
   cmpl $pstackMin, %ebp
   jl pushDsInvalid
@@ -283,7 +284,7 @@ popDsInvalid:
   call *(panic)
   EXIT $RC_UNREACHABLE
 
-.macro dpop reg
+.macro DPOP reg
   movl (%ebp) , \reg
   cmpl $pstackMax, %ebp
   jge popDsInvalid
@@ -303,5 +304,7 @@ mainStartNtStr: .ascii "Starting Triforth...\n\0"
 _start:
   movl $rstackMax, %esp  # clear rstack
   movl $pstackMax, %ebp  # clear pstack
+  SAFE_PNT_NT_STR $mainStartNtStr
+  PNT_UX $0x42
   SAFE_PNT_NT_STR $mainStartNtStr
   EXIT $0
