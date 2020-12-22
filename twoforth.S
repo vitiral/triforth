@@ -106,6 +106,10 @@ rstackCheckpoint: .int 0
 emitFd: .int STDERR # where to EMIT and TYPE to
 .equ EMIT_BUFFER_SIZE,16
 keyFd: .int STDIN   # where KEY/etc gets input from
+startDbgNtStr: .ascii "DBG(\0"
+endDbgNtStr: .ascii ") \0"
+newlineStr: .ascii "\n"
+.align 4
 
 ##################################################################################
 #### PURE ASSEMBLY                                                            ####
@@ -171,6 +175,18 @@ syswrite: # %ebx:fd %ecx:&buff %edx:bytesToWrite ( -- )
   movl %ebx, errno # error
   ret
 
+pntByte: # %ecx: &buff
+  # print a single byte
+  movl $STDERR, %ebx
+  movl $1, %edx
+  call syswrite
+  ret
+
+pntNL: # print a newline
+  movl $newlineStr, %ecx
+  call pntByte
+  ret
+
 countntEcx: # %ecx:ntstr ( -- ) %ecx:ntstr %edx:count
   # Count the number of bytes in a null-terminated string
   movl $-1, %edx
@@ -180,7 +196,7 @@ countntEcx_loop:
   jne countntEcx_loop
   ret
 
-pntNtStr: # %ecx:ntstr ( -- )
+pntEcxNtStr: # %ecx:ntstr ( -- )
   # Print a null terminated string
   # Does not change any registers
   call countntEcx
@@ -193,7 +209,7 @@ pntNtStr: # %ecx:ntstr ( -- )
   # (Safe means no registers changed)
   call snapshotRegisters
   movl \s, %ecx
-  call pntNtStr
+  call pntEcxNtStr
   call restoreRegisters
 .endm
 
@@ -253,9 +269,15 @@ pntEbxUx: # %ebx:f ( -- )
   addl $8, %ebp
   ret
 
-.macro PNT_UX v
+.macro DBG v
+  call snapshotRegisters
+  movl $startDbgNtStr, %ecx
+  call pntEcxNtStr
   movl \v, %ebx
   call pntEbxUx
+  movl $endDbgNtStr, %ecx
+  call pntEcxNtStr
+  call restoreRegisters
 .endm
 
 
@@ -306,6 +328,7 @@ _start:
   movl $rstackMax, %esp  # clear rstack
   movl $pstackMax, %ebp  # clear pstack
   # SAFE_PNT_NT_STR $mainStartNtStr
-  PNT_UX $0x42
   SAFE_PNT_NT_STR $mainStartNtStr
+  DBG $0x42
+  DBG $0x43
   EXIT $0
