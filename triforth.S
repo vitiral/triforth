@@ -344,10 +344,6 @@ testSuite: # ( -- )
   call assertCleanState
   ret
 
-failTest: # The test failed
-  call dumpInfo
-  movl $RC_TFAIL, %ebx
-  jmp sysexit
 
 
 ##############################

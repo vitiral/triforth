@@ -45,6 +45,7 @@
 .equ RC_STACK_UNDERFLOW,105
 .equ RC_STACK_OVERFLOW,106
 .equ RC_STACK_OVERFLOW,106
+.equ RC_ASM_INVARIANT,107
 
 # Our Panic Error Codes
 .equ ERR_SEE_MSG,0x001
@@ -93,6 +94,7 @@ pstackMin: .space PSTACK_SIZE # data stack
 pstackMax:
 registerSnapshot: .space 24
 
+errno: .int 0
 # Address that should be called when panicing, can be redirected when testing.
 panic: .int 0
 # Specefic error code encountered when panicing.
@@ -108,81 +110,79 @@ keyFd: .int STDIN   # where KEY/etc gets input from
 #### PURE ASSEMBLY                                                            ####
 ##################################################################################
 
+return:
+  # Functions can conditionally jump here to return
+  ret
+
 sysexit: # %ebx:rc ( -- )
   # Directly call SYS_EXIT using value in ebx
   movl $SYS_EXIT, %eax
   int  $LINUX_SYSCALL
 
-unreachable: # ( -- )
-  # We call this frequently to practice defensive programming.
-  movl $RC_UNREACHABLE, %ebx
+.macro EXIT rc
+  movl \rc, %ebx
   jmp sysexit
+.endm
 
-exit0: # ( -- )
-  # Exits immediately with rc=0
-  movl $0, %ebx
-  jmp sysexit
+asmInvariantViolated: EXIT $RC_ASM_INVARIANT
 
-failTest: # The test failed
-  # call dumpInfo
-  movl $RC_TFAIL, %ebx
-  jmp sysexit
+.equ offset_eax, 0x00
+.equ offset_ebx, 0x04
+.equ offset_ecx, 0x08
+.equ offset_edx, 0x0C
+.equ offset_edi, 0x10
+.equ offset_esi, 0x14
 
-assertEaxEbxEq: # %eax %ebx ( -- )
-  cmpl %eax, %ebx
-  jne failTest
-  ret
+.macro SNAPSHOT_REG r
+  movl %\r, offset_\r
+.endm
 
 snapshotRegisters:
-  movl %eax, registerSnapshot
-  movl $registerSnapshot, %eax
-  movl %ebx, 4(%eax)
-  movl %ecx, 8(%eax)
-  movl %edx, 12(%eax)
-  movl %edi, 16(%eax)
-  movl %esi, 20(%eax)
+  SNAPSHOT_REG eax
+  SNAPSHOT_REG ebx
+  SNAPSHOT_REG ecx
+  SNAPSHOT_REG edx
+  SNAPSHOT_REG edi
+  SNAPSHOT_REG esi
   ret
 
+.macro RESTORE_REG r
+  movl offset_\r, %\r
+.endm
+
 restoreRegisters:
-  movl $registerSnapshot, %eax
-  movl 4(%eax), %ebx
-  movl 8(%eax), %ecx
-  movl 12(%eax), %edx
-  movl 16(%eax), %edi
-  movl 20(%eax), %esi
-  movl registerSnapshot, %eax
+  RESTORE_REG eax
+  RESTORE_REG ebx
+  RESTORE_REG ecx
+  RESTORE_REG edx
+  RESTORE_REG edi
+  RESTORE_REG esi
   ret
 
 syswrite: # %ebx:fd %ecx:&buff %edx:bytesToWrite ( -- )
   # Direct call to SYS_WRITE syscall with error checking.
+  cmp $0, errno # if errno is not zero, do nothing
+  jne return
   movl $SYS_WRITE, %eax
   int $LINUX_SYSCALL
-  cmpl $0, %eax
-  jl 1f
+  cmpl $0, %eax # error if lt 0
+  jge return
+  movl %ebx, errno # error
   ret
-1:
-  movl %eax, panicErr
-  call *(panic)
-  jmp unreachable
 
 ebx_toascii: # ( u -- c )
   # Convert a number (typically 1-16) into ascii equivalent
   cmpl $9, %ebx
-  jg 1f
+  jg ebx_toascii_gt9
   # number <= 9
   addl $'0', %ebx
-  jmp 2f
-1: # number > 9
+  ret
+ebx_toascii_gt9:
   subl $10, %ebx
   cmpl $23, %ebx
-  jg 3f
+  jg asmInvariantViolated # ebx not [0, 24)
   addl $'A', %ebx
-2:
   ret
-3: # error
-  movl $ERR_ASCII_BOUNDS, panicErr
-  call *(panic)
-  call unreachable
 
 ebxUx: # %ebx:f ( 8o -- 8o ) %edx:right-aligned-count
   # Store ebx as hex ascii into (up to) the first 8 bytes of the stack.
@@ -208,6 +208,13 @@ ebxUx_zero:
   movl $1, %edx
   ret
 
+ebxUxPadded: # %ebx:f ( 8o -- 8o )
+  # Store ebx as hex ascii into the first 8 bytes of the stack, pading any
+  # remaining bytes. The caller must reserve this space.
+  # Uses: ebx, ecx, edx
+  call ebxUx
+  
+
 pntEbxUx: # %ebx:f ( -- )
   # Uses: eax, ebx, ecx, edx
   subl $8, %ebp  # reserve space for bytes buffer
@@ -227,7 +234,7 @@ pushDsInvalid:
   addl $4, %ebp
   movl $ERR_PSTACK_OVERFLOW, panicErr
   call *(panic)
-  jmp unreachable
+  EXIT $RC_UNREACHABLE
 
 .macro dpush reg
   subl $4, %ebp
@@ -242,7 +249,7 @@ popDsInvalid:
   subl $4, %ebp
   movl $ERR_PSTACK_UNDERFLOW, panicErr
   call *(panic)
-  jmp unreachable
+  EXIT $RC_UNREACHABLE
 
 .macro dpop reg
   movl (%ebp) , \reg
@@ -252,19 +259,8 @@ popDsInvalid:
   addl $4, %ebp
 .endm
 
-assertEmpty:
-  # Assert that the datastack is empty
-  movl %ebp, %eax
-  movl $pstackMax, %ebx
-  call assertEaxEbxEq
-  ret
-
-
 ##############################
 # Tests
-testSuite:
-  call assertEmpty
-  ret
 
 ##############################
 # Main Entrypoint
@@ -273,5 +269,4 @@ testSuite:
 _start:
   movl $rstackMax, %esp  # clear rstack
   movl $pstackMax, %ebp  # clear pstack
-  call testSuite
-  call exit0
+  EXIT $0
