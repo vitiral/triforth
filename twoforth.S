@@ -36,6 +36,7 @@
 .equ STDERR, 2
 
 # Our Return codes
+.equ RC_TODO,98
 .equ RC_DBG,99 # 99 problems and debugging ain't one, `call dbgexit`
 .equ RC_TFAIL,100
 .equ RC_UNREACHABLE,101
@@ -134,7 +135,7 @@ asmInvariantViolated: EXIT $RC_ASM_INVARIANT
 .equ offset_esi, 0x14
 
 .macro SNAPSHOT_REG r
-  movl %\r, offset_\r
+  movl %\r, registerSnapshot+offset_\r
 .endm
 
 snapshotRegisters:
@@ -147,7 +148,7 @@ snapshotRegisters:
   ret
 
 .macro RESTORE_REG r
-  movl offset_\r, %\r
+  movl registerSnapshot+offset_\r, %\r
 .endm
 
 restoreRegisters:
@@ -169,6 +170,31 @@ syswrite: # %ebx:fd %ecx:&buff %edx:bytesToWrite ( -- )
   jge return
   movl %ebx, errno # error
   ret
+
+countntEcx: # %ecx:ntstr ( -- ) %ecx:ntstr %edx:count
+  movl $-1, %edx
+countntEcx_loop:
+  inc %edx
+  cmpb $0, (%ecx, %edx, 1)
+  jne countntEcx_loop
+  ret
+
+pntNtStr: # %ecx:ntstr ( -- )
+  # Print a null terminated string
+  # Does not change any registers
+  call countntEcx
+  movl $STDERR, %ebx
+  call syswrite
+  ret
+
+.macro SAFE_PNT_NT_STR s
+  # Safely print a null terminated string
+  # (Safe means no registers changed)
+  call snapshotRegisters
+  movl \s, %ecx
+  call pntNtStr
+  call restoreRegisters
+.endm
 
 ebx_toascii: # ( u -- c )
   # Convert a number (typically 1-16) into ascii equivalent
@@ -212,8 +238,8 @@ ebxUxPadded: # %ebx:f ( 8o -- 8o )
   # Store ebx as hex ascii into the first 8 bytes of the stack, pading any
   # remaining bytes. The caller must reserve this space.
   # Uses: ebx, ecx, edx
-  call ebxUx
-  
+  # call ebxUx
+  EXIT $RC_TODO
 
 pntEbxUx: # %ebx:f ( -- )
   # Uses: eax, ebx, ecx, edx
@@ -224,6 +250,12 @@ pntEbxUx: # %ebx:f ( -- )
   call syswrite
   addl $8, %ebp
   ret
+
+.macro PNT_UX v
+  movl \v, %ebx
+  call pntEbxUx
+.endm
+
 
 ##################################################################################
 #### STACK                                                                    ####
@@ -261,6 +293,8 @@ popDsInvalid:
 
 ##############################
 # Tests
+mainStartNtStr: .ascii "Starting Triforth...\n\0"
+.align 4
 
 ##############################
 # Main Entrypoint
@@ -269,4 +303,5 @@ popDsInvalid:
 _start:
   movl $rstackMax, %esp  # clear rstack
   movl $pstackMax, %ebp  # clear pstack
+  SAFE_PNT_NT_STR $mainStartNtStr
   EXIT $0

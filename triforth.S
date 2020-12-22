@@ -31,7 +31,7 @@
 #
 # Understanding doesn't have to be so HARD. The forth compiler has a peculiar ability
 # to walk VERY early, after only a few hundred-ish lines of assembly.  In this
-# tutorial we will use x86 assembly to bootstrap our own forth language, called
+#\ tutorial we will use x86 assembly to bootstrap our own forth language, called
 # triforth which is a pun from the "triforce" from the legend of Zelda. Like
 # the triforce, triforth will give us the Power to write scalable type-safe
 # computer programs, the Knowledge of the inner workings of our language and
@@ -904,7 +904,7 @@ pntTestPass: # ( addr count -- )
   ret
 
 pntSNt: # ( addr -- )
-  # Type a null nerminated str
+  # Print a null terminated str
   call countnt
   call pntS
   ret
