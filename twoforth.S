@@ -246,8 +246,9 @@ pntEbxUx: # %ebx:f ( -- )
   # Uses: eax, ebx, ecx, edx
   subl $8, %ebp  # reserve space for bytes buffer
   call ebxUx  # edx=bytesToWrite
-  movl $STDOUT, %ebx  # fd
-  movl %ebp, %ecx     # &buff
+  movl $STDERR, %ebx  # fd
+  leal 8(%ebp), %ecx  # &buff=&end-count
+  subl %edx, %ecx
   call syswrite
   addl $8, %ebp
   ret
@@ -304,7 +305,7 @@ mainStartNtStr: .ascii "Starting Triforth...\n\0"
 _start:
   movl $rstackMax, %esp  # clear rstack
   movl $pstackMax, %ebp  # clear pstack
-  SAFE_PNT_NT_STR $mainStartNtStr
+  # SAFE_PNT_NT_STR $mainStartNtStr
   PNT_UX $0x42
   SAFE_PNT_NT_STR $mainStartNtStr
   EXIT $0
