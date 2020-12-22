@@ -107,8 +107,20 @@ emitFd: .int STDERR # where to EMIT and TYPE to
 .equ EMIT_BUFFER_SIZE,16
 keyFd: .int STDIN   # where KEY/etc gets input from
 startDbgNtStr: .ascii "DBG(\0"
-endDbgNtStr: .ascii ") \0"
-newlineStr: .ascii "\n"
+dbgEaxNtStr: .ascii " eax=\0"
+dbgEbxNtStr: .ascii " ebx=\0"
+dbgEcxNtStr: .ascii " ecx=\0"
+dbgEdxNtStr: .ascii " edx=\0"
+dbgEdiNtStr: .ascii " edi=\0"
+endDbgNtStr: .ascii ")\n\0"
+asciiStr: .ascii "~~~~~~~~~\t\n~~\r~~"  # 0x0-F
+          .ascii "~~~~~~~~~~~~~~~~"     # 0x10-1F
+          .ascii " ! \"$%&'()*+,-./"    # 0x20-2F
+          .ascii "0123456789:;<=>?"     # 0x30-3F
+          .ascii "@ABCDEFGHIJKLMNO"     # 0x40-4F
+          .ascii "PQRSTUVWXYZ[\\]^_"    # 0x50-5F
+          .ascii "`abcdefghijklmno"     # 0x60-6F
+          .ascii "pqrstuvwxyz{|}~"      # 0x70-7E
 .align 4
 
 ##################################################################################
@@ -175,18 +187,6 @@ syswrite: # %ebx:fd %ecx:&buff %edx:bytesToWrite ( -- )
   movl %ebx, errno # error
   ret
 
-pntByte: # %ecx: &buff
-  # print a single byte
-  movl $STDERR, %ebx
-  movl $1, %edx
-  call syswrite
-  ret
-
-pntNL: # print a newline
-  movl $newlineStr, %ecx
-  call pntByte
-  ret
-
 countntEcx: # %ecx:ntstr ( -- ) %ecx:ntstr %edx:count
   # Count the number of bytes in a null-terminated string
   movl $-1, %edx
@@ -203,6 +203,18 @@ pntEcxNtStr: # %ecx:ntstr ( -- )
   movl $STDERR, %ebx
   call syswrite
   ret
+
+pntEcx: # %ecx:byte ( -- )
+  movl $STDERR, %ebx
+  addl $asciiStr, %ecx
+  movl $1, %edx
+  call syswrite
+  ret
+
+.macro PNT_ASCII a
+  movl \a, %ecx
+  call pntEcx
+.endm
 
 .macro SAFE_PNT_NT_STR s
   # Safely print a null terminated string
@@ -269,14 +281,28 @@ pntEbxUx: # %ebx:f ( -- )
   addl $8, %ebp
   ret
 
-.macro DBG v
-  call snapshotRegisters
-  movl $startDbgNtStr, %ecx
+.macro PNT_NTSTR s
+  movl \s, %ecx
   call pntEcxNtStr
+.endm
+
+.macro PNT_UX v
   movl \v, %ebx
   call pntEbxUx
-  movl $endDbgNtStr, %ecx
-  call pntEcxNtStr
+.endm
+  
+
+# pntSnapshot: # prints the snapshotted registers
+#   PNT_NTSTR $eaxNtStr
+#   ret
+
+.macro DBG v
+  # Allows us to debug registers at varioius points
+  call snapshotRegisters
+  PNT_NTSTR $startDbgNtStr
+  PNT_UX \v
+  # call pntSnapshot
+  PNT_NTSTR $endDbgNtStr
   call restoreRegisters
 .endm
 
@@ -331,4 +357,10 @@ _start:
   SAFE_PNT_NT_STR $mainStartNtStr
   DBG $0x42
   DBG $0x43
+  PNT_ASCII $'A'
+  PNT_ASCII $'0'
+  PNT_ASCII $'!'
+  PNT_ASCII $'z'
+  PNT_ASCII $']'
+  PNT_ASCII $'\n'
   EXIT $0
