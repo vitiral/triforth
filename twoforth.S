@@ -1,4 +1,3 @@
-# REGISTERS: The below is a helpful register reference.
 # general 32bit:    %eax   %ebx   %ecx   %edx  %edi  %esi
 # from above 16bit:  ax     bx     cx     dx   none  none
 # from above 8bit: al ah  bl bh  cl ch  dl dh  none  none
@@ -36,40 +35,41 @@
 .equ STDERR, 2
 
 # Our Return codes
-.equ RC_TODO,98
-.equ RC_DBG,99 # 99 problems and debugging ain't one, `call dbgexit`
-.equ RC_TFAIL,100
-.equ RC_UNREACHABLE,101
-.equ RC_INVALIDRESET,102
-.equ RC_ARRAYBOUNDS,103
-.equ RC_PANIC,104
-.equ RC_STACK_UNDERFLOW,105
-.equ RC_STACK_OVERFLOW,106
-.equ RC_STACK_OVERFLOW,106
-.equ RC_ASM_INVARIANT,107
+.equ RC_TODO, 98
+.equ RC_DBG, 99 # 99 problems and debugging ain't one, `call dbgexit`
+.equ RC_TESTFAIL, 100
+.equ RC_UNREACHABLE, 101
+.equ RC_INVALIDRESET, 102
+.equ RC_ARRAYBOUNDS, 103
+.equ RC_PANIC, 104
+.equ RC_STACK_UNDERFLOW, 105
+.equ RC_STACK_OVERFLOW, 106
+.equ RC_STACK_OVERFLOW, 106
+.equ RC_ASM_INVARIANT, 107
 
 # Our Panic Error Codes
-.equ ERR_SEE_MSG,0x001
-.equ ERR_OKAY,0xBEEF # okay
-.equ ERR_PSTACK_OVERFLOW,0x300
-.equ ERR_PSTACK_UNDERFLOW,0x301
-.equ ERR_ASCII_BOUNDS,0x302
-.equ ERR_MAX_WORD_LEN,0x303
-.equ ERR_WORD_MISSING,0x304
-.equ ERR_NUMBER_INVALID,0x305
-.equ ERR_UNKNOWN_WORD,0x306
-.equ ERR_STATE_REDUNDANT,0x307
-.equ ERR_STACK_UNDERFLOW,0x308
-.equ ERR_WORD_NOT_FOUND,0x309
-.equ ERR_INVALID_FLAG,0x310
-.equ ERR_INVALID_CHAR,0x311
-.equ ERR_STACK_NOT_EMPTY,0x312
-.equ ERR_STATE_INCORRECT,0x313
-.equ ERR_EMIT_ERR,0x314
-.equ ERR_NULL_NAMETOKEN,0x315
+.equ ERR_SEE_MSG, 0x001
+.equ ERR_OKAY, 0xBEEF # okay
+.equ ERR_PSTACK_OVERFLOW, 0x300
+.equ ERR_PSTACK_UNDERFLOW, 0x301
+.equ ERR_ASCII_BOUNDS, 0x302
+.equ ERR_MAX_WORD_LEN, 0x303
+.equ ERR_WORD_MISSING, 0x304
+.equ ERR_NUMBER_INVALID, 0x305
+.equ ERR_UNKNOWN_WORD, 0x306
+.equ ERR_STATE_REDUNDANT, 0x307
+.equ ERR_STACK_UNDERFLOW, 0x308
+.equ ERR_WORD_NOT_FOUND, 0x309
+.equ ERR_INVALID_FLAG, 0x310
+.equ ERR_INVALID_CHAR, 0x311
+.equ ERR_STACK_NOT_EMPTY, 0x312
+.equ ERR_STATE_INCORRECT, 0x313
+.equ ERR_EMIT_ERR, 0x314
+.equ ERR_NULL_NAMETOKEN, 0x315
 
 .equ FALSE, 0
 .equ TRUE, -1
+
 
 ################
 ## Data layout
@@ -78,13 +78,10 @@
 # Code contains _only_ code (not the word dictionary). The word dictionary is
 # a normal linked-list, except the name, flags and type is all kept inside of
 # "memory" and so can be dropped once the "compilation" is complete.
-#
-# 64k of "memory" is initially reserved, and ~64k for the remaining blocks.
 
-######################################################
-### DATA SECTION
-# It's better to define most .data separately from .text (code), so the
-# definitions are here. Refer here when you see the data used in the code.
+################################################################################
+#### DATA SECTION -- mutable memory must go here.                            ###
+################################################################################
 .section .data
 .equ RSTACK_SIZE, 0x2000
 rstackMin: .space RSTACK_SIZE # return stack
@@ -93,23 +90,22 @@ rstackMax:
 pstackExtra: .space 0x20      # guaranteed space above the pstack
 pstackMin: .space PSTACK_SIZE # data stack
 pstackMax:
-registerSnapshot: .space 24
+registerSnapshot: .space 0x20
 
 errno: .int 0
 # Address that should be called when panicing, can be redirected when testing.
-panic: .int 0
-# Specefic error code encountered when panicing.
-panicErr: .int 0
-# Used in `reset` to return from a panic in testing.
-rstackCheckpoint: .int 0
 
 pntFd: .int STDERR # where to EMIT and TYPE to
-.equ EMIT_BUFFER_SIZE,16
+.equ EMIT_BUFFER_SIZE, 16
 keyFd: .int STDIN   # where KEY/etc gets input from
+testingNtStr: .int 0
+panicErr: .int 0  # error to print while panicing
 
-##################################################################################
-#### PURE ASSEMBLY                                                            ####
-##################################################################################
+.section .text
+
+################################################################################
+#### PURE ASSEMBLY                                                          ####
+################################################################################
 # The following are pure assembly functions whose sole purpose is to make
 # developing in assembly easier. None of these will be linked directly to
 # forth words (although some are used in their implementations).
@@ -119,24 +115,9 @@ keyFd: .int STDIN   # where KEY/etc gets input from
 # then look at how I have done it. The basic functionality we need is to be
 # able to print registers and the stack, along with an arbitrary number. This
 # will allow us to more easily reason about code that is being executed.
-
-dbgStartNtStr: .ascii "DBG(\0"
-dbgRegNtStr_eax: .ascii " eax=\0"
-dbgRegNtStr_ebx: .ascii " ebx=\0"
-dbgRegNtStr_ecx: .ascii " ecx=\0"
-dbgRegNtStr_edx: .ascii " edx=\0"
-dbgRegNtStr_edi: .ascii " edi=\0"
-dbgEndNtStr: .ascii ")\n\0"
-# writesys requires a pointer so this allows printing single characters.
-asciiStr: .ascii "~~~~~~~~~\t\n~~\r~~"  # 0x0-F
-          .ascii "~~~~~~~~~~~~~~~~"     # 0x10-1F
-          .ascii " ! \"$%&'()*+,-./"    # 0x20-2F
-          .ascii "0123456789:;<=>?"     # 0x30-3F
-          .ascii "@ABCDEFGHIJKLMNO"     # 0x40-4F
-          .ascii "PQRSTUVWXYZ[\\]^_"    # 0x50-5F
-          .ascii "`abcdefghijklmno"     # 0x60-6F
-          .ascii "pqrstuvwxyz{|}~"      # 0x70-7E
-.align 4
+#
+# Finally, we develop a way to "panic", printing out debug information in the
+# process. We use indirection so that we can expect panics in our tests.
 
 return:
   # Functions can conditionally jump here to return
@@ -154,10 +135,8 @@ sysexit: # %ebx:rc ( -- )
 
 asmInvariantViolated: EXIT $RC_ASM_INVARIANT
 
-###
 # Snapshotting registers allows for debug printing to happen without affecting
 # the assembly you are debugging.
-
 .equ offset_eax, 0x00
 .equ offset_ebx, 0x04
 .equ offset_ecx, 0x08
@@ -166,7 +145,7 @@ asmInvariantViolated: EXIT $RC_ASM_INVARIANT
 .equ offset_esi, 0x14
 
 .macro SNAPSHOT_REG r
-  movl %\r, registerSnapshot+offset_\r
+  movl %\r , (registerSnapshot+offset_\r)
 .endm
 
 snapshotRegisters:
@@ -179,7 +158,7 @@ snapshotRegisters:
   ret
 
 .macro RESTORE_REG r
-  movl registerSnapshot+offset_\r, %\r
+  movl (registerSnapshot + offset_\r) , %\r
 .endm
 
 restoreRegisters:
@@ -193,13 +172,22 @@ restoreRegisters:
 
 syswrite: # %ebx:fd %ecx:&buff %edx:bytesToWrite ( -- )
   # Direct call to SYS_WRITE syscall with error checking.
-  cmp $0, errno # if errno is not zero, do nothing
-  jne return
   movl $SYS_WRITE, %eax
   int $LINUX_SYSCALL
+  ret
+
+syswriteall: # %ebx:fd %ecx:&buff %edx:bytesToWrite ( -- )
+  cmp $0, errno # if errno is not zero, do nothing
+  jne return
+  call syswrite
   cmpl $0, %eax # error if lt 0
-  jge return
-  movl %ebx, errno # error
+  jl syswriteall_error
+  subl %eax, %edx # edx=edx-eax  # OPP src, dest
+  jz return # if edx=0 we are done
+  addl %ecx, %eax
+  jmp syswriteall # else, run again
+syswriteall_error:
+  movl %eax, errno # error
   ret
 
 countntEcx: # %ecx:ntstr ( -- ) %ecx:ntstr %edx:count
@@ -214,21 +202,32 @@ countntEcx_loop:
 pntEcxNtStr: # %ecx:ntstr ( -- )
   # Print a null terminated string
   # Does not change any registers
-  call countntEcx
+  call countntEcx   # edx=bytesToWrite
   movl pntFd, %ebx
-  call syswrite
+  call syswriteall
   ret
 
-pntEcx: # %ecx:byte ( -- )
-  movl pntFd, %ebx
-  addl $asciiStr, %ecx
-  movl $1, %edx
-  call syswrite
+asciiStr: .ascii "~~~~~~~~~\t\n~~\r~~"  # 0x0-F
+          .ascii "~~~~~~~~~~~~~~~~"     # 0x10-1F
+          .ascii " ! \"$%&'()*+,-./"    # 0x20-2F
+          .ascii "0123456789:;<=>?"     # 0x30-3F
+          .ascii "@ABCDEFGHIJKLMNO"     # 0x40-4F
+          .ascii "PQRSTUVWXYZ[\\]^_"    # 0x50-5F
+          .ascii "`abcdefghijklmno"     # 0x60-6F
+          .ascii "pqrstuvwxyz{|}~"      # 0x70-7E
+.align 4
+pntEcxAscii: # %ecx:byte ( -- )
+  # Print the ascii value in Ecx
+  # writesys requires a pointer so this allows printing single characters.
+  movl pntFd, %ebx    # fd
+  addl $asciiStr, %ecx  # &buff
+  movl $1, %edx         # bytesToWrite
+  call syswriteall
   ret
 
 .macro PNT_ASCII a
-  movl \a, %ecx
-  call pntEcx
+  movl \a , %ecx
+  call pntEcxAscii
 .endm
 
 .macro PNT_NT_STR s
@@ -258,28 +257,33 @@ ebxUx: # %ebx:f ( 8o -- 8o ) %edx:right-aligned-count
   # Uses: ebx, ecx, edx
   cmpl $0, %ebx
   je ebxUx_zero
-  movl $7, %edx      # %edx=index to store character
-  movl %ebx, %ecx    # %ecx=remaining n
+  movl $7, %eax     # %eax=index to store character
+  movl %ebx, %ecx   # %ecx=remaining n
+  movl $0, %edx     # edx=count
 ebxUx_loop:
+  cmp $7, %edx
+  jge asmInvariantViolated
+  cmp $0, %ecx
+  jl asmInvariantViolated
+
   movl %ecx, %ebx
-  andl $0xF, %ebx  # ebx=ebx%0x10
+  andl $0x0F, %ebx  # ebx=ebx % 0x10
   call ebx_toascii
-  movb %bl, (%ebp, %edx, 1)
-  dec %edx
-  shrl $4, %ecx    # ecx=ecx/0x10
+  movb %bl, (%ebp, %eax, 1)
+  inc %edx
+  dec %eax
+  shrl $4, %ecx    # ecx=ecx / 0x10
   jnz ebxUx_loop
-  neg %edx      # edx=-edx+7 (count)
-  addl $7, %edx
   ret
 ebxUx_zero:
-  movl $'0', 7(%ebp)
+  movb $'0', 7(%ebp)
   movl $1, %edx
   ret
 
 ebxUxPad: # %ebx:f ( 8o -- 8o ) %edx:count ( always 8 )
   # Store ebx as hex ascii into the first 8 bytes of the stack, pading any
-  # remaining bytes. The caller must reserve this space.
-  # Uses: ebx, ecx, edx
+  # remaining bytes.
+  # The caller must reserve this space.
   call ebxUx
   # Set eax=place to start putting zeros
   leal 8(%ebp), %eax
@@ -299,7 +303,7 @@ pntEbxUx: # %ebx:f ( -- )
   movl pntFd, %ebx    # fd
   leal 8(%ebp), %ecx  # &buff=&end-count
   subl %edx, %ecx
-  call syswrite
+  call syswriteall
   addl $8, %ebp
   ret
 
@@ -309,11 +313,11 @@ pntEbxUxPretty: # %ebx:f ( -- )
   movl pntFd, %ebx    # ebx=fd
   movl %ebp, %ecx     # ecx=&buf
   movl $4, %edx       # edx=bytes to write
-  call syswrite
+  call syswriteall
   PNT_ASCII $'_'      # ebx=fd
-  leal 4(%ebp), %ecx  # ecx=&buf
+  leal 4(%ebp), %ecx  # ecx=&buf second half
   movl $4, %edx       # edx=bytes to write
-  call syswrite
+  call syswriteall
   addl $8, %ebp  # unreserve stack
   ret
 
@@ -325,6 +329,18 @@ pntEbxUxPretty: # %ebx:f ( -- )
 .macro PNT_UX v
   movl \v, %ebx
   call pntEbxUx
+.endm
+
+.macro PNT_UX_SPC v
+  movl \v, %ebx
+  call pntEbxUx
+  PNT_ASCII $' '
+.endm
+
+.macro PNT_UX_NL v
+  movl \v, %ebx
+  call pntEbxUx
+  PNT_ASCII $'\n'
 .endm
 
 .macro PNT_UX_PRETTY v
@@ -345,6 +361,14 @@ dbgRegisters: # prints the snapshotted registers
   DBG_REG edi
   ret
 
+dbgStartNtStr: .ascii "DBG(\0"
+dbgRegNtStr_eax: .ascii " eax=\0"
+dbgRegNtStr_ebx: .ascii " ebx=\0"
+dbgRegNtStr_ecx: .ascii " ecx=\0"
+dbgRegNtStr_edx: .ascii " edx=\0"
+dbgRegNtStr_edi: .ascii " edi=\0"
+dbgEndNtStr: .ascii ")\n\0"
+.align 4
 .macro DBG v
   # Allows us to debug registers at varioius points
   call snapshotRegisters
@@ -355,17 +379,121 @@ dbgRegisters: # prints the snapshotted registers
   call restoreRegisters
 .endm
 
+pntMem: # ( start end -- )
+  movl (%ebp), %ecx  # start
+  movl 4(%ebp), %edx  # end
+  cmp %edx, %ecx
+  jge pntMem_return
+  movl (%ecx), %ebx
+  call pntEbxUxPretty
+  PNT_ASCII $' '
+  addl $4, (%ebp)
+  jmp pntMem
+pntMem_return:
+  addl $8, %ebp
+  ret
 
-##################################################################################
-#### STACK                                                                    ####
-##################################################################################
+pstackNtStr: .ascii "PSTACK: \0"
+rstackNtStr: .ascii "RSTACK: depth=\0"
+.align 4
+pntPstack: # ( -- )
+  PNT_NTSTR $pstackNtStr
+  movl %ebp, -8(%ebp)       # start
+  movl $pstackMax, -4(%ebp) # end
+  subl $8, %ebp
+  call pntMem
+  ret
+
+pntRstackDepth: # print the depth of the return stack
+  PNT_NTSTR $rstackNtStr
+  movl $rstackMax, %ebx
+  subl %esp, %ebx
+  subl $4, %ebx
+  shrl $2, %ebx  # ebx=ebx/4
+  call pntEbxUx
+  PNT_ASCII $'\n'
+  ret
+
+.macro DBG_STACK v
+  # Allows us to debug registers at varioius points
+  call snapshotRegisters
+  PNT_NTSTR $dbgStartNtStr
+  PNT_UX_PRETTY \v
+  PNT_ASCII $' '
+  call pntPstack
+  PNT_NTSTR $dbgEndNtStr
+  call restoreRegisters
+.endm
+
+panicStartNtStr: .ascii "!! PANIC !! code=0x\0"
+panicCodeNtStr: .ascii "Code=\0"
+.align 4
+defaultPanic:
+  PNT_NTSTR $panicStartNtStr
+  PNT_UX panicErr
+  PNT_ASCII $'\n'
+  call pntPstack
+  PNT_ASCII $'\n'
+  call pntRstackDepth
+  EXIT $RC_PANIC
+panic: .int defaultPanic
+
+.macro PANIC e
+  movl \e, panicErr
+  jmp *(panic)
+.endm
+
+testStartNtStr: .ascii "## Test \0"
+testFailedNtStr: .ascii "!! Test failed: \0"
+.align 4
+startingTest:
+  PNT_NT_STR $testStartNtStr
+  PNT_NT_STR testingNtStr
+  PNT_ASCII $'\n'
+  ret
+
+.macro TEST t
+  testname_\t : .ascii "\t"
+  .align 4
+  test_\t :
+    movl $testname_\t, testingNtStr
+    call startingTest
+.endm
+
+exitFailTest:
+  PNT_NT_STR $testFailedNtStr
+  PNT_NT_STR testingNtStr
+  PNT_ASCII $'\n'
+  call pntPstack
+  PNT_ASCII $'\n'
+  call pntRstackDepth
+  EXIT $RC_TESTFAIL
+
+assertEaxEbxEq_str: .ascii "Not equal: \0"
+.align 4
+assertEaxEbxEq:
+  cmp %eax, %ebx
+  je return
+  PNT_NT_STR $assertEaxEbxEq_str
+  movl %eax, %edi
+  call pntEbxUx
+  movl %edi, %ebx
+  call pntEbxUx
+  PNT_ASCII $'\n'
+  jmp exitFailTest
+
+.macro SET_EABX a, b
+  movl \a , %eax
+  movl \b , %ebx
+.endm
+################################################################################
+#### STACK                                                                  ####
+################################################################################
 pushDsInvalid:
   # Checks to make sure that the datastack hasn't overflowed.
   # If it has, re-increments and panics with appropriate error.
   addl $4, %ebp
-  movl $ERR_PSTACK_OVERFLOW, panicErr
-  call *(panic)
-  EXIT $RC_UNREACHABLE
+  PANIC $ERR_PSTACK_OVERFLOW
 
 .macro DPUSH reg
   subl $4, %ebp
@@ -378,15 +506,12 @@ popDsInvalid:
   # Checks to make sure that the datastack hasn't underflowed.
   # If it has, re-decrements and panics with appropriate error.
   subl $4, %ebp
-  movl $ERR_PSTACK_UNDERFLOW, panicErr
-  call *(panic)
-  EXIT $RC_UNREACHABLE
+  PANIC $ERR_PSTACK_UNDERFLOW
 
 .macro DPOP reg
   movl (%ebp) , \reg
   cmpl $pstackMax, %ebp
   jge popDsInvalid
-  call checkPopDs
   addl $4, %ebp
 .endm
 
@@ -396,13 +521,33 @@ mainStartNtStr: .ascii "Starting Triforth...\n\0"
 .align 4
 
 ##############################
-# Main Entrypoint
+# Main Entrypoint and TestSuite
 # This exists just so the 
+
+TEST suite
+  SET_EABX $0x42, $0x44
+  call assertEaxEbxEq
+  ret
+
+
 .globl _start
 _start:
   movl $rstackMax, %esp  # clear rstack
   movl $pstackMax, %ebp  # clear pstack
   PNT_NT_STR $mainStartNtStr
-  DBG $0x42
+  movl $0x110, %eax
+  movl $0x111, %ebx
+  movl $0x112, %ecx
+  movl $0x113, %edx
+  movl $0x114, %edi
+  movl $0x115, %esi
   DBG $0x43
+  DPUSH $0x42
+  DPUSH $0x43
+  DPUSH $0x44
+  DBG $0x44
+  DBG_STACK $0x45
+  DBG $0x46
+  call pntRstackDepth
+  call test_suite
   EXIT $0
