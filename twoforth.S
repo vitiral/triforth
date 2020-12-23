@@ -103,16 +103,31 @@ panicErr: .int 0
 # Used in `reset` to return from a panic in testing.
 rstackCheckpoint: .int 0
 
-emitFd: .int STDERR # where to EMIT and TYPE to
+pntFd: .int STDERR # where to EMIT and TYPE to
 .equ EMIT_BUFFER_SIZE,16
 keyFd: .int STDIN   # where KEY/etc gets input from
-startDbgNtStr: .ascii "DBG(\0"
-dbgEaxNtStr: .ascii " eax=\0"
-dbgEbxNtStr: .ascii " ebx=\0"
-dbgEcxNtStr: .ascii " ecx=\0"
-dbgEdxNtStr: .ascii " edx=\0"
-dbgEdiNtStr: .ascii " edi=\0"
-endDbgNtStr: .ascii ")\n\0"
+
+##################################################################################
+#### PURE ASSEMBLY                                                            ####
+##################################################################################
+# The following are pure assembly functions whose sole purpose is to make
+# developing in assembly easier. None of these will be linked directly to
+# forth words (although some are used in their implementations).
+#
+# More importantly, these make it much easier to debug both assembly and forth
+# as you are writing the bootstrapper. Feel free to implement them yourself and
+# then look at how I have done it. The basic functionality we need is to be
+# able to print registers and the stack, along with an arbitrary number. This
+# will allow us to more easily reason about code that is being executed.
+
+dbgStartNtStr: .ascii "DBG(\0"
+dbgRegNtStr_eax: .ascii " eax=\0"
+dbgRegNtStr_ebx: .ascii " ebx=\0"
+dbgRegNtStr_ecx: .ascii " ecx=\0"
+dbgRegNtStr_edx: .ascii " edx=\0"
+dbgRegNtStr_edi: .ascii " edi=\0"
+dbgEndNtStr: .ascii ")\n\0"
+# writesys requires a pointer so this allows printing single characters.
 asciiStr: .ascii "~~~~~~~~~\t\n~~\r~~"  # 0x0-F
           .ascii "~~~~~~~~~~~~~~~~"     # 0x10-1F
           .ascii " ! \"$%&'()*+,-./"    # 0x20-2F
@@ -122,10 +137,6 @@ asciiStr: .ascii "~~~~~~~~~\t\n~~\r~~"  # 0x0-F
           .ascii "`abcdefghijklmno"     # 0x60-6F
           .ascii "pqrstuvwxyz{|}~"      # 0x70-7E
 .align 4
-
-##################################################################################
-#### PURE ASSEMBLY                                                            ####
-##################################################################################
 
 return:
   # Functions can conditionally jump here to return
@@ -142,6 +153,10 @@ sysexit: # %ebx:rc ( -- )
 .endm
 
 asmInvariantViolated: EXIT $RC_ASM_INVARIANT
+
+###
+# Snapshotting registers allows for debug printing to happen without affecting
+# the assembly you are debugging.
 
 .equ offset_eax, 0x00
 .equ offset_ebx, 0x04
@@ -200,12 +215,12 @@ pntEcxNtStr: # %ecx:ntstr ( -- )
   # Print a null terminated string
   # Does not change any registers
   call countntEcx
-  movl $STDERR, %ebx
+  movl pntFd, %ebx
   call syswrite
   ret
 
 pntEcx: # %ecx:byte ( -- )
-  movl $STDERR, %ebx
+  movl pntFd, %ebx
   addl $asciiStr, %ecx
   movl $1, %edx
   call syswrite
@@ -216,13 +231,11 @@ pntEcx: # %ecx:byte ( -- )
   call pntEcx
 .endm
 
-.macro SAFE_PNT_NT_STR s
+.macro PNT_NT_STR s
   # Safely print a null terminated string
   # (Safe means no registers changed)
-  call snapshotRegisters
   movl \s, %ecx
   call pntEcxNtStr
-  call restoreRegisters
 .endm
 
 ebx_toascii: # ( u -- c )
@@ -255,30 +268,53 @@ ebxUx_loop:
   dec %edx
   shrl $4, %ecx    # ecx=ecx/0x10
   jnz ebxUx_loop
-  neg %edx      # edx=-edx+8 (count)
-  addl $8, %edx
+  neg %edx      # edx=-edx+7 (count)
+  addl $7, %edx
   ret
 ebxUx_zero:
   movl $'0', 7(%ebp)
   movl $1, %edx
   ret
 
-ebxUxPadded: # %ebx:f ( 8o -- 8o )
+ebxUxPad: # %ebx:f ( 8o -- 8o ) %edx:count ( always 8 )
   # Store ebx as hex ascii into the first 8 bytes of the stack, pading any
   # remaining bytes. The caller must reserve this space.
   # Uses: ebx, ecx, edx
-  # call ebxUx
-  EXIT $RC_TODO
+  call ebxUx
+  # Set eax=place to start putting zeros
+  leal 8(%ebp), %eax
+  subl %edx, %eax
+  movl $8, %edx # always return count=8
+ebxUxPad_loop:
+  cmp %ebp, %eax
+  jle return
+  dec %eax
+  movb $'0', (%eax)
+  jmp ebxUxPad_loop
 
 pntEbxUx: # %ebx:f ( -- )
   # Uses: eax, ebx, ecx, edx
   subl $8, %ebp  # reserve space for bytes buffer
-  call ebxUx  # edx=bytesToWrite
-  movl $STDERR, %ebx  # fd
+  call ebxUx          # edx=bytesToWrite
+  movl pntFd, %ebx    # fd
   leal 8(%ebp), %ecx  # &buff=&end-count
   subl %edx, %ecx
   call syswrite
   addl $8, %ebp
+  ret
+
+pntEbxUxPretty: # %ebx:f ( -- )
+  subl $8, %ebp  # reserve space for bytes buffer
+  call ebxUxPad
+  movl pntFd, %ebx    # ebx=fd
+  movl %ebp, %ecx     # ecx=&buf
+  movl $4, %edx       # edx=bytes to write
+  call syswrite
+  PNT_ASCII $'_'      # ebx=fd
+  leal 4(%ebp), %ecx  # ecx=&buf
+  movl $4, %edx       # edx=bytes to write
+  call syswrite
+  addl $8, %ebp  # unreserve stack
   ret
 
 .macro PNT_NTSTR s
@@ -290,19 +326,32 @@ pntEbxUx: # %ebx:f ( -- )
   movl \v, %ebx
   call pntEbxUx
 .endm
-  
 
-# pntSnapshot: # prints the snapshotted registers
-#   PNT_NTSTR $eaxNtStr
-#   ret
+.macro PNT_UX_PRETTY v
+  movl \v, %ebx
+  call pntEbxUxPretty
+.endm
+
+.macro DBG_REG r
+  PNT_NTSTR $dbgRegNtStr_\r
+  PNT_UX_PRETTY registerSnapshot+offset_\r
+.endm
+
+dbgRegisters: # prints the snapshotted registers
+  DBG_REG eax
+  DBG_REG ebx
+  DBG_REG ecx
+  DBG_REG edx
+  DBG_REG edi
+  ret
 
 .macro DBG v
   # Allows us to debug registers at varioius points
   call snapshotRegisters
-  PNT_NTSTR $startDbgNtStr
-  PNT_UX \v
-  # call pntSnapshot
-  PNT_NTSTR $endDbgNtStr
+  PNT_NTSTR $dbgStartNtStr
+  PNT_UX_PRETTY \v
+  call dbgRegisters
+  PNT_NTSTR $dbgEndNtStr
   call restoreRegisters
 .endm
 
@@ -353,14 +402,7 @@ mainStartNtStr: .ascii "Starting Triforth...\n\0"
 _start:
   movl $rstackMax, %esp  # clear rstack
   movl $pstackMax, %ebp  # clear pstack
-  # SAFE_PNT_NT_STR $mainStartNtStr
-  SAFE_PNT_NT_STR $mainStartNtStr
+  PNT_NT_STR $mainStartNtStr
   DBG $0x42
   DBG $0x43
-  PNT_ASCII $'A'
-  PNT_ASCII $'0'
-  PNT_ASCII $'!'
-  PNT_ASCII $'z'
-  PNT_ASCII $']'
-  PNT_ASCII $'\n'
   EXIT $0
