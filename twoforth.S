@@ -1,22 +1,22 @@
-# general 32bit:    %eax   %ebx   %ecx   %edx  %edi  %esi
-# from above 16bit:  ax     bx     cx     dx   none  none
-# from above 8bit: al ah  bl bh  cl ch  dl dh  none  none
-# special:  %esp: stack ptr, our return stack ptr (RSP)
-#           %ebp: base ptr, our parameter stack ptr (PSP)
-#           %eip: cpu inst ptr
-#           %esi: our forth xt-inst ptr
-#           %eflags: not used directly here
-#
-# basic types:
-# o ot (One byte)
-# w wot (tWO bytes)
-# f fot (FOur bytes)
-# g got (eiGht bytes)
+// general 32bit:    %eax   %ebx   %ecx   %edx  %edi  %esi
+// from above 16bit:  ax     bx     cx     dx   none  none
+// from above 8bit: al ah  bl bh  cl ch  dl dh  none  none
+// special:  %esp: stack ptr, our return stack ptr (RSP)
+//           %ebp: base ptr, our parameter stack ptr (PSP)
+//           %eip: cpu inst ptr
+//           %esi: our forth xt-inst ptr
+//           %eflags: not used directly here
+//
+// basic types:
+// o ot (One byte)
+// w wot (tWO bytes)
+// f fot (FOur bytes)
+// g got (eiGht bytes)
 
-##############################
-# Constants
-# It's better to define these at the top of the file. Use these as a reference
-# as you encounter them.
+//#############################
+// Constants
+// It's better to define these at the top of the file. Use these as a reference
+// as you encounter them.
 .equ LINUX_SYSCALL,0x80  # linux kernel interrupt vector
 .equ SYS_OPEN, 5
 .equ SYS_WRITE, 4
@@ -24,17 +24,17 @@
 .equ SYS_CLOSE, 6
 .equ SYS_EXIT, 1
 
-# File open options
+// File open options
 .equ O_RDONLY, 0x0000  # open for reading only
 .equ O_WRONLY, 0x0001  # open for writing only
 .equ O_RDWR,   0x0002  # open for reading and writing
 
-# Standard file descriptors
+// Standard file descriptors
 .equ STDIN, 0
 .equ STDOUT, 1
 .equ STDERR, 2
 
-# Our Return codes
+// Our Return codes
 .equ RC_TODO, 98
 .equ RC_DBG, 99 # 99 problems and debugging ain't one, `call dbgexit`
 .equ RC_TESTFAIL, 100
@@ -47,7 +47,7 @@
 .equ RC_STACK_OVERFLOW, 106
 .equ RC_ASM_INVARIANT, 107
 
-# Our Panic Error Codes
+// Our Panic Error Codes
 .equ ERR_SEE_MSG, 0x001
 .equ ERR_OKAY, 0xBEEF # okay
 .equ ERR_PSTACK_OVERFLOW, 0x300
@@ -70,17 +70,16 @@
 .equ FALSE, 0
 .equ TRUE, -1
 
-
-################
-## Data layout
-# |-rstack----|-pstack-|-"code"-------------------|-memory---...
-#
-# Code contains _only_ code (not the word dictionary). The word dictionary is
-# a normal linked-list, except the name, flags and type is all kept inside of
-# "memory" and so can be dropped once the "compilation" is complete.
+//###############
+// Data layout
+// |-rstack----|-pstack-|-"code"-------------------|-memory---...
+//
+// Code contains _only_ code (not the word dictionary). The word dictionary is
+// a normal linked-list, except the name, flags and type is all kept inside of
+// "memory" and so can be dropped once the "compilation" is complete.
 
 ################################################################################
-#### DATA SECTION -- mutable memory must go here.                            ###
+#### DATA SECTION -- mutable memory must go here.                           ####
 ################################################################################
 .section .data
 .equ RSTACK_SIZE, 0x2000
@@ -92,39 +91,37 @@ pstackMin: .space PSTACK_SIZE # data stack
 pstackMax:
 registerSnapshot: .space 0x20
 
-errno: .int 0
-# Address that should be called when panicing, can be redirected when testing.
-
 pntFd: .int STDERR # where to EMIT and TYPE to
 .equ EMIT_BUFFER_SIZE, 16
 keyFd: .int STDIN   # where KEY/etc gets input from
-testingNtStr: .int 0
+errno: .int 0
 panicErr: .int 0  # error to print while panicing
+testingNtStr: .int 0
 
 .section .text
 
 ################################################################################
 #### PURE ASSEMBLY                                                          ####
 ################################################################################
-# The following are pure assembly functions whose sole purpose is to make
-# developing in assembly easier. None of these will be linked directly to
-# forth words (although some are used in their implementations).
-#
-# More importantly, these make it much easier to debug both assembly and forth
-# as you are writing the bootstrapper. Feel free to implement them yourself and
-# then look at how I have done it. The basic functionality we need is to be
-# able to print registers and the stack, along with an arbitrary number. This
-# will allow us to more easily reason about code that is being executed.
-#
-# Finally, we develop a way to "panic", printing out debug information in the
-# process. We use indirection so that we can expect panics in our tests.
+// The following are pure assembly functions whose sole purpose is to make
+// developing in assembly easier. None of these will be linked directly to
+// forth words (although some are used in their implementations).
+//
+// More importantly, these make it much easier to debug both assembly and forth
+// as you are writing the bootstrapper. Feel free to implement them yourself and
+// then look at how I have done it. The basic functionality we need is to be
+// able to print registers and the stack, along with an arbitrary number. This
+// will allow us to more easily reason about code that is being executed.
+//
+// Finally, we develop a way to "panic", printing out debug information in the
+// process. We use indirection so that we can expect panics in our tests.
 
 return:
-  # Functions can conditionally jump here to return
+  // Functions can conditionally jump here to return
   ret
 
 sysexit: # %ebx:rc ( -- )
-  # Directly call SYS_EXIT using value in ebx
+  // Directly call SYS_EXIT using value in ebx
   movl $SYS_EXIT, %eax
   int  $LINUX_SYSCALL
 
@@ -135,8 +132,8 @@ sysexit: # %ebx:rc ( -- )
 
 asmInvariantViolated: EXIT $RC_ASM_INVARIANT
 
-# Snapshotting registers allows for debug printing to happen without affecting
-# the assembly you are debugging.
+// Snapshotting registers allows for debug printing to happen without affecting
+// the assembly you are debugging.
 .equ offset_eax, 0x00
 .equ offset_ebx, 0x04
 .equ offset_ecx, 0x08
@@ -191,7 +188,7 @@ syswriteall_error:
   ret
 
 countntEcx: # %ecx:ntstr ( -- ) %ecx:ntstr %edx:count
-  # Count the number of bytes in a null-terminated string
+  // Count the number of bytes in a null-terminated string
   movl $-1, %edx
 countntEcx_loop:
   inc %edx
@@ -200,8 +197,8 @@ countntEcx_loop:
   ret
 
 pntEcxNtStr: # %ecx:ntstr ( -- )
-  # Print a null terminated string
-  # Does not change any registers
+  // Print a null terminated string
+  // Does not change any registers
   call countntEcx   # edx=bytesToWrite
   movl pntFd, %ebx
   call syswriteall
@@ -217,8 +214,8 @@ asciiStr: .ascii "~~~~~~~~~\t\n~~\r~~"  # 0x0-F
           .ascii "pqrstuvwxyz{|}~"      # 0x70-7E
 .align 4
 pntEcxAscii: # %ecx:byte ( -- )
-  # Print the ascii value in Ecx
-  # writesys requires a pointer so this allows printing single characters.
+  // Print the ascii value in Ecx
+  // writesys requires a pointer so this allows printing single characters.
   movl pntFd, %ebx    # fd
   addl $asciiStr, %ecx  # &buff
   movl $1, %edx         # bytesToWrite
@@ -231,14 +228,14 @@ pntEcxAscii: # %ecx:byte ( -- )
 .endm
 
 .macro PNT_NT_STR s
-  # Safely print a null terminated string
-  # (Safe means no registers changed)
+  // Safely print a null terminated string
+  // (Safe means no registers changed)
   movl \s, %ecx
   call pntEcxNtStr
 .endm
 
 ebx_toascii: # ( u -- c )
-  # Convert a number (typically 1-16) into ascii equivalent
+  // Convert a number (typically 1-16) into ascii equivalent
   cmpl $9, %ebx
   jg ebx_toascii_gt9
   # number <= 9
@@ -252,9 +249,9 @@ ebx_toascii_gt9:
   ret
 
 ebxUx: # %ebx:f ( 8o -- 8o ) %edx:right-aligned-count
-  # Store ebx as hex ascii into (up to) the first 8 bytes of the stack.
-  # The caller must reserve this space.
-  # Uses: ebx, ecx, edx
+  // Store ebx as hex ascii into (up to) the first 8 bytes of the stack.
+  // The caller must reserve this space.
+  // Uses: ebx, ecx, edx
   cmpl $0, %ebx
   je ebxUx_zero
   movl $7, %eax     # %eax=index to store character
@@ -281,9 +278,9 @@ ebxUx_zero:
   ret
 
 ebxUxPad: # %ebx:f ( 8o -- 8o ) %edx:count ( always 8 )
-  # Store ebx as hex ascii into the first 8 bytes of the stack, pading any
-  # remaining bytes.
-  # The caller must reserve this space.
+  // Store ebx as hex ascii into the first 8 bytes of the stack, pading any
+  // remaining bytes.
+  // The caller must reserve this space.
   call ebxUx
   # Set eax=place to start putting zeros
   leal 8(%ebp), %eax
@@ -297,7 +294,6 @@ ebxUxPad_loop:
   jmp ebxUxPad_loop
 
 pntEbxUx: # %ebx:f ( -- )
-  # Uses: eax, ebx, ecx, edx
   subl $8, %ebp  # reserve space for bytes buffer
   call ebxUx          # edx=bytesToWrite
   movl pntFd, %ebx    # fd
@@ -370,7 +366,7 @@ dbgRegNtStr_edi: .ascii " edi=\0"
 dbgEndNtStr: .ascii ")\n\0"
 .align 4
 .macro DBG v
-  # Allows us to debug registers at varioius points
+  // Allows us to debug registers at varioius points
   call snapshotRegisters
   PNT_NTSTR $dbgStartNtStr
   PNT_UX_PRETTY \v
@@ -415,7 +411,7 @@ pntRstackDepth: # print the depth of the return stack
   ret
 
 .macro DBG_STACK v
-  # Allows us to debug registers at varioius points
+  // Allows us to debug registers at varioius points
   call snapshotRegisters
   PNT_NTSTR $dbgStartNtStr
   PNT_UX_PRETTY \v
@@ -443,6 +439,12 @@ panic: .int defaultPanic
   jmp *(panic)
 .endm
 
+################################################################################
+#### TESTING                                                                ####
+################################################################################
+// Testing is core to how this tutorial works. This contains utilities for
+// testing our code.
+
 testStartNtStr: .ascii "## Test \0"
 testFailedNtStr: .ascii "!! Test failed: \0"
 .align 4
@@ -453,7 +455,7 @@ startingTest:
   ret
 
 .macro TEST t
-  testname_\t : .ascii "\t"
+  testname_\t : .ascii "\t\0"
   .align 4
   test_\t :
     movl $testname_\t, testingNtStr
@@ -494,9 +496,23 @@ assertEaxEbxEq:
   call assertEaxEbxEq
 .endm
 
+testTesting:
+  ASSERT_EQ $0x42, $0x42
+  ret
+  
+TEST suite
+  call testTesting
+  ret
+
+
 ################################################################################
 #### STACK                                                                  ####
 ################################################################################
+// Our forth will primarily involve manipulating two stacks, the pstack
+// (parameter stack) and rstack (return stack). We have defined pstackMin/Max
+// and rstackMin/Max to specify the stack locations, and %ebp is our pstack
+// pointer and %esp our rstack pointer.
+
 pushDsInvalid:
   # Checks to make sure that the datastack hasn't overflowed.
   # If it has, re-increments and panics with appropriate error.
@@ -524,19 +540,9 @@ popDsInvalid:
 .endm
 
 ##############################
-# Tests
+# Main Entrypoint
 mainStartNtStr: .ascii "Starting Triforth...\n\0"
 .align 4
-
-##############################
-# Main Entrypoint and TestSuite
-# This exists just so the 
-
-TEST suite
-  ASSERT_EQ $0x42, $0x432
-  ret
-
-
 .globl _start
 _start:
   movl $rstackMax, %esp  # clear rstack
