@@ -469,14 +469,16 @@ exitFailTest:
   call pntRstackDepth
   EXIT $RC_TESTFAIL
 
-assertEaxEbxEq_str: .ascii "Not equal: \0"
+assertFailStr: .ascii "!! ASSERT FAIL: \0"
+assertEaxEbxEq_str: .ascii " = \0"
 .align 4
 assertEaxEbxEq:
   cmp %eax, %ebx
   je return
-  PNT_NT_STR $assertEaxEbxEq_str
+  PNT_NT_STR $assertFailStr
   movl %eax, %edi
   call pntEbxUx
+  PNT_NT_STR $assertEaxEbxEq_str
   movl %edi, %ebx
   call pntEbxUx
   PNT_ASCII $'\n'
@@ -486,6 +488,12 @@ assertEaxEbxEq:
   movl \a , %eax
   movl \b , %ebx
 .endm
+
+.macro ASSERT_EQ a, b
+  SET_EABX \a, \b
+  call assertEaxEbxEq
+.endm
+
 ################################################################################
 #### STACK                                                                  ####
 ################################################################################
@@ -525,8 +533,7 @@ mainStartNtStr: .ascii "Starting Triforth...\n\0"
 # This exists just so the 
 
 TEST suite
-  SET_EABX $0x42, $0x44
-  call assertEaxEbxEq
+  ASSERT_EQ $0x42, $0x432
   ret
 
 
@@ -541,13 +548,8 @@ _start:
   movl $0x113, %edx
   movl $0x114, %edi
   movl $0x115, %esi
-  DBG $0x43
   DPUSH $0x42
   DPUSH $0x43
   DPUSH $0x44
-  DBG $0x44
-  DBG_STACK $0x45
-  DBG $0x46
-  call pntRstackDepth
   call test_suite
   EXIT $0
