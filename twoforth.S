@@ -120,8 +120,29 @@ panicRestore: .int 0
 // Finally, we develop a way to "panic", printing out debug information in the
 // process. We use indirection so that we can expect panics in our tests.
 
+.macro ZERO reg
+  // Zero a register. Uses xor which is more compact than mov
+  xor \reg, \reg
+.endm
+
+.macro JRZ reg, loc
+  // Jump to location if the register is zero.  This uses `test`, which does an
+  // AND that only mutates the eflags register.
+  test \reg, \reg
+  jz \loc
+.endm
+
+.macro JRNZ reg, loc
+  // Jum to location if the register is not zero.
+  test \reg, \reg
+  jnz \loc
+.endm
+
 return:
   // Functions can conditionally jump here to return
+  // I.e.: jnz return
+  // instead of having to define a special return memory location
+  // within the function.
   ret
 
 sysexit: # %ebx:rc ( -- )
@@ -172,12 +193,13 @@ restoreRegisters:
   ret
 
 syswrite: # %ebx:fd %ecx:&buff %edx:bytesToWrite ( -- )
-  # Direct call to SYS_WRITE syscall with error checking.
+  # Direct call to SYS_WRITE syscall
   movl $SYS_WRITE, %eax
   int $LINUX_SYSCALL
   ret
 
 syswriteall: # %ebx:fd %ecx:&buff %edx:bytesToWrite ( -- )
+  # Writes to the fd, making sure that all bytes are written.
   cmp $0, errno # if errno is not zero, do nothing
   jne return
   call syswrite
@@ -193,6 +215,7 @@ syswriteall_error:
 
 countntEcx: # %ecx:ntstr ( -- ) %ecx:ntstr %edx:count
   // Count the number of bytes in a null-terminated string
+  // Writes the count to edx so it can be used in syswrite
   movl $-1, %edx
 countntEcx_loop:
   inc %edx
@@ -220,7 +243,7 @@ asciiStr: .ascii "~~~~~~~~~\t\n~~\r~~"  # 0x0-F
 pntEcxAscii: # %ecx:byte ( -- )
   // Print the ascii value in Ecx
   // writesys requires a pointer so this allows printing single characters.
-  movl pntFd, %ebx    # fd
+  movl pntFd, %ebx      # fd
   addl $asciiStr, %ecx  # &buff
   movl $1, %edx         # bytesToWrite
   call syswriteall
@@ -232,8 +255,7 @@ pntEcxAscii: # %ecx:byte ( -- )
 .endm
 
 .macro PNT_NT_STR s
-  // Safely print a null terminated string
-  // (Safe means no registers changed)
+  // Print a null-terminated string.
   movl \s, %ecx
   call pntEcxNtStr
 .endm
@@ -255,12 +277,11 @@ ebx_toascii_gt9:
 ebxUx: # %ebx:f ( 8o -- 8o ) %edx:right-aligned-count
   // Store ebx as hex ascii into (up to) the first 8 bytes of the stack.
   // The caller must reserve this space.
-  // Uses: ebx, ecx, edx
-  cmpl $0, %ebx
-  je ebxUx_zero
+  // The resulting count is stored in edx so it can be used in syswrite.
+  JRZ %ebx, ebxUx_zero
   movl $7, %eax     # %eax=index to store character
   movl %ebx, %ecx   # %ecx=remaining n
-  movl $0, %edx     # edx=count
+  ZERO %edx
 ebxUx_loop:
   cmp $7, %edx
   jge asmInvariantViolated
@@ -285,6 +306,7 @@ ebxUxPad: # %ebx:f ( 8o -- 8o ) %edx:count ( always 8 )
   // Store ebx as hex ascii into the first 8 bytes of the stack, pading any
   // remaining bytes.
   // The caller must reserve this space.
+  // The resulting count is stored in edx so it can be used in syswrite.
   call ebxUx
   # Set eax=place to start putting zeros
   leal 8(%ebp), %eax
@@ -298,13 +320,13 @@ ebxUxPad_loop:
   jmp ebxUxPad_loop
 
 pntEbxUx: # %ebx:f ( -- )
-  subl $8, %ebp  # reserve space for bytes buffer
+  subl $8, %ebp       # reserve space for bytes buffer
   call ebxUx          # edx=bytesToWrite
   movl pntFd, %ebx    # fd
   leal 8(%ebp), %ecx  # &buff=&end-count
   subl %edx, %ecx
   call syswriteall
-  addl $8, %ebp
+  addl $8, %ebp       # unreserve space for bytes buffer
   ret
 
 pntEbxUxPretty: # %ebx:f ( -- )
@@ -331,23 +353,19 @@ pntEbxUxPretty: # %ebx:f ( -- )
   call pntEbxUx
 .endm
 
-.macro PNT_UX_SPC v
-  movl \v, %ebx
-  call pntEbxUx
-  PNT_ASCII $' '
-.endm
-
-.macro PNT_UX_NL v
-  movl \v, %ebx
-  call pntEbxUx
-  PNT_ASCII $'\n'
-.endm
-
 .macro PNT_UX_PRETTY v
   movl \v, %ebx
   call pntEbxUxPretty
 .endm
 
+dbgStartNtStr: .ascii "DBG(\0"
+dbgRegNtStr_eax: .ascii " eax=\0"
+dbgRegNtStr_ebx: .ascii " ebx=\0"
+dbgRegNtStr_ecx: .ascii " ecx=\0"
+dbgRegNtStr_edx: .ascii " edx=\0"
+dbgRegNtStr_edi: .ascii " edi=\0"
+dbgEndNtStr: .ascii ")\n\0"
+.align 4
 .macro DBG_REG r
   PNT_NTSTR $dbgRegNtStr_\r
   PNT_UX_PRETTY registerSnapshot+offset_\r
@@ -361,16 +379,10 @@ dbgRegisters: # prints the snapshotted registers
   DBG_REG edi
   ret
 
-dbgStartNtStr: .ascii "DBG(\0"
-dbgRegNtStr_eax: .ascii " eax=\0"
-dbgRegNtStr_ebx: .ascii " ebx=\0"
-dbgRegNtStr_ecx: .ascii " ecx=\0"
-dbgRegNtStr_edx: .ascii " edx=\0"
-dbgRegNtStr_edi: .ascii " edi=\0"
-dbgEndNtStr: .ascii ")\n\0"
-.align 4
 .macro DBG v
   // Allows us to debug registers at varioius points
+  // Usage: DBG $0x444 will print something like:
+  // DBG(0000_0444 eax=0000_0110 ebx=0000_0111 ... edi=0000_0114)
   call snapshotRegisters
   PNT_NTSTR $dbgStartNtStr
   PNT_UX_PRETTY \v
@@ -426,7 +438,6 @@ pntRstackDepth: # print the depth of the return stack
 .endm
 
 panicStartNtStr: .ascii "!! PANIC !! code=0x\0"
-panicCodeNtStr: .ascii "Code=\0"
 .align 4
 defaultPanic:
   PNT_NTSTR $panicStartNtStr
@@ -441,6 +452,7 @@ defaultPanic:
   movl \e, panicErr
   jmp *(panic)
 .endm
+
 
 ################################################################################
 #### TESTING                                                                ####
@@ -573,5 +585,6 @@ _start:
   DPUSH $0x42
   DPUSH $0x43
   DPUSH $0x44
+  DBG $0x444
   call test_suite
   EXIT $0
