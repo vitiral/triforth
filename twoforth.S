@@ -95,8 +95,12 @@ pntFd: .int STDERR # where to EMIT and TYPE to
 .equ EMIT_BUFFER_SIZE, 16
 keyFd: .int STDIN   # where KEY/etc gets input from
 errno: .int 0
+panic: .int defaultPanic # function to call when panicing
 panicErr: .int 0  # error to print while panicing
+
+# ONLY USED IN TESTING
 testingNtStr: .int 0
+panicRestore: .int 0 
 
 .section .text
 
@@ -432,7 +436,6 @@ defaultPanic:
   PNT_ASCII $'\n'
   call pntRstackDepth
   EXIT $RC_PANIC
-panic: .int defaultPanic
 
 .macro PANIC e
   movl \e, panicErr
@@ -496,14 +499,27 @@ assertEaxEbxEq:
   call assertEaxEbxEq
 .endm
 
+panicExpected:
+  // Use this if a panic is expected. It will simply set panic=defaultPanic
+  // and jmp to panicRestore
+  movl $defaultPanic, panic
+  jmp *(panicRestore)
+
+.macro EXPECT_PANIC l
+  movl \l, panicRestore
+  movl $panicExpected, panic
+.endm
+
 testTesting:
   ASSERT_EQ $0x42, $0x42
+  EXPECT_PANIC $1f
+  PANIC $0x42
+1:
   ret
-  
+
 TEST suite
   call testTesting
   ret
-
 
 ################################################################################
 #### STACK                                                                  ####
