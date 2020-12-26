@@ -96,7 +96,7 @@ pntFd: .int STDERR # where to EMIT and TYPE to
 .equ EMIT_BUFFER_SIZE, 16
 keyFd: .int STDIN   # where KEY/etc gets input from
 errno: .int 0
-panic: .int defaultPanic # function to call when panicing
+panic: .int panicDefault # function to call when panicing
 panicErr: .int 0  # error to print while panicing
 
 # ONLY USED IN TESTING
@@ -157,6 +157,7 @@ sysexit: # %ebx:rc ( -- )
 .endm
 
 asmInvariantViolated: EXIT $RC_ASM_INVARIANT
+unreachable: EXIT $RC_UNREACHABLE
 
 // Snapshotting registers allows for debug printing to happen without affecting
 // the assembly you are debugging.
@@ -449,7 +450,7 @@ pntRstackDepth: # print the depth of the return stack
 
 panicStartNtStr: .ascii "!! PANIC !! code=0x\0"
 .align 4
-defaultPanic:
+panicDefault:
   PNT_NTSTR $panicStartNtStr
   PNT_UX_NL panicErr
   call pntPstack
@@ -488,14 +489,6 @@ startingTest:
   PNT_ASCII $'\n'
   ret
 
-.macro TEST t
-  testname_\t : .ascii "\t\0"
-  .align 4
-  test_\t :
-    movl $testname_\t, testingNtStr
-    call startingTest
-.endm
-
 exitFailTest:
   PNT_NT_STR $testFailedNtStr
   PNT_NT_STR testingNtStr
@@ -529,9 +522,9 @@ assertEaxEbxEq:
 .endm
 
 panicExpected:
-  // Use this if a panic is expected. It will simply set panic=defaultPanic
+  // Use this if a panic is expected. It will simply set panic=panicDefault
   // and jmp to panicRestore
-  movl $defaultPanic, panic
+  movl $panicDefault, panic
   jmp *(panicRestore)
 
 .macro EXPECT_PANIC l
@@ -539,26 +532,75 @@ panicExpected:
   movl $panicExpected, panic
 .endm
 
-panicNotExpectedStr: .ascii "!! panicErr not expected value: \0"
+panicErrInvalidStr: .ascii "!! panicErr not expected value: \0"
 .align 4
-panicNotExpected:
-  PNT_NT_STR $panicNotExpectedStr
+panicErrInvalid:
+  PNT_NT_STR $panicErrInvalidStr
   PNT_UX_NL panicErr
-.macro ASSERT_PANICED err
-  cmp \err, panicErr
+  jmp exitFailTest
 
+.macro ASSERT_PANICED err
+  // Assert that panicErr=err and then clear panicErr
+  cmp \err, panicErr
+  jne panicErrInvalid
+  movl $0, panicErr
 .endm
 
-testTesting:
+assertStackEmptyStr: .ascii "!! Stack not empty: \n\0"
+.align 4
+assertStackEmpty:
+  movl $pstackMax, %eax
+  subl %ebp, %eax
+  jz return
+  PNT_NT_STR $assertStackEmptyStr
+  call pntPstack
+  PNT_ASCII $'\n'
+  call exitFailTest
+
+assertPanicClean_str1: .ascii "!! Not clean panic==panicExpected\n\0"
+assertPanicClean_str2: .ascii "!! Not clean panicErr==\0"
+assertPanicClean:
+  cmpl $panicExpected, panic
+  je 1f
+  cmpl $0, panicErr
+  je return
+  PNT_NT_STR $assertPanicClean_str2
+  PNT_UX_NL panicErr
+  call exitFailTest
+1:
+  PNT_NT_STR $assertPanicClean_str1
+  call exitFailTest
+
+assertClean:
+  call checkErrno
+  call assertPanicClean
+  call assertStackEmpty
+  ret
+
+.macro TEST t
+  testname_\t : .ascii "\t\0"
+  .align 4
+  test_\t :
+    movl $testname_\t, testingNtStr
+    call startingTest
+    call assertClean
+.endm
+
+TEST suite
+  call test_testing
+  ret
+
+TEST testing
+  // Does an assert and an EXPECT_PANIC->PANIC
   ASSERT_EQ $0x42, $0x42
   EXPECT_PANIC $1f
   PANIC $0x42
+  call unreachable
 1:
+  ASSERT_PANICED $0x42
+  call assertClean
   ret
 
-TEST suite
-  call testTesting
-  ret
 
 ################################################################################
 #### STACK                                                                  ####
@@ -609,9 +651,6 @@ _start:
   movl $0x113, %edx
   movl $0x114, %edi
   movl $0x115, %esi
-  DPUSH $0x42
-  DPUSH $0x43
-  DPUSH $0x44
   DBG $0x444
   call test_suite
   EXIT $0
