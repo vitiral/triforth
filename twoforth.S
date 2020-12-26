@@ -66,6 +66,7 @@
 .equ ERR_STATE_INCORRECT, 0x313
 .equ ERR_EMIT_ERR, 0x314
 .equ ERR_NULL_NAMETOKEN, 0x315
+.equ ERR_ERRNO, 0x316
 
 .equ FALSE, 0
 .equ TRUE, -1
@@ -353,9 +354,19 @@ pntEbxUxPretty: # %ebx:f ( -- )
   call pntEbxUx
 .endm
 
+.macro PNT_UX_NL v
+  PNT_UX \v
+  PNT_ASCII $'\n'
+.endm
+
 .macro PNT_UX_PRETTY v
   movl \v, %ebx
   call pntEbxUxPretty
+.endm
+
+.macro PNT_UX_PRETTY_NL v
+  PNT_UX_PRETTY \v
+  PNT_ASCII $'\n'
 .endm
 
 dbgStartNtStr: .ascii "DBG(\0"
@@ -422,8 +433,7 @@ pntRstackDepth: # print the depth of the return stack
   subl %esp, %ebx
   subl $4, %ebx
   shrl $2, %ebx  # ebx=ebx/4
-  call pntEbxUx
-  PNT_ASCII $'\n'
+  PNT_UX_NL %ebx
   ret
 
 .macro DBG_STACK v
@@ -441,8 +451,7 @@ panicStartNtStr: .ascii "!! PANIC !! code=0x\0"
 .align 4
 defaultPanic:
   PNT_NTSTR $panicStartNtStr
-  PNT_UX panicErr
-  PNT_ASCII $'\n'
+  PNT_UX_NL panicErr
   call pntPstack
   PNT_ASCII $'\n'
   call pntRstackDepth
@@ -453,6 +462,16 @@ defaultPanic:
   jmp *(panic)
 .endm
 
+checkErrno_str: .ascii "!! errno=\0"
+.align 4
+checkErrno:
+  // Checks that errno is zero or panics
+  // Mutates no registers.
+  cmp $0, errno
+  jz return
+  PNT_NT_STR $checkErrno_str
+  PNT_UX_NL errno
+  PANIC $ERR_ERRNO
 
 ################################################################################
 #### TESTING                                                                ####
@@ -496,9 +515,7 @@ assertEaxEbxEq:
   movl %eax, %edi
   call pntEbxUx
   PNT_NT_STR $assertEaxEbxEq_str
-  movl %edi, %ebx
-  call pntEbxUx
-  PNT_ASCII $'\n'
+  PNT_UX_NL %edi
   jmp exitFailTest
 
 .macro SET_EABX a, b
@@ -520,6 +537,16 @@ panicExpected:
 .macro EXPECT_PANIC l
   movl \l, panicRestore
   movl $panicExpected, panic
+.endm
+
+panicNotExpectedStr: .ascii "!! panicErr not expected value: \0"
+.align 4
+panicNotExpected:
+  PNT_NT_STR $panicNotExpectedStr
+  PNT_UX_NL panicErr
+.macro ASSERT_PANICED err
+  cmp \err, panicErr
+
 .endm
 
 testTesting:
