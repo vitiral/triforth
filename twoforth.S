@@ -67,6 +67,8 @@
 .equ ERR_EMIT_ERR, 0x314
 .equ ERR_NULL_NAMETOKEN, 0x315
 .equ ERR_ERRNO, 0x316
+.equ ERR_RSTACK_OVERFLOW, 0x300
+.equ ERR_RSTACK_UNDERFLOW, 0x301
 
 .equ FALSE, 0
 .equ TRUE, -1
@@ -84,12 +86,12 @@
 ################################################################################
 .section .data
 .equ RSTACK_SIZE, 0x2000
-rstackMin: .space RSTACK_SIZE # return stack
-rstackMax:
+rstackMinRoot: .space RSTACK_SIZE # return stack
+rstackMaxRoot:
 .equ PSTACK_SIZE, 0x100
 pstackExtra: .space 0x20      # guaranteed space above the pstack
-pstackMin: .space PSTACK_SIZE # data stack
-pstackMax:
+pstackMinRoot: .space PSTACK_SIZE # data stack
+pstackMaxRoot:
 registerSnapshot: .space 0x20
 
 pntFd: .int STDERR # where to EMIT and TYPE to
@@ -98,6 +100,10 @@ keyFd: .int STDIN   # where KEY/etc gets input from
 errno: .int 0
 panic: .int panicDefault # function to call when panicing
 panicErr: .int 0  # error to print while panicing
+rstackMin: .int 0
+rstackMax: .int 0
+pstackMin: .int 0
+pstackMax: .int 0
 
 # ONLY USED IN TESTING
 testingNtStr: .int 0
@@ -422,15 +428,17 @@ rstackNtStr: .ascii "RSTACK: depth=\0"
 .align 4
 pntPstack: # ( -- )
   PNT_NTSTR $pstackNtStr
-  movl %ebp, -8(%ebp)       # start
-  movl $pstackMax, -4(%ebp) # end
+  movl %ebp, %ebx
   subl $8, %ebp
+  movl %ebx, (%ebp)       # start
+  movl pstackMax, %ebx
+  movl %ebx, -4(%ebp)     # end
   call pntMem
   ret
 
 pntRstackDepth: # print the depth of the return stack
   PNT_NTSTR $rstackNtStr
-  movl $rstackMax, %ebx
+  movl rstackMax, %ebx
   subl %esp, %ebx
   subl $4, %ebx
   shrl $2, %ebx  # ebx=ebx/4
@@ -516,7 +524,7 @@ assertEaxEbxEq:
   movl \b , %ebx
 .endm
 
-.macro ASSERT_EQ a, b
+.macro ASSERT_REG_EQ a, b
   SET_EABX \a, \b
   call assertEaxEbxEq
 .endm
@@ -541,7 +549,7 @@ panicErrInvalid:
 
 .macro ASSERT_PANICED err
   // Assert that panicErr=err and then clear panicErr
-  cmp \err, panicErr
+  cmpl \err, panicErr
   jne panicErrInvalid
   movl $0, panicErr
 .endm
@@ -549,7 +557,7 @@ panicErrInvalid:
 assertStackEmptyStr: .ascii "!! Stack not empty: \n\0"
 .align 4
 assertStackEmpty:
-  movl $pstackMax, %eax
+  movl pstackMax, %eax
   subl %ebp, %eax
   jz return
   PNT_NT_STR $assertStackEmptyStr
@@ -588,16 +596,16 @@ assertClean:
 
 TEST suite
   call test_testing
+  call test_pstack
   ret
 
 TEST testing
   // Does an assert and an EXPECT_PANIC->PANIC
-  ASSERT_EQ $0x42, $0x42
+  ASSERT_REG_EQ $0x42, $0x42
   EXPECT_PANIC $1f
   PANIC $0x42
   call unreachable
-1:
-  ASSERT_PANICED $0x42
+1:ASSERT_PANICED $0x42
   call assertClean
   ret
 
@@ -616,9 +624,9 @@ pushDsInvalid:
   addl $4, %ebp
   PANIC $ERR_PSTACK_OVERFLOW
 
-.macro DPUSH reg
+.macro PUSH reg
   subl $4, %ebp
-  cmpl $pstackMin, %ebp
+  cmpl pstackMin, %ebp
   jl pushDsInvalid
   movl \reg , (%ebp)
 .endm
@@ -626,14 +634,70 @@ pushDsInvalid:
 popDsInvalid:
   # Checks to make sure that the datastack hasn't underflowed.
   # If it has, re-decrements and panics with appropriate error.
-  subl $4, %ebp
   PANIC $ERR_PSTACK_UNDERFLOW
 
-.macro DPOP reg
+.macro POP reg
   movl (%ebp) , \reg
-  cmpl $pstackMax, %ebp
+  cmpl pstackMax, %ebp
   jge popDsInvalid
   addl $4, %ebp
+.endm
+
+assertEq: # ( a b -- )
+  POP %eax
+  POP %ebx
+  call assertEaxEbxEq
+  ret
+
+.macro ASSERT_TOP v
+  PUSH \v
+  call assertEq
+.endm
+
+TEST pstack
+  PUSH $0x42
+  PUSH $0x4422
+  EXIT $42
+  ASSERT_TOP $0x4422
+  ASSERT_TOP $0x42
+  EXPECT_PANIC $1f
+  POP %eax # pop from empty stack
+  call unreachable
+1:ASSERT_PANICED $ERR_PSTACK_UNDERFLOW
+  call assertStackEmpty
+
+  movl pstackMin, %ebp # mimick full stack
+  EXPECT_PANIC $1f
+  PUSH $0x42
+  call unreachable
+1:ASSERT_PANICED $ERR_PSTACK_OVERFLOW
+  movl pstackMax, %ebp
+  call assertClean
+  ret
+
+pushRsInvalid:
+  # Checks to make sure that the datastack hasn't overflowed.
+  # If it has, re-increments and panics with appropriate error.
+  addl $4, %esp
+  PANIC $ERR_RSTACK_OVERFLOW
+
+.macro RPUSH reg
+  subl $4, %esp
+  cmpl rstackMin, %esp
+  jl pushRsInvalid
+  movl \reg , (%esp)
+.endm
+
+popRsInvalid:
+  # Checks to make sure that the datastack hasn't underflowed.
+  # If it has, re-decrements and panics with appropriate error.
+  PANIC $ERR_RSTACK_UNDERFLOW
+
+.macro RPOP reg
+  movl (%esp) , \reg
+  cmpl rstackMax, %esp
+  jge popRsInvalid
+  addl $4, %esp
 .endm
 
 ##############################
@@ -642,15 +706,12 @@ mainStartNtStr: .ascii "Starting Triforth...\n\0"
 .align 4
 .globl _start
 _start:
-  movl $rstackMax, %esp  # clear rstack
-  movl $pstackMax, %ebp  # clear pstack
+  movl $rstackMinRoot, rstackMin
+  movl $rstackMaxRoot, rstackMax
+  movl $pstackMinRoot, pstackMin
+  movl $pstackMaxRoot, pstackMax
+  movl rstackMax, %esp  # clear rstack
+  movl pstackMax, %ebp  # clear pstack
   PNT_NT_STR $mainStartNtStr
-  movl $0x110, %eax
-  movl $0x111, %ebx
-  movl $0x112, %ecx
-  movl $0x113, %edx
-  movl $0x114, %edi
-  movl $0x115, %esi
-  DBG $0x444
   call test_suite
   EXIT $0
