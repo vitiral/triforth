@@ -294,21 +294,20 @@ ebxUx: # %ebx:f ( 8o -- 8o ) %edx:right-aligned-count
   // The caller must reserve this space.
   // The resulting count is stored in edx so it can be used in syswrite.
   JRZ %ebx, ebxUx_zero
-  movl $7, %eax     # %eax=index to store character
+  movl $8, %eax     # %eax=index to store character
   movl %ebx, %ecx   # %ecx=remaining number
-  ZERO %edx         # %edx=count
 ebxUx_loop:
-  cmp $7, %edx
-  jg asmInvariantViolated
-
+  dec %eax
+  cmp $7, %eax
+  ja asmInvariantViolated  # ja=jump above (unsigned)
   movl %ecx, %ebx
   andl $0x0F, %ebx  # ebx=ebx % 0x10
   call toasciiEbx
   movb %bl, (%ebp, %eax, 1)
-  inc %edx
-  dec %eax
   shrl $4, %ecx    # ecx=ecx / 0x10
   jnz ebxUx_loop
+  movl $8, %edx
+  subl %eax, %edx # return count
   ret
 ebxUx_zero:
   movb $'0', 7(%ebp)
