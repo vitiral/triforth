@@ -86,10 +86,11 @@
 ################################################################################
 .section .data
 .equ RSTACK_SIZE, 0x2000
+rstackExtraRoot: .space 0x4
 rstackMinRoot: .space RSTACK_SIZE # return stack
 rstackMaxRoot:
 .equ PSTACK_SIZE, 0x100
-pstackExtra: .space 0x20      # guaranteed space above the pstack
+pstackExtraRoot: .space 0x20      # guaranteed space above the pstack
 pstackMinRoot: .space PSTACK_SIZE # data stack
 pstackMaxRoot:
 registerSnapshot: .space 0x20
@@ -724,22 +725,21 @@ pushRsInvalid:
   PANIC $ERR_RSTACK_OVERFLOW
 
 .macro RPUSH reg
-  subl $4, %esp
+  pushl \reg
   cmpl rstackMin, %esp
   jl pushRsInvalid
-  movl \reg , (%esp)
 .endm
 
 popRsInvalid:
   # Checks to make sure that the datastack hasn't underflowed.
   # If it has, re-decrements and panics with appropriate error.
+  subl $4, %esp
   PANIC $ERR_RSTACK_UNDERFLOW
 
 .macro RPOP reg
-  movl (%esp) , \reg
+  popl \reg
   cmpl rstackMax, %esp
   jge popRsInvalid
-  addl $4, %esp
 .endm
 
 ################################################################################
@@ -754,17 +754,18 @@ bcmp: # %eax:aCount %ebx:&a %ecx:bCount %edx:&b ( -- ) %eax:cmp
   // "a is less than b " is defined as `a` having a byte with a lesser ascii
   // value OR (if no such byte is found) fewer count.
   // Uses: %edi
-  ZERO %edi
   PUSH %eax
+  ZERO %eax
+  ZERO %edi
 bcmp_loop:
   cmp (%ebp), %edi  # aCount
   jge bcmp_aCountExhausted
   cmp %ecx, %edi    # bCount
   jge bcmp_gt       # jmp if b was exhausted, a wasn't. a>b
-  movl (%edi, %ebx, 1), %eax
-  cmpl (%edi, %edx, 1), %eax
-  jg bcmp_gt
+  movb (%edi, %ebx, 1), %al
+  cmpb (%edi, %edx, 1), %al # cmp b, a
   jl bcmp_lt
+  jg bcmp_gt
   inc %edi
   jmp bcmp_loop
 bcmp_aCountExhausted:
@@ -802,12 +803,8 @@ test_bcmpStr: .ascii "aabbcc\0"
 TEST bcmp
   ASSERT_BYTES_EQ $3, $test_bcmpStr, $3, $test_bcmpStr   # same string is equal
   ASSERT_BYTES_LT $2, $test_bcmpStr, $3, $test_bcmpStr   # less count is less than
-  DBG $4
   ASSERT_BYTES_LT $5, $test_bcmpStr, $3, $test_bcmpStr+1 # a<b
-  DBG $5
-foo:
-  ASSERT_BYTES_GT $2, $test_bcmpStr+3, $3, $test_bcmpStr # c>a
-  DBG $6
+  ASSERT_BYTES_GT $2, $test_bcmpStr+4, $3, $test_bcmpStr # c>a
   ret
 
 ##############################
