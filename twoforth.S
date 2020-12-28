@@ -518,11 +518,14 @@ assertEaxEbxEq_str: .ascii " = \0"
 assertEaxEbxEq:
   cmp %eax, %ebx
   je return
+  subl $8, %ebp
+  movl %eax, (%ebp)
+  movl %ebx, 4(%ebp)
   PNT_NT_STR $assertFailStr
-  movl %eax, %edi
-  call pntEbxUx
+  PNT_UX (%ebp)
   PNT_NT_STR $assertEaxEbxEq_str
-  PNT_UX_NL %edi
+  PNT_UX_NL 4(%ebp)
+  addl $8, %ebp
   jmp exitFailTest
 
 .macro SET_EABX a, b
@@ -801,7 +804,10 @@ TEST bcmp
   ASSERT_BYTES_LT $2, $test_bcmpStr, $3, $test_bcmpStr   # less count is less than
   DBG $4
   ASSERT_BYTES_LT $5, $test_bcmpStr, $3, $test_bcmpStr+1 # a<b
+  DBG $5
+foo:
   ASSERT_BYTES_GT $2, $test_bcmpStr+3, $3, $test_bcmpStr # c>a
+  DBG $6
   ret
 
 ##############################
