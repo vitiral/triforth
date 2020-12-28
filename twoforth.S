@@ -132,6 +132,13 @@ panicRestore: .int 0
   xor \reg, \reg
 .endm
 
+.macro SET_ABCD a, b, c, d
+  movl \a, %eax
+  movl \b, %ebx
+  movl \c, %ecx
+  movl \d, %edx
+.endm
+
 .macro JRZ reg, loc
   // Jump to location if the register is zero.  This uses `test`, which does an
   // AND that only mutates the eflags register.
@@ -246,7 +253,7 @@ asciiStr: .ascii "~~~~~~~~~\t\n~~\r~~"  # 0x0-F
           .ascii "@ABCDEFGHIJKLMNO"     # 0x40-4F
           .ascii "PQRSTUVWXYZ[\\]^_"    # 0x50-5F
           .ascii "`abcdefghijklmno"     # 0x60-6F
-          .ascii "pqrstuvwxyz{|}~"      # 0x70-7E
+          .ascii "pqrstuvwxyz{|}~\0"    # 0x70-7E
 .align 4
 pntEcxAscii: # %ecx:byte ( -- )
   // Print the ascii value in Ecx
@@ -268,14 +275,14 @@ pntEcxAscii: # %ecx:byte ( -- )
   call pntEcxNtStr
 .endm
 
-ebx_toascii: # ( u -- c )
+toasciiEbx: # ( u -- c )
   // Convert a number (typically 1-16) into ascii equivalent
   cmpl $9, %ebx
-  jg ebx_toascii_gt9
+  jg toasciiEbx_gt9
   # number <= 9
   addl $'0', %ebx
   ret
-ebx_toascii_gt9:
+toasciiEbx_gt9:
   subl $10, %ebx
   cmpl $23, %ebx
   jg asmInvariantViolated # ebx not [0, 24)
@@ -288,17 +295,15 @@ ebxUx: # %ebx:f ( 8o -- 8o ) %edx:right-aligned-count
   // The resulting count is stored in edx so it can be used in syswrite.
   JRZ %ebx, ebxUx_zero
   movl $7, %eax     # %eax=index to store character
-  movl %ebx, %ecx   # %ecx=remaining n
-  ZERO %edx
+  movl %ebx, %ecx   # %ecx=remaining number
+  ZERO %edx         # %edx=count
 ebxUx_loop:
   cmp $7, %edx
-  jge asmInvariantViolated
-  cmp $0, %ecx
-  jl asmInvariantViolated
+  jg asmInvariantViolated
 
   movl %ecx, %ebx
   andl $0x0F, %ebx  # ebx=ebx % 0x10
-  call ebx_toascii
+  call toasciiEbx
   movb %bl, (%ebp, %eax, 1)
   inc %edx
   dec %eax
@@ -428,11 +433,11 @@ rstackNtStr: .ascii "RSTACK: depth=\0"
 .align 4
 pntPstack: # ( -- )
   PNT_NTSTR $pstackNtStr
-  movl %ebp, %ebx
-  subl $8, %ebp
-  movl %ebx, (%ebp)       # start
+  movl %ebp, %ebx   # cache ebp (pstack pointer)
+  subl $8, %ebp     # make space on stack
+  movl %ebx, (%ebp)     # start
   movl pstackMax, %ebx
-  movl %ebx, -4(%ebp)     # end
+  movl %ebx, 4(%ebp)    # end
   call pntMem
   ret
 
@@ -481,6 +486,8 @@ checkErrno:
   PNT_NT_STR $checkErrno_str
   PNT_UX_NL errno
   PANIC $ERR_ERRNO
+
+
 
 ################################################################################
 #### TESTING                                                                ####
@@ -595,18 +602,46 @@ assertClean:
 .endm
 
 TEST suite
-  call test_testing
+  call test_pureAsm
   call test_pstack
+  call test_bcmp
   ret
 
-TEST testing
-  // Does an assert and an EXPECT_PANIC->PANIC
+TEST pureAsm
+  // Test simple assert
   ASSERT_REG_EQ $0x42, $0x42
+
+  // Test panic/expect
   EXPECT_PANIC $1f
   PANIC $0x42
   call unreachable
 1:ASSERT_PANICED $0x42
   call assertClean
+
+  // test countnt
+  movl $asciiStr, %ecx
+  call countntEcx
+  ASSERT_REG_EQ $0x7F, %edx
+
+  // test toasciiEbx
+  .macro TEST_TOASCII v, e
+    movl \v, %ebx
+    call toasciiEbx
+    ASSERT_REG_EQ \e, %ebx
+  .endm
+  TEST_TOASCII $0, $0x30
+  TEST_TOASCII $1, $0x31
+  TEST_TOASCII $9, $0x39
+  TEST_TOASCII $0xA, $0x41
+  TEST_TOASCII $0xF, $0x46
+
+  // test ebxUx and ebxUxPad
+  subl $8, %ebp # reserve stack space
+
+  addl $8, %ebp # unreserve stack space
+
+  // Explicit test that stack is empty
+  ASSERT_REG_EQ %ebp, pstackMax
   ret
 
 
@@ -643,6 +678,12 @@ popDsInvalid:
   addl $4, %ebp
 .endm
 
+drop:
+  cmpl pstackMax, %ebp
+  jge popDsInvalid
+  addl $4, %ebp
+  ret
+
 assertEq: # ( a b -- )
   POP %eax
   POP %ebx
@@ -657,7 +698,6 @@ assertEq: # ( a b -- )
 TEST pstack
   PUSH $0x42
   PUSH $0x4422
-  EXIT $42
   ASSERT_TOP $0x4422
   ASSERT_TOP $0x42
   EXPECT_PANIC $1f
@@ -699,6 +739,71 @@ popRsInvalid:
   jge popRsInvalid
   addl $4, %esp
 .endm
+
+################################################################################
+#### MORE PURE ASM                                                          ####
+################################################################################
+
+bcmp: # %eax:aCount %ebx:&a %ecx:bCount %edx:&b ( -- ) %eax:cmp
+  // Compares bytes at address &a to &b. Returns:
+  // eax=-1 if a<b
+  // eax=0 if a==b
+  // eax=1 if a>b
+  // "a is less than b " is defined as `a` having a byte with a lesser ascii
+  // value OR (if no such byte is found) fewer count.
+  // Uses: %edi
+  ZERO %edi
+  PUSH %eax
+bcmp_loop:
+  cmp (%ebp), %edi  # aCount
+  jge bcmp_aCountExhausted
+  cmp %ecx, %edi    # bCount
+  jge bcmp_gt       # jmp if b was exhausted, a wasn't. a>b
+  movl (%edi, %ebx, 1), %eax
+  cmpl (%edi, %edx, 1), %eax
+  jg bcmp_gt
+  jl bcmp_lt
+  inc %edi
+  jmp bcmp_loop
+bcmp_aCountExhausted:
+  cmp %ecx, %edi # bCount
+  jge bcmp_eq # eq if bCount was also exhausted
+  jmp bcmp_lt # else a<b
+bcmp_eq:
+  ZERO %eax
+  jmp drop
+bcmp_gt:
+  movl $1, %eax
+  jmp drop
+bcmp_lt:
+  movl $-1, %eax
+  jmp drop
+
+.macro ASSERT_BYTES_EQ aCount, a, bCount, b
+  SET_ABCD \aCount, \a, \bCount, \b
+  call bcmp
+  ASSERT_REG_EQ %eax, $0
+.endm
+.macro ASSERT_BYTES_LT aCount, a, bCount, b
+  SET_ABCD \aCount, \a, \bCount, \b
+  call bcmp
+  ASSERT_REG_EQ %eax, $-1
+.endm
+.macro ASSERT_BYTES_GT aCount, a, bCount, b
+  SET_ABCD \aCount, \a, \bCount, \b
+  call bcmp
+  ASSERT_REG_EQ %eax, $1
+.endm
+
+test_bcmpStr: .ascii "aabbcc\0"
+.align 4
+TEST bcmp
+  ASSERT_BYTES_EQ $3, $test_bcmpStr, $3, $test_bcmpStr   # same string is equal
+  ASSERT_BYTES_LT $2, $test_bcmpStr, $3, $test_bcmpStr   # less count is less than
+  DBG $4
+  ASSERT_BYTES_LT $5, $test_bcmpStr, $3, $test_bcmpStr+1 # a<b
+  ASSERT_BYTES_GT $2, $test_bcmpStr+3, $3, $test_bcmpStr # c>a
+  ret
 
 ##############################
 # Main Entrypoint
