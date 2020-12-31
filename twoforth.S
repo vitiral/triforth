@@ -76,7 +76,7 @@ pntFd: .int STDERR # where to PNT to
 .equ EMIT_BUFFER_SIZE, 16
 sourceFd: .int STDIN   # where the source code is read from
 .equ WORD_MAX_CNT, 0x23
-wordStrCnt: .byte 0 # Used for reading source word
+wordCStr: .byte 0 # Used for reading source word
 wordStr: .space WORD_MAX_CNT
 errno: .int 0
 panic: .int panicDefault # function to call when panicing
@@ -1001,39 +1001,39 @@ word: # ( b[0x24]:strCnt -- b[0x24]:strCnt )
   # The caller must reserve the space.
 
   # Read up to the maxCnt bytes into wordStr (keeping previous bytes that exist)
-  # ecx=wordStr+wordStrCnt
+  # ecx=wordStr+wordCStr
   movb $0, (%ebp) # prime strCnt for cnt=0 if we return early
   ZERO %ecx
-  movb wordStrCnt, %cl
+  movb wordCStr, %cl
   leal wordStr(%ecx), %ecx # ecx=&buff
   # edx=maxCnt=MAX_CNT-strCnt
   movl $WORD_MAX_CNT, %edx
-  subb wordStrCnt, %dl  # edx=countToREad
+  subb wordCStr, %dl  # edx=countToREad
   movl sourceFd, %ebx   # ebx=Fd
   call sysread
   cmp $0, %eax
   jl panicNow_eaxIsErrno
-  addb %al, wordStrCnt # add number read to the count
+  addb %al, wordCStr # add number read to the count
   JRNZ %al, word_notEof
 # -- START EOF, al=0 is EOF, 
-  cmp $0, wordStrCnt  # if wordStrCnt=0 we have no word
+  cmp $0, wordCStr  # if wordCStr=0 we have no word
   jz return
   TODO # otherwise return the word we have
 # -- END EOF
 word_notEof:
-  movb wordStrCnt, %al # and get it
+  movb wordCStr, %al # and get it
   movl wordStr, %ebx   # %ebx=&bytes
   call findWhitespaceStart # eax=count_remain %ebx=&whitespace
   JRZ %ebx, word_noWhitespace
 
   # Store count of word in the return strCnt byte
-  movl wordStrCnt, %ecx
+  movl wordCStr, %ecx
   subl %eax, %ecx
   movb %cl, (%ebp)
-  # Store what will be the new count into wordStrCnt
-  movb %al, wordStrCnt
+  # Store what will be the new count into wordCStr
+  movb %al, wordCStr
 
-  # Move word from wordStrCnt -> strCnt
+  # Move word from wordCStr -> strCnt
   movb (%ebp), %al # count
   movl wordStr, %ebx # &from
   leal 1(%ebp), %ecx # &to
@@ -1043,17 +1043,17 @@ word_notEof:
   movl wordStr, %ebx
   movb (%ebp), %al    # strCnt
   addl %eax, %ebx # ebx=&bytes after word
-  movb wordStrCnt, %al
+  movb wordCStr, %al
   subb (%ebp), %al # al=remaining count in wordStr
   call findWhitespaceEnd
 
   # Move non-whitespace to start of wordStr
-  movb %al, wordStrCnt # update count
+  movb %al, wordCStr # update count
   movl wordStr, %ecx # ecx=&to, ebx already is from
   call bmove
   ret
 word_noWhitespace:
-  cmpb $WORD_MAX_CNT, wordStrCnt
+  cmpb $WORD_MAX_CNT, wordCStr
   jge panicNow_MAX_WORD_LEN
   jmp word # try again
 
