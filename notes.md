@@ -33,3 +33,10 @@ can only drop a type by passing to function that takes its non reference. If it
 is also impossible to clone/copy such values then you MUST clean up after
 yourself! Suddenly there are no memory leaks, although there might still
 be a dangling reference (we aren't tracking lifetimes after all).
+
+# Hex Words
+These are _very_ important :D
+
+- ba5eba11 f005ba11
+- bedabb1e aCab005e DeadBea7 0Ea7Beef 00Defec8 deadBeef
+- ca11ab1e f01dab1e 5ca1ab1e a0ddba11 b01dface ca55e77e b0a710ad

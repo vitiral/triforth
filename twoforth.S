@@ -35,7 +35,6 @@
 .equ STDERR, 2
 
 // Our Return codes
-.equ RC_TODO, 98
 .equ RC_DBG, 99 # 99 problems and debugging ain't one, `call dbgexit`
 .equ RC_TESTFAIL, 100
 .equ RC_UNREACHABLE, 101
@@ -47,28 +46,6 @@
 .equ RC_STACK_OVERFLOW, 106
 .equ RC_ASM_INVARIANT, 107
 
-// Our Panic Error Codes
-.equ ERR_SEE_MSG, 0x001
-.equ ERR_OKAY, 0xBEEF # okay
-.equ ERR_PSTACK_OVERFLOW, 0x300
-.equ ERR_PSTACK_UNDERFLOW, 0x301
-.equ ERR_ASCII_BOUNDS, 0x302
-.equ ERR_MAX_WORD_LEN, 0x303
-.equ ERR_WORD_MISSING, 0x304
-.equ ERR_NUMBER_INVALID, 0x305
-.equ ERR_UNKNOWN_WORD, 0x306
-.equ ERR_STATE_REDUNDANT, 0x307
-.equ ERR_STACK_UNDERFLOW, 0x308
-.equ ERR_WORD_NOT_FOUND, 0x309
-.equ ERR_INVALID_FLAG, 0x310
-.equ ERR_INVALID_CHAR, 0x311
-.equ ERR_STACK_NOT_EMPTY, 0x312
-.equ ERR_STATE_INCORRECT, 0x313
-.equ ERR_EMIT_ERR, 0x314
-.equ ERR_NULL_NAMETOKEN, 0x315
-.equ ERR_ERRNO, 0x316
-.equ ERR_RSTACK_OVERFLOW, 0x300
-.equ ERR_RSTACK_UNDERFLOW, 0x301
 
 .equ FALSE, 0
 .equ TRUE, -1
@@ -99,7 +76,7 @@ pntFd: .int STDERR # where to PNT to
 .equ EMIT_BUFFER_SIZE, 16
 sourceFd: .int STDIN   # where the source code is read from
 .equ WORD_MAX_CNT, 0x23
-wordStrCnt: .byte 0
+wordStrCnt: .byte 0 # Used for reading source word
 wordStr: .space WORD_MAX_CNT
 errno: .int 0
 panic: .int panicDefault # function to call when panicing
@@ -181,6 +158,10 @@ sysexit: # %ebx:rc ( -- )
 .macro EXIT rc
   movl \rc, %ebx
   jmp sysexit
+.endm
+
+.macro TODO
+  EXIT $420
 .endm
 
 asmInvariantViolated: EXIT $RC_ASM_INVARIANT
@@ -484,10 +465,45 @@ panicDefault:
   call pntRstackDepth
   EXIT $RC_PANIC
 
-.macro PANIC e
-  movl \e, panicErr
+.macro PANIC_LANDING err, code
+  .equ ERR_\err, \code
+panicNow_\err :
+  movl $ERR_\err, panicErr
   jmp *(panic)
 .endm
+
+.macro PANIC err
+  jmp panicNow_\err
+.endm
+
+// Our Panic Locations
+
+PANIC_LANDING SEE_MSG,          0x001
+PANIC_LANDING OKAY,             0xBedabb1e
+PANIC_LANDING PSTACK_OVERFLOW,  0x301
+PANIC_LANDING PSTACK_UNDERFLOW, 0x303
+PANIC_LANDING RSTACK_OVERFLOW,  0x304
+PANIC_LANDING RSTACK_UNDERFLOW, 0x305
+PANIC_LANDING MAX_WORD_LEN,     0x306
+PANIC_LANDING WORD_MISSING,     0x307
+PANIC_LANDING NUMBER_INVALID,   0x308
+PANIC_LANDING UNKNOWN_WORD,     0x309
+PANIC_LANDING STATE_REDUNDANT,  0x310
+PANIC_LANDING STACK_UNDERFLOW,  0x311
+PANIC_LANDING WORD_NOT_FOUND,   0x312
+PANIC_LANDING INVALID_FLAG,     0x313
+PANIC_LANDING INVALID_CHAR,     0x314
+PANIC_LANDING STACK_NOT_EMPTY,  0x315
+PANIC_LANDING STATE_INCORRECT,  0x316
+PANIC_LANDING EMIT_ERR,         0x317
+PANIC_LANDING NULL_NAMETOKEN,   0x318
+PANIC_LANDING ERRNO,            0xDEADBEA7
+
+panicNow_eaxIsErrno:
+  movl %eax, errno
+  jmp panicNow_ERRNO
+  movl $ERR_ERRNO, panicErr
+  jmp *(panic)
 
 checkErrno_str: .ascii "!! errno=\0"
 .align 4
@@ -498,9 +514,7 @@ checkErrno:
   jz return
   PNT_NT_STR $checkErrno_str
   PNT_UX_NL errno
-  PANIC $ERR_ERRNO
-
-
+  jmp panicNow_ERRNO
 
 ################################################################################
 #### TESTING                                                                ####
@@ -632,9 +646,9 @@ TESTCASE pureAsm
 
   // Test panic/expect
   EXPECT_PANIC $1f
-  PANIC $0x42
+  PANIC OKAY
   call unreachable
-1:ASSERT_PANICED $0x42
+1:ASSERT_PANICED $ERR_OKAY
   call assertClean
 
   // test countnt
@@ -676,7 +690,7 @@ pushDsInvalid:
   # Checks to make sure that the datastack hasn't overflowed.
   # If it has, re-increments and panics with appropriate error.
   addl $4, %ebp
-  PANIC $ERR_PSTACK_OVERFLOW
+  PANIC PSTACK_OVERFLOW
 
 .macro PUSH reg
   subl $4, %ebp
@@ -688,7 +702,7 @@ pushDsInvalid:
 popDsInvalid:
   # Checks to make sure that the datastack hasn't underflowed.
   # If it has, re-decrements and panics with appropriate error.
-  PANIC $ERR_PSTACK_UNDERFLOW
+  PANIC PSTACK_UNDERFLOW
 
 .macro POP reg
   movl (%ebp) , \reg
@@ -738,7 +752,7 @@ pushRsInvalid:
   # Checks to make sure that the datastack hasn't overflowed.
   # If it has, re-increments and panics with appropriate error.
   addl $4, %esp
-  PANIC $ERR_RSTACK_OVERFLOW
+  PANIC RSTACK_OVERFLOW
 
 .macro RPUSH reg
   pushl \reg
@@ -750,7 +764,7 @@ popRsInvalid:
   # Checks to make sure that the datastack hasn't underflowed.
   # If it has, re-decrements and panics with appropriate error.
   subl $4, %esp
-  PANIC $ERR_RSTACK_UNDERFLOW
+  PANIC RSTACK_UNDERFLOW
 
 .macro RPOP reg
   popl \reg
@@ -919,12 +933,34 @@ cStr_move: # %ebx:&fromCstr &ecx:&toCstr
 .endm
 
 test_bmoveCStr: .ascii "/x06abcDEz"
+test_bmoveCStr2: .ascii "/x03p12"
 TESTCASE bmove
   subl $0x20, %ebp
   CSTR_MOVE $test_bmoveCStr, %ebp
   ASSERT_STRCNT_NOCASE_EQ $test_bmoveCStr, %ebp
+  CSTR_MOVE $test_bmoveCStr2, %ebp
+  ASSERT_STRCNT_NOCASE_EQ $test_bmoveCStr2, %ebp
   addl $0x20, %ebp
   ret
+
+# sysopen: # %ebx:&fnameNt %ecx:intention %edx:permissions ( -- ) %eax:fd
+#   # Open the nt filename.
+#   # check %eax for errors and panic if they exist.
+#   movl $SYS_OPEN, %eax
+#   int $LINUX_SYSCALL
+#   cmpl $0, %eax
+#   jl 1f
+#   ret
+# 1:
+#   movl %eax, panicErr
+#   call *(panic)
+#   jmp unreachable
+
+.macro OPEN_SOURCE_FD filepathNt
+.endm
+
+.macro CLOSE_SOURCE_FD
+.endm
 
 sysread: # %ebx:fd %ecx:&buff %edx:maxLength ( -- ) %eax:numRead
   # Read from a filedescriptor. This does NOT panic on failure, the caller must
@@ -976,14 +1012,15 @@ word: # ( b[0x24]:strCnt -- b[0x24]:strCnt )
   movl sourceFd, %ebx   # ebx=Fd
   call sysread
   cmp $0, %eax
-  jl word_panic
+  jl panicNow_eaxIsErrno
   addb %al, wordStrCnt # add number read to the count
-  JRNZ %al, word_cont
-# -- START EOF, al=0 is EOF, if wordStrCnt=0 we have no word
-  cmp $0, wordStrCnt
+  JRNZ %al, word_notEof
+# -- START EOF, al=0 is EOF, 
+  cmp $0, wordStrCnt  # if wordStrCnt=0 we have no word
   jz return
+  TODO # otherwise return the word we have
 # -- END EOF
-word_cont:
+word_notEof:
   movb wordStrCnt, %al # and get it
   movl wordStr, %ebx   # %ebx=&bytes
   call findWhitespaceStart # eax=count_remain %ebx=&whitespace
@@ -1017,12 +1054,8 @@ word_cont:
   ret
 word_noWhitespace:
   cmpb $WORD_MAX_CNT, wordStrCnt
-  jge word_panic
+  jge panicNow_MAX_WORD_LEN
   jmp word # try again
-word_panic:
-  PANIC $ERR_MAX_WORD_LEN
-
-
 
 ##############################
 # Main Entrypoint
