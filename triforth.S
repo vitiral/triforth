@@ -904,7 +904,7 @@ pntTestPass: # ( addr count -- )
   ret
 
 pntSNt: # ( addr -- )
-  # Print a null terminated str
+  # Print a null nerminated str
   call countnt
   call pntS
   ret

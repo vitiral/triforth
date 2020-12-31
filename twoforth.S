@@ -1,4 +1,4 @@
-// general 32bit:    %eax   %ebx   %ecx   %edx  %edi  %esi
+/ general 32bit:    %eax   %ebx   %ecx   %edx  %edi  %esi
 // from above 16bit:  ax     bx     cx     dx   none  none
 // from above 8bit: al ah  bl bh  cl ch  dl dh  none  none
 // special:  %esp: stack ptr, our return stack ptr (RSP)
@@ -95,9 +95,12 @@ pstackMinRoot: .space PSTACK_SIZE # data stack
 pstackMaxRoot:
 registerSnapshot: .space 0x20
 
-pntFd: .int STDERR # where to EMIT and TYPE to
+pntFd: .int STDERR # where to PNT to
 .equ EMIT_BUFFER_SIZE, 16
-keyFd: .int STDIN   # where KEY/etc gets input from
+sourceFd: .int STDIN   # where the source code is read from
+.equ WORD_MAX_CNT, 0x23
+wordStrCnt: .byte 0
+wordStr: .space WORD_MAX_CNT
 errno: .int 0
 panic: .int panicDefault # function to call when panicing
 panicErr: .int 0  # error to print while panicing
@@ -133,17 +136,27 @@ panicRestore: .int 0
   xor \reg, \reg
 .endm
 
-.macro SET_ABCD a, b, c, d
+.macro SET_AB a, b
   movl \a, %eax
   movl \b, %ebx
+.endm
+.macro SET_ABC a, b, c
+  SET_AB \a, \b
   movl \c, %ecx
+.endm
+.macro SET_ABCD a, b, c, d
+  SET_ABC \a, \b, \c
   movl \d, %edx
 .endm
+.macro SET_BC b, c
+  movl \b, %ebx
+  movl \c, %ecx
+.endm
 
-.macro JRZ reg, loc
+.macro JRZ reg , loc
   // Jump to location if the register is zero.  This uses `test`, which does an
   // AND that only mutates the eflags register.
-  test \reg, \reg
+  test \reg , \reg
   jz \loc
 .endm
 
@@ -595,22 +608,25 @@ assertClean:
   call assertStackEmpty
   ret
 
-.macro TEST t
-  testname_\t : .ascii "\t\0"
+.macro TESTCASE name
+  testname_\name : .ascii "\name\0"
   .align 4
-  test_\t :
-    movl $testname_\t, testingNtStr
+  test_\name :
+    movl $testname_\name, testingNtStr
     call startingTest
     call assertClean
 .endm
 
-TEST suite
+TESTCASE suite
   call test_pureAsm
   call test_pstack
   call test_bcmp
+  call test_beqNocase
+  call test_bmove
+  call assertClean
   ret
 
-TEST pureAsm
+TESTCASE pureAsm
   // Test simple assert
   ASSERT_REG_EQ $0x42, $0x42
 
@@ -698,7 +714,7 @@ assertEq: # ( a b -- )
   call assertEq
 .endm
 
-TEST pstack
+TESTCASE pstack
   PUSH $0x42
   PUSH $0x4422
   ASSERT_TOP $0x4422
@@ -743,8 +759,12 @@ popRsInvalid:
 .endm
 
 ################################################################################
-#### MORE PURE ASM                                                          ####
+#### Byte comparison functions                                              ####
 ################################################################################
+
+.equ LT, -1
+.equ EQ, 0
+.equ GT, 1
 
 bcmp: # %eax:aCount %ebx:&a %ecx:bCount %edx:&b ( -- ) %eax:cmp
   // Compares bytes at address &a to &b. Returns:
@@ -755,7 +775,6 @@ bcmp: # %eax:aCount %ebx:&a %ecx:bCount %edx:&b ( -- ) %eax:cmp
   // value OR (if no such byte is found) fewer count.
   // Uses: %edi
   PUSH %eax
-  ZERO %eax
   ZERO %edi
 bcmp_loop:
   cmp (%ebp), %edi  # aCount
@@ -773,39 +792,237 @@ bcmp_aCountExhausted:
   jge bcmp_eq # eq if bCount was also exhausted
   jmp bcmp_lt # else a<b
 bcmp_eq:
-  ZERO %eax
+  ZERO %eax # EQ
   jmp drop
 bcmp_gt:
-  movl $1, %eax
+  movl $GT, %eax
   jmp drop
 bcmp_lt:
-  movl $-1, %eax
+  movl $LT, %eax
   jmp drop
 
-.macro ASSERT_BYTES_EQ aCount, a, bCount, b
+.macro ASSERT_BYTES_CMP cmp, aCount, a, bCount, b
   SET_ABCD \aCount, \a, \bCount, \b
   call bcmp
-  ASSERT_REG_EQ %eax, $0
-.endm
-.macro ASSERT_BYTES_LT aCount, a, bCount, b
-  SET_ABCD \aCount, \a, \bCount, \b
-  call bcmp
-  ASSERT_REG_EQ %eax, $-1
-.endm
-.macro ASSERT_BYTES_GT aCount, a, bCount, b
-  SET_ABCD \aCount, \a, \bCount, \b
-  call bcmp
-  ASSERT_REG_EQ %eax, $1
+  ASSERT_REG_EQ %eax, \cmp
 .endm
 
 test_bcmpStr: .ascii "aabbcc\0"
 .align 4
-TEST bcmp
-  ASSERT_BYTES_EQ $3, $test_bcmpStr, $3, $test_bcmpStr   # same string is equal
-  ASSERT_BYTES_LT $2, $test_bcmpStr, $3, $test_bcmpStr   # less count is less than
-  ASSERT_BYTES_LT $5, $test_bcmpStr, $3, $test_bcmpStr+1 # a<b
-  ASSERT_BYTES_GT $2, $test_bcmpStr+4, $3, $test_bcmpStr # c>a
+TESTCASE bcmp
+  ASSERT_BYTES_CMP $EQ, $3, $test_bcmpStr, $3, $test_bcmpStr   # same string is equal
+  ASSERT_BYTES_CMP $LT, $2, $test_bcmpStr, $3, $test_bcmpStr   # less count is less than
+  ASSERT_BYTES_CMP $LT, $5, $test_bcmpStr, $3, $test_bcmpStr+1 # a<b
+  ASSERT_BYTES_CMP $GT, $2, $test_bcmpStr+4, $3, $test_bcmpStr # c>a
   ret
+
+.macro TO_UPPER v
+  # Convert ascii byte from lower->upper case.
+  # Notes: 'A'=0x41 'Z'=0x5A 'a'=0x61 'z'=0x7A
+  cmpb $'a', \v
+  jl return
+  cmpb $'z', \v
+  jg return
+  # else subtract 0x20 to convert to upper case.
+  subb $0x20, \v
+  ret
+.endm
+
+alToUpper: TO_UPPER %al
+ahToUpper: TO_UPPER %ah
+
+beqNocase: # %eax:aCount %ebx:&a %ecx:bCount %edx:&b ( -- ) %eax:bool
+  // Compare byte sequence a to b for equality, ignoring case
+  cmp %eax, %ecx
+  jne beqNocase_neq
+  ZERO %edi
+beqNocase_loop:
+  cmp %ecx, %edi
+  jge beqNocase_eq
+  movb (%edi, %ebx, 1), %al
+  movb (%edi, %edx, 1), %ah # cmp b, a
+  call alToUpper
+  call ahToUpper
+  inc %edi
+  cmpb %al, %ah
+  je beqNocase_loop # if eq continue loop, else not equal
+beqNocase_neq:
+  movl $FALSE, %eax
+  ret
+beqNocase_eq:
+  movl $TRUE, %eax
+  ret
+
+.macro ASSERT_BYTES_NOCASE_EQ aCount, a, bCount, b
+  SET_ABCD \aCount, \a, \bCount, \b
+  call beqNocase
+  ASSERT_REG_EQ %eax, $TRUE
+.endm
+
+.macro ASSERT_BYTES_NOCASE_NE aCount, a, bCount, b
+  SET_ABCD \aCount, \a, \bCount, \b
+  call beqNocase
+  ASSERT_REG_EQ %eax, $FALSE
+.endm
+
+test_beqNocaseStr: .ascii "aaAAbbBB\0"
+.align 4
+TESTCASE beqNocase
+  ASSERT_BYTES_NOCASE_EQ $3, $test_beqNocaseStr, $3, $test_beqNocaseStr   # same string =
+  ASSERT_BYTES_NOCASE_EQ $2, $test_beqNocaseStr, $2, $test_beqNocaseStr+2 # different case =
+  ASSERT_BYTES_NOCASE_NE $3, $test_beqNocaseStr, $2, $test_beqNocaseStr   # different lengths !=
+  ASSERT_BYTES_NOCASE_NE $2, $test_beqNocaseStr, $2, $test_beqNocaseStr+3 # different letter !=
+  ret
+
+.macro ASSERT_STRCNT_NOCASE_EQ a, b
+  # a and b are the addresses to counted bytes (bytes where first byte=count)
+  movl \a, %ebx
+  ZERO %eax
+  movb (%ebx), %al  # aCount
+  inc %ebx          # &a
+  movl \b, %edx
+  ZERO %ecx
+  movb (%edx), %cl  # bCount
+  inc %edx          # &b
+  call beqNocase
+  ASSERT_REG_EQ %eax, $TRUE
+.endm
+
+bmove: # %eax:count %ebx:&from %ecx:&to ( -- )
+  // Moves count bytes from &from to &to starting at the beginning.
+  // Uses registers a-d
+  JRZ %eax, return
+  movb (%ebx), %dl
+  movb %dl, (%ecx)
+  dec %eax
+  inc %ebx
+  inc %ecx
+  jmp bmove
+
+.macro BMOVE count, from, to
+  SET_ABC \count, \from, \to
+  call bmove
+.endm
+
+cStr_move: # %ebx:&fromCstr &ecx:&toCstr
+  ZERO %eax
+  movb (%ebx), %al   # get count of from
+  movb %al, (%ecx)   # set `to` to same count
+  inc %ebx
+  inc %ecx
+  call bmove
+  ret
+
+.macro CSTR_MOVE from, to
+  SET_BC \from, \to
+  call cStr_move
+.endm
+
+test_bmoveCStr: .ascii "/x06abcDEz"
+TESTCASE bmove
+  subl $0x20, %ebp
+  CSTR_MOVE $test_bmoveCStr, %ebp
+  ASSERT_STRCNT_NOCASE_EQ $test_bmoveCStr, %ebp
+  addl $0x20, %ebp
+  ret
+
+sysread: # %ebx:fd %ecx:&buff %edx:maxLength ( -- ) %eax:numRead
+  # Read from a filedescriptor. This does NOT panic on failure, the caller must
+  # check %eax for errors.
+  movl $SYS_READ, %eax
+  int $LINUX_SYSCALL
+  ret
+
+findWhitespaceStart: # %eax:count %ebx:&bytes ( -- ) %eax:count_remain %ebx:&whitespace
+  # Find whitespace. %ebx will be zero if there was none, else it will be a pointer
+  # to the whitespace.
+  JRZ %eax, findWhitespaceStart_none
+  // all bytes > ascii-space are not whitespace. This means utf8 is supported
+  // out of the box, since all non-ascii utf8 bytes are > 127
+  cmpb $' ', (%ebx)
+  jbe return # be="Below or Equal", unsigned variant of le
+  dec %eax
+  inc %ebx
+  jmp findWhitespaceStart
+findWhitespaceStart_none:
+  movl $0, %ebx
+  ret
+
+findWhitespaceEnd: # %eax:count %ebx:&bytes ( -- ) %eax:count_remain %ebx:&not_whitespace
+  JRZ %eax, findWhitespaceEnd_none
+  cmpb $' ', (%ebx)
+  ja return # ja=Jmp Above
+  dec %eax
+  inc %ebx
+  jmp findWhitespaceEnd
+findWhitespaceEnd_none:
+  movl $0, %ebx
+  ret
+
+word: # ( b[0x24]:strCnt -- b[0x24]:strCnt )
+  # Store the next word from the source into (%ebp).
+  # The word can be up to x23 characters long.
+  # The caller must reserve the space.
+
+  # Read up to the maxCnt bytes into wordStr (keeping previous bytes that exist)
+  # ecx=wordStr+wordStrCnt
+  movb $0, (%ebp) # prime strCnt for cnt=0 if we return early
+  ZERO %ecx
+  movb wordStrCnt, %cl
+  leal wordStr(%ecx), %ecx # ecx=&buff
+  # edx=maxCnt=MAX_CNT-strCnt
+  movl $WORD_MAX_CNT, %edx
+  subb wordStrCnt, %dl  # edx=countToREad
+  movl sourceFd, %ebx   # ebx=Fd
+  call sysread
+  cmp $0, %eax
+  jl word_panic
+  addb %al, wordStrCnt # add number read to the count
+  JRNZ %al, word_cont
+# -- START EOF, al=0 is EOF, if wordStrCnt=0 we have no word
+  cmp $0, wordStrCnt
+  jz return
+# -- END EOF
+word_cont:
+  movb wordStrCnt, %al # and get it
+  movl wordStr, %ebx   # %ebx=&bytes
+  call findWhitespaceStart # eax=count_remain %ebx=&whitespace
+  JRZ %ebx, word_noWhitespace
+
+  # Store count of word in the return strCnt byte
+  movl wordStrCnt, %ecx
+  subl %eax, %ecx
+  movb %cl, (%ebp)
+  # Store what will be the new count into wordStrCnt
+  movb %al, wordStrCnt
+
+  # Move word from wordStrCnt -> strCnt
+  movb (%ebp), %al # count
+  movl wordStr, %ebx # &from
+  leal 1(%ebp), %ecx # &to
+  call bmove
+
+  # Find end of whitespace
+  movl wordStr, %ebx
+  movb (%ebp), %al    # strCnt
+  addl %eax, %ebx # ebx=&bytes after word
+  movb wordStrCnt, %al
+  subb (%ebp), %al # al=remaining count in wordStr
+  call findWhitespaceEnd
+
+  # Move non-whitespace to start of wordStr
+  movb %al, wordStrCnt # update count
+  movl wordStr, %ecx # ecx=&to, ebx already is from
+  call bmove
+  ret
+word_noWhitespace:
+  cmpb $WORD_MAX_CNT, wordStrCnt
+  jge word_panic
+  jmp word # try again
+word_panic:
+  PANIC $ERR_MAX_WORD_LEN
+
+
 
 ##############################
 # Main Entrypoint
