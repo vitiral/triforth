@@ -75,10 +75,11 @@ registerSnapshot: .space 0x20
 pntFd: .int STDERR # where to PNT to
 .equ EMIT_BUFFER_SIZE, 16
 sourceFd: .int STDIN   # where the source code is read from
-.equ WORD_MAX_CNT, 0x22
+.equ SOURCE_STR_CNT_MAX, 0x46  # maximim bytes of source read
+.equ WORD_CNT_MAX, 0x23        # maximum word size
 sourceEof: .byte 0 # Whether an EOF was encountered at the last read
 sourceCStr: .byte 0 # Used for reading source word
-sourceStr: .space WORD_MAX_CNT
+sourceStr: .space SOURCE_STR_CNT_MAX
 errno: .int 0
 panic: .int panicDefault # function to call when panicing
 panicErr: .int 0  # error to print while panicing
@@ -523,7 +524,7 @@ PANIC_LANDING PSTACK_OVERFLOW,  0x301
 PANIC_LANDING PSTACK_UNDERFLOW, 0x303
 PANIC_LANDING RSTACK_OVERFLOW,  0x304
 PANIC_LANDING RSTACK_UNDERFLOW, 0x305
-PANIC_LANDING MAX_WORD_LEN,     0x306
+PANIC_LANDING MAX_WORD_CNT,     0x306
 PANIC_LANDING WORD_MISSING,     0x307
 PANIC_LANDING NUMBER_INVALID,   0x308
 PANIC_LANDING UNKNOWN_WORD,     0x309
@@ -975,6 +976,10 @@ TESTCASE bmove
   addl $0x20, %ebp
   ret
 
+################################################################################
+#### Reading words from source                                              ####
+################################################################################
+
 # sysopen: # %ebx:&fnameNt %ecx:intention %edx:permissions ( -- ) %eax:fd
 #   # Open the nt filename.
 #   # check %eax for errors and panic if they exist.
@@ -1027,72 +1032,76 @@ findWhitespaceEnd_none:
   movl $0, %ebx
   ret
 
-readSource:
+fillSourceCStr:
   # Attempt to fill the sourceStr buffer.
   # Modifies sourceEof, sourceCStr, sourceStr with the result
   ZERO %ecx
-  movb sourceCStr, %cl
-  leal sourceStr(%ecx), %ecx # ecx=&buff
-  # edx=maxCnt=MAX_CNT-strCnt
-  movl $WORD_MAX_CNT, %edx
-  subb sourceCStr, %dl  # edx=countToREad
+  movb sourceCStr, %cl  # count of sourceStr
+  leal sourceStr(%ecx), %ecx # ecx=&buff, end of sourceStr space
+  movl $SOURCE_STR_CNT_MAX, %edx
+  subb sourceCStr, %dl  # edx=countToRead
   movl sourceFd, %ebx   # ebx=Fd
   call sysread
   JMP_L $0, %eax, panicNow_eaxIsErrno
-  TODO
+  JRZ %eax, readSource_eof
   addb %al, sourceCStr # add number read to the count
-  cmp $0, sourceCStr
+  ret
+readSource_eof:
+  movb $TRUE, sourceEof
+  ret
 
-
-word: # ( b[0x24]:outCStr -- b[0x24]:outCStr)
-  # Store the next word from the source into (%ebp).
-  # The word can be up to x22 characters long.
-
-  # Read up to the maxCnt bytes into sourceStr (keeping previous bytes that exist)
-  # ecx=sourceStr+sourceCStr
-
-  movb $0, (%ebp) # prime strCnt for cnt=0 if we return early
-  JRNZ %al, word_notEof
-# -- START EOF, al=0 is EOF
-  JMP_E $0, sourceCStr, return # if sourceCStr=0 we have no word
-  TODO # otherwise return the word we have
-# -- END EOF
-word_notEof:
-  movb sourceCStr, %al # and get it
-  movl sourceStr, %ebx   # %ebx=&bytes
-  call findWhitespaceStart # eax=count_remain %ebx=&whitespace
-  JRZ %ebx, word_noWhitespace
-
-  # Store count of word in the return strCnt byte
-  movl sourceCStr, %ecx
-  subl %eax, %ecx
-  movb %cl, (%ebp)
-  # Store what will be the new count into sourceCStr
-  movb %al, sourceCStr
-
-  # Move word from sourceCStr -> strCnt
-  movb (%ebp), %al # count
-  movl sourceStr, %ebx # &from
+flush_sourceCStr_to_wordCStr:
+  // %eax:count ( b[0x24]:wordCStr -- b[0x24]:wordCStr)
+  // Does two things:
+  // - Moves the word of length count into wordCStr
+  // - Moves the remaining bytes to beginning of sourceCStr and updates count
+  movb %al, (%ebp)  # update wordCnt
+  movl $sourceStr, %ebx # &from
   leal 1(%ebp), %ecx # &to
-  call bmove
+  call bmove # note: eax already=count
 
-  # Find end of whitespace
-  movl sourceStr, %ebx
-  movb (%ebp), %al    # strCnt
-  addl %eax, %ebx # ebx=&bytes after word
-  movb sourceCStr, %al
-  subb (%ebp), %al # al=remaining count in sourceStr
-  call findWhitespaceEnd
-
-  # Move non-whitespace to start of sourceStr
-  movb %al, sourceCStr # update count
-  movl sourceStr, %ecx # ecx=&to, ebx already is from
+  movb sourceCStr, %al # eax will = leftover bytes in sourceCStr
+  subb (%ebp), %al
+  movb %al, sourceCStr
+  leal sourceStr(%eax), %ebx # ebx=&from
+  movl $sourceStr, %ecx # ec&to
   call bmove
   ret
+
+word: # ( b[0x24]:wordCStr -- b[0x24]:wordCStr)
+  # Store the next word from the source into (%ebp).
+  # The word can be up to x22 characters long.
+  call fillSourceCStr
+
+  ZERO %eax
+  movb sourceCStr, %al
+  movl $sourceStr, %ebx
+  call findWhitespaceStart # note: eax:count_remain %ebx:&whitespace
+  JRZ %ebx, word_noWhitespace
+
+  # Found a word, update wordCStr and sourceCStr and return
+  call flush_sourceCStr_to_wordCStr
+  ret
 word_noWhitespace:
-  cmpb $WORD_MAX_CNT, sourceCStr
-  jge panicNow_MAX_WORD_LEN
-  jmp word # try again
+  // There can be no whitespace for a few reasons:
+  // - We reached the EOF, meaning this is the last word -- return whatever we
+  //   have (may be empty) 
+  // - We simply didn't read enough bytes, try again.
+  // - The word was too large to fit in the buffer, this is an error.
+  cmpb $0, sourceEof
+  je word_eof
+  cmpb $WORD_CNT_MAX, sourceCStr
+  // jle: didn't read enough bytes, try again. Note, if equal may be
+  // because we reached EOF, but we won't know until we try again.
+  jle word 
+  PANIC MAX_WORD_CNT
+word_eof: # eof reached, return what we have
+  ZERO %eax # eax will = count
+  movb sourceCStr, %al
+  call flush_sourceCStr_to_wordCStr
+  ret
+
+
 
 ##############################
 # Main Entrypoint
