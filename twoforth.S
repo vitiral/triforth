@@ -1,4 +1,4 @@
-/ general 32bit:    %eax   %ebx   %ecx   %edx  %edi  %esi
+// general 32bit:    %eax   %ebx   %ecx   %edx  %edi  %esi
 // from above 16bit:  ax     bx     cx     dx   none  none
 // from above 8bit: al ah  bl bh  cl ch  dl dh  none  none
 // special:  %esp: stack ptr, our return stack ptr (RSP)
@@ -48,7 +48,7 @@
 
 
 .equ FALSE, 0
-.equ TRUE, -1
+.equ TRUE, 1
 
 //###############
 // Data layout
@@ -75,9 +75,10 @@ registerSnapshot: .space 0x20
 pntFd: .int STDERR # where to PNT to
 .equ EMIT_BUFFER_SIZE, 16
 sourceFd: .int STDIN   # where the source code is read from
-.equ WORD_MAX_CNT, 0x23
-wordCStr: .byte 0 # Used for reading source word
-wordStr: .space WORD_MAX_CNT
+.equ WORD_MAX_CNT, 0x22
+sourceEof: .byte 0 # Whether an EOF was encountered at the last read
+sourceCStr: .byte 0 # Used for reading source word
+sourceStr: .space WORD_MAX_CNT
 errno: .int 0
 panic: .int panicDefault # function to call when panicing
 panicErr: .int 0  # error to print while panicing
@@ -141,6 +142,49 @@ panicRestore: .int 0
   // Jum to location if the register is not zero.
   test \reg, \reg
   jnz \loc
+.endm
+
+# cmp -> jmp is so common that we want to eliminate
+# accidentally adding an instruction between them
+# (which might alter the flags register).
+.macro CMP_JMP cmpType, a, b, jmpCompare, location
+  \cmpType \a, \b
+  \jmpCompare \location
+.endm
+
+.macro JMP_E a, b, location
+  CMP_JMP cmp, \a, \b, je, \location
+.endm
+.macro JMP_NE a, b, location
+  CMP_JMP cmp, \a, \b, jne, \location
+.endm
+
+# Signed comparisons
+.macro JMP_L a, b, location
+  CMP_JMP cmp, \a, \b, jl, \location
+.endm
+.macro JMP_LE a, b, location
+  CMP_JMP cmp, \a, \b, jle, \location
+.endm
+.macro JMP_GE a, b, location
+  CMP_JMP cmp, \a, \b, jge, \location
+.endm
+.macro JMP_G a, b, location
+  CMP_JMP cmp, \a, \b, jg, \location
+.endm
+
+# Unsigned comparisons
+.macro JMP_B a, b, location # jmp below
+  CMP_JMP cmp, \a, \b, jb, \location
+.endm
+.macro JMP_BE a, b, location # jmp below or equal
+  CMP_JMP cmp, \a, \b, jbe, \location
+.endm
+.macro JMP_AE a, b, location # jmp above or equal
+  CMP_JMP cmp, \a, \b, jae, \location
+.endm
+.macro JMP_A a, b, location # jmp above
+  CMP_JMP cmp, \a, \b, ja, \location
 .endm
 
 return:
@@ -210,11 +254,9 @@ syswrite: # %ebx:fd %ecx:&buff %edx:bytesToWrite ( -- )
 
 syswriteall: # %ebx:fd %ecx:&buff %edx:bytesToWrite ( -- )
   # Writes to the fd, making sure that all bytes are written.
-  cmp $0, errno # if errno is not zero, do nothing
-  jne return
+  JMP_NE $0, errno, return
   call syswrite
-  cmpl $0, %eax # error if lt 0
-  jl syswriteall_error
+  JMP_L $0, %eax, syswriteall_error
   subl %eax, %edx # edx=edx-eax  # OPP src, dest
   jz return # if edx=0 we are done
   addl %ecx, %eax
@@ -293,8 +335,7 @@ ebxUx: # %ebx:f ( 8o -- 8o ) %edx:right-aligned-count
   movl %ebx, %ecx   # %ecx=remaining number
 ebxUx_loop:
   dec %eax
-  cmp $7, %eax
-  ja asmInvariantViolated  # ja=jump above (unsigned)
+  JMP_A $7, %eax, asmInvariantViolated  # ja=jump above (unsigned)
   movl %ecx, %ebx
   andl $0x0F, %ebx  # ebx=ebx % 0x10
   call toasciiEbx
@@ -320,8 +361,7 @@ ebxUxPad: # %ebx:f ( 8o -- 8o ) %edx:count ( always 8 )
   subl %edx, %eax
   movl $8, %edx # always return count=8
 ebxUxPad_loop:
-  cmp %ebp, %eax
-  jle return
+  JMP_LE %ebp, %eax, return
   dec %eax
   movb $'0', (%eax)
   jmp ebxUxPad_loop
@@ -411,8 +451,7 @@ dbgRegisters: # prints the snapshotted registers
 pntMem: # ( start end -- )
   movl (%ebp), %ecx  # start
   movl 4(%ebp), %edx  # end
-  cmp %edx, %ecx
-  jge pntMem_return
+  JMP_GE %edx, %ecx, pntMem_return
   movl (%ecx), %ebx
   call pntEbxUxPretty
   PNT_ASCII $' '
@@ -510,8 +549,7 @@ checkErrno_str: .ascii "!! errno=\0"
 checkErrno:
   // Checks that errno is zero or panics
   // Mutates no registers.
-  cmp $0, errno
-  jz return
+  JMP_E $0, errno, return
   PNT_NT_STR $checkErrno_str
   PNT_UX_NL errno
   jmp panicNow_ERRNO
@@ -544,8 +582,7 @@ assertFailStr: .ascii "!! ASSERT FAIL: \0"
 assertEaxEbxEq_str: .ascii " = \0"
 .align 4
 assertEaxEbxEq:
-  cmp %eax, %ebx
-  je return
+  JMP_E %eax, %ebx, return
   subl $8, %ebp
   movl %eax, (%ebp)
   movl %ebx, 4(%ebp)
@@ -791,10 +828,8 @@ bcmp: # %eax:aCount %ebx:&a %ecx:bCount %edx:&b ( -- ) %eax:cmp
   PUSH %eax
   ZERO %edi
 bcmp_loop:
-  cmp (%ebp), %edi  # aCount
-  jge bcmp_aCountExhausted
-  cmp %ecx, %edi    # bCount
-  jge bcmp_gt       # jmp if b was exhausted, a wasn't. a>b
+  JMP_GE (%ebp), %edi, bcmp_aCountExhausted
+  JMP_GE %ecx, %edi, bcmp_gt # jmp if b was exhausted, a wasn't, therefore a>b
   movb (%edi, %ebx, 1), %al
   cmpb (%edi, %edx, 1), %al # cmp b, a
   jl bcmp_lt
@@ -802,8 +837,7 @@ bcmp_loop:
   inc %edi
   jmp bcmp_loop
 bcmp_aCountExhausted:
-  cmp %ecx, %edi # bCount
-  jge bcmp_eq # eq if bCount was also exhausted
+  JMP_GE %ecx, %edi, bcmp_eq # eq if bCount was also exhausted
   jmp bcmp_lt # else a<b
 bcmp_eq:
   ZERO %eax # EQ
@@ -847,12 +881,10 @@ ahToUpper: TO_UPPER %ah
 
 beqNocase: # %eax:aCount %ebx:&a %ecx:bCount %edx:&b ( -- ) %eax:bool
   // Compare byte sequence a to b for equality, ignoring case
-  cmp %eax, %ecx
-  jne beqNocase_neq
+  JMP_NE %eax, %ecx, beqNocase_neq
   ZERO %edi
 beqNocase_loop:
-  cmp %ecx, %edi
-  jge beqNocase_eq
+  JMP_GE %ecx, %edi, beqNocase_eq
   movb (%edi, %ebx, 1), %al
   movb (%edi, %edx, 1), %ah # cmp b, a
   call alToUpper
@@ -995,65 +1027,70 @@ findWhitespaceEnd_none:
   movl $0, %ebx
   ret
 
-word: # ( b[0x24]:strCnt -- b[0x24]:strCnt )
-  # Store the next word from the source into (%ebp).
-  # The word can be up to x23 characters long.
-  # The caller must reserve the space.
-
-  # Read up to the maxCnt bytes into wordStr (keeping previous bytes that exist)
-  # ecx=wordStr+wordCStr
-  movb $0, (%ebp) # prime strCnt for cnt=0 if we return early
+readSource:
+  # Attempt to fill the sourceStr buffer.
+  # Modifies sourceEof, sourceCStr, sourceStr with the result
   ZERO %ecx
-  movb wordCStr, %cl
-  leal wordStr(%ecx), %ecx # ecx=&buff
+  movb sourceCStr, %cl
+  leal sourceStr(%ecx), %ecx # ecx=&buff
   # edx=maxCnt=MAX_CNT-strCnt
   movl $WORD_MAX_CNT, %edx
-  subb wordCStr, %dl  # edx=countToREad
+  subb sourceCStr, %dl  # edx=countToREad
   movl sourceFd, %ebx   # ebx=Fd
   call sysread
-  cmp $0, %eax
-  jl panicNow_eaxIsErrno
-  addb %al, wordCStr # add number read to the count
+  JMP_L $0, %eax, panicNow_eaxIsErrno
+  TODO
+  addb %al, sourceCStr # add number read to the count
+  cmp $0, sourceCStr
+
+
+word: # ( b[0x24]:outCStr -- b[0x24]:outCStr)
+  # Store the next word from the source into (%ebp).
+  # The word can be up to x22 characters long.
+
+  # Read up to the maxCnt bytes into sourceStr (keeping previous bytes that exist)
+  # ecx=sourceStr+sourceCStr
+
+  movb $0, (%ebp) # prime strCnt for cnt=0 if we return early
   JRNZ %al, word_notEof
-# -- START EOF, al=0 is EOF, 
-  cmp $0, wordCStr  # if wordCStr=0 we have no word
-  jz return
+# -- START EOF, al=0 is EOF
+  JMP_E $0, sourceCStr, return # if sourceCStr=0 we have no word
   TODO # otherwise return the word we have
 # -- END EOF
 word_notEof:
-  movb wordCStr, %al # and get it
-  movl wordStr, %ebx   # %ebx=&bytes
+  movb sourceCStr, %al # and get it
+  movl sourceStr, %ebx   # %ebx=&bytes
   call findWhitespaceStart # eax=count_remain %ebx=&whitespace
   JRZ %ebx, word_noWhitespace
 
   # Store count of word in the return strCnt byte
-  movl wordCStr, %ecx
+  movl sourceCStr, %ecx
   subl %eax, %ecx
   movb %cl, (%ebp)
-  # Store what will be the new count into wordCStr
-  movb %al, wordCStr
+  # Store what will be the new count into sourceCStr
+  movb %al, sourceCStr
 
-  # Move word from wordCStr -> strCnt
+  # Move word from sourceCStr -> strCnt
   movb (%ebp), %al # count
-  movl wordStr, %ebx # &from
+  movl sourceStr, %ebx # &from
   leal 1(%ebp), %ecx # &to
   call bmove
 
   # Find end of whitespace
-  movl wordStr, %ebx
+  movl sourceStr, %ebx
   movb (%ebp), %al    # strCnt
   addl %eax, %ebx # ebx=&bytes after word
-  movb wordCStr, %al
-  subb (%ebp), %al # al=remaining count in wordStr
+  movb sourceCStr, %al
+  subb (%ebp), %al # al=remaining count in sourceStr
   call findWhitespaceEnd
 
-  # Move non-whitespace to start of wordStr
-  movb %al, wordCStr # update count
-  movl wordStr, %ecx # ecx=&to, ebx already is from
+  # Move non-whitespace to start of sourceStr
+  movb %al, sourceCStr # update count
+  movl sourceStr, %ecx # ecx=&to, ebx already is from
   call bmove
   ret
 word_noWhitespace:
-  cmpb $WORD_MAX_CNT, wordCStr
+  cmpb $WORD_MAX_CNT, sourceCStr
   jge panicNow_MAX_WORD_LEN
   jmp word # try again
 
