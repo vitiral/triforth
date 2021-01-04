@@ -131,6 +131,10 @@ panicRestore: .int 0
   movl \b, %ebx
   movl \c, %ecx
 .endm
+.macro SET_BCD b, c, d
+  SET_BC \b, \c
+  movl \d, %edx
+.endm
 
 .macro JRZ reg , loc
   // Jump to location if the register is zero.  This uses `test`, which does an
@@ -384,6 +388,14 @@ pntEbxUxPretty: # %ebx:f ( -- )
 .macro PNT_NTSTR s
   movl \s, %ecx
   call pntEcxNtStr
+.endm
+
+.macro PNT_CSTR cStr
+  movl pntFd, %ebx
+  movl $\cStr+1, %ecx
+  ZERO %edx
+  movb \cStr, %dl
+  call syswriteall
 .endm
 
 todoNtStr: .ascii "!! TODO reached !!\n\0"
@@ -904,7 +916,7 @@ TESTCASE beqNocase
   ASSERT_BYTES_NOCASE_NE $2, $test_beqNocaseStr, $2, $test_beqNocaseStr+3 # different letter !=
   ret
 
-.macro ASSERT_STRCNT_NOCASE_EQ a, b
+.macro ASSERT_CSTR_NOCASE_EQ a, b
   # a and b are the addresses to counted bytes (bytes where first byte=count)
   movl \a, %ebx
   ZERO %eax
@@ -953,9 +965,9 @@ test_bmoveCStr2: .ascii "/x03p12"
 TESTCASE bmove
   subl $0x20, %ebp
   CSTR_MOVE $test_bmoveCStr, %ebp
-  ASSERT_STRCNT_NOCASE_EQ $test_bmoveCStr, %ebp
+  ASSERT_CSTR_NOCASE_EQ $test_bmoveCStr, %ebp
   CSTR_MOVE $test_bmoveCStr2, %ebp
-  ASSERT_STRCNT_NOCASE_EQ $test_bmoveCStr2, %ebp
+  ASSERT_CSTR_NOCASE_EQ $test_bmoveCStr2, %ebp
   addl $0x20, %ebp
   ret
 
@@ -977,7 +989,7 @@ sysclose: # %ebx:fd ( -- )
   ret
 
 .macro OPEN_SOURCE_FD filepathNt
-  movl \filepathNt, %ebx
+  SET_BCD \filepathNt, $O_RDONLY, $0666 # edx=permissions
   call sysopen
   JMP_L $0, %eax, panicNow_eaxIsErrno
   movl %eax, sourceFd
@@ -1099,13 +1111,13 @@ word_eof: # eof reached, return what we have
   call flush_sourceCStr_to_wordCStr
   ret
 
-.macro TEST_FIND_WHITESPACE_START cStr, expectedCountRemaining
+.macro TEST_FIND_WHITESPACE fn, cStr, expectedCountRemaining
   # Test findWhitespace using the cStr and the count
   # First, assert expectedCountRemaining is correct.
   ZERO %eax
   movb \cStr, %al
   movl $\cStr+1, %ebx
-  call findWhitespaceStart
+  call \fn
   movl %ebx, %ecx # cache ebx for next assert
   movl $\expectedCountRemaining, %ebx
   call assertEaxEbxEq
@@ -1119,30 +1131,29 @@ word_eof: # eof reached, return what we have
   call assertEaxEbxEq
 .endm
 
-.macro TEST_FIND_WHITESPACE_END cStr, expectedCountRemaining
-  # First, assert expectedCountRemaining is correct.
-  ZERO %eax
-  movb \cStr, %al
-  movl $\cStr+1, %ebx
-  call findWhitespaceEnd
-  movl %ebx, %ecx # cache ebx for next assert
-  movl $\expectedCountRemaining, %ebx
-  call assertEaxEbxEq
-  DBG $0x130
-
-  TODO
-.endm
-
-test_wordCStr1: .byte 12
+test_wordCStr1: .byte 0xC
 test_wordStr1: .ascii "the    quick"
 test_wordCStr2: .byte 8
 test_wordStr2: .ascii "   quick"
+file_some_words: .ascii "tests/some_words.txt\0"
+file_some_words_cStr: .byte 0x40
+  .ascii "the     quick\n\n\t\t    \tbrown\n  fox jumped over    the lazy    dog"
 .align 4
 TESTCASE word
   # Tests all functions used in `word`, then tests the whole thing.
-  TEST_FIND_WHITESPACE_START test_wordCStr1, 9  # 3 bytes len, 9 remaining
-  TEST_FIND_WHITESPACE_START test_wordCStr2, 8  # found immediately, subtract 0
-  TEST_FIND_WHITESPACE_END test_wordCStr2, 5  # 3 bytes len, 5 remaining
+
+  // findWhitespaceStart
+  TEST_FIND_WHITESPACE findWhitespaceStart, test_wordCStr1, 9 # note: 9 REMAIN
+  TEST_FIND_WHITESPACE findWhitespaceStart, test_wordCStr2, 8
+
+  // findWhitespaceEnd
+  TEST_FIND_WHITESPACE findWhitespaceEnd, test_wordCStr1, 0xC
+  TEST_FIND_WHITESPACE findWhitespaceEnd, test_wordCStr2, 5
+
+  OPEN_SOURCE_FD $file_some_words
+  call fillSourceCStr
+  ASSERT_CSTR_NOCASE_EQ $sourceCStr, $file_some_words_cStr
+  CLOSE_SOURCE_FD
   ret
 
 
