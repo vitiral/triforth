@@ -2842,7 +2842,7 @@ sysopen: # %ebx:&fnameNt %ecx:intention %edx:permissions ( -- ) %eax:fd
   call *(panic)
   jmp unreachable
 
-sysclose: # %ebx:fd ( -- ) 
+sysclose: # %ebx:fd ( -- ) %eax:rc
   # Close the filedescriptor
   movl $SYS_CLOSE, %eax
   int $LINUX_SYSCALL

@@ -206,7 +206,7 @@ sysexit: # %ebx:rc ( -- )
 .endm
 
 .macro TODO
-  EXIT $420
+  EXIT 42
 .endm
 
 asmInvariantViolated: EXIT $RC_ASM_INVARIANT
@@ -594,13 +594,8 @@ assertEaxEbxEq:
   addl $8, %ebp
   jmp exitFailTest
 
-.macro SET_EABX a, b
-  movl \a , %eax
-  movl \b , %ebx
-.endm
-
 .macro ASSERT_REG_EQ a, b
-  SET_EABX \a, \b
+  SET_AB \a, \b
   call assertEaxEbxEq
 .endm
 
@@ -668,15 +663,6 @@ assertClean:
     call startingTest
     call assertClean
 .endm
-
-TESTCASE suite
-  call test_pureAsm
-  call test_pstack
-  call test_bcmp
-  call test_beqNocase
-  call test_bmove
-  call assertClean
-  ret
 
 TESTCASE pureAsm
   // Test simple assert
@@ -980,23 +966,34 @@ TESTCASE bmove
 #### Reading words from source                                              ####
 ################################################################################
 
-# sysopen: # %ebx:&fnameNt %ecx:intention %edx:permissions ( -- ) %eax:fd
-#   # Open the nt filename.
-#   # check %eax for errors and panic if they exist.
-#   movl $SYS_OPEN, %eax
-#   int $LINUX_SYSCALL
-#   cmpl $0, %eax
-#   jl 1f
-#   ret
-# 1:
-#   movl %eax, panicErr
-#   call *(panic)
-#   jmp unreachable
+sysopen: # %ebx:&fnameNt %ecx:intention %edx:permissions ( -- ) %eax:fd
+  # Open the nt filename.
+  # check %eax for errors and panic if they exist.
+  movl $SYS_OPEN, %eax
+  int $LINUX_SYSCALL
+  ret
+
+sysclose: # %ebx:fd ( -- ) 
+  # Close the filedescriptor
+  movl $SYS_CLOSE, %eax
+  int $LINUX_SYSCALL
+  ret
 
 .macro OPEN_SOURCE_FD filepathNt
+  movl \filepathNt, %ebx
+  call sysopen
+  JMP_L $0, %eax, panicNow_eaxIsErrno
+  movl %eax, sourceFd
 .endm
-
 .macro CLOSE_SOURCE_FD
+  movl sourceFd, %ebx
+  call sysclose
+  JMP_L $0, %eax, panicNow_eaxIsErrno
+  movl $STDIN, sourceFd
+.endm
+.macro REOPEN_SOURCE_FD filepathNt
+  CLOSE_SOURCE_FD
+  OPEN_SOURCE_FD \filepathNt
 .endm
 
 sysread: # %ebx:fd %ecx:&buff %edx:maxLength ( -- ) %eax:numRead
@@ -1053,13 +1050,14 @@ readSource_eof:
 flush_sourceCStr_to_wordCStr:
   // %eax:count ( b[0x24]:wordCStr -- b[0x24]:wordCStr)
   // Does two things:
-  // - Moves the word of length count into wordCStr
+  // - Moves the word of length %eax into wordCStr
   // - Moves the remaining bytes to beginning of sourceCStr and updates count
   movb %al, (%ebp)  # update wordCnt
   movl $sourceStr, %ebx # &from
   leal 1(%ebp), %ecx # &to
   call bmove # note: eax already=count
 
+  # TODO: need to findWhiteSpaceEnd first
   movb sourceCStr, %al # eax will = leftover bytes in sourceCStr
   subb (%ebp), %al
   movb %al, sourceCStr
@@ -1080,6 +1078,9 @@ word: # ( b[0x24]:wordCStr -- b[0x24]:wordCStr)
   JRZ %ebx, word_noWhitespace
 
   # Found a word, update wordCStr and sourceCStr and return
+  movl %eax, %ebx # eax will = wordCount
+  movb sourceCStr, %al
+  subl %ebx, %eax
   call flush_sourceCStr_to_wordCStr
   ret
 word_noWhitespace:
@@ -1101,10 +1102,68 @@ word_eof: # eof reached, return what we have
   call flush_sourceCStr_to_wordCStr
   ret
 
+.macro TEST_FIND_WHITESPACE_START cStr, expectedCountRemaining
+  # Test findWhitespace using the cStr and the count
+  # First, assert expectedCountRemaining is correct.
+  ZERO %eax
+  movb \cStr, %al
+  movl $\cStr+1, %ebx
+  call findWhitespaceStart
+  movl %ebx, %ecx # cache ebx for next assert
+  movl $\expectedCountRemaining, %ebx
+  call assertEaxEbxEq
+
+  # Next, assert the pointer points to the right memory
+  movb \cStr, %al  # total count
+  subl $\expectedCountRemaining, %eax # eax=size of whitespace
+  addl $\cStr, %eax # eax=expected pointer location
+  inc %eax # inc because of the count byte in cStr
+  movl %ecx, %ebx # load cached ebx
+  call assertEaxEbxEq
+.endm
+
+.macro TEST_FIND_WHITESPACE_END cStr, expectedCountRemaining
+  # First, assert expectedCountRemaining is correct.
+  ZERO %eax
+  movb \cStr, %al
+  movl $\cStr+1, %ebx
+  call findWhitespaceEnd
+  movl %ebx, %ecx # cache ebx for next assert
+  movl $\expectedCountRemaining, %ebx
+  call assertEaxEbxEq
+
+  TODO
+.endm
+
+test_wordCStr1: .byte 12
+test_wordStr1: .ascii "the    quick"
+test_wordCStr2: .byte 8
+test_wordStr2: .ascii "   quick"
+.align 4
+TESTCASE word
+  # Tests all functions used in `word`, then tests the whole thing.
+  TEST_FIND_WHITESPACE_START test_wordCStr1, 9  # 3 bytes len, 9 remaining
+  TEST_FIND_WHITESPACE_START test_wordCStr2, 8  # found immediately, subtract 0
+  TEST_FIND_WHITESPACE_END test_wordCStr2, 5  # 3 bytes len, 5 remaining
+  ret
 
 
 ##############################
-# Main Entrypoint
+# Main Entrypoint and test suite
+
+testSuite:
+  call assertClean
+
+  call test_pureAsm
+  call test_pstack
+  call test_bcmp
+  call test_beqNocase
+  call test_bmove
+  call test_word
+
+  call assertClean
+  ret
+
 mainStartNtStr: .ascii "Starting Triforth...\n\0"
 .align 4
 .globl _start
@@ -1116,5 +1175,5 @@ _start:
   movl rstackMax, %esp  # clear rstack
   movl pstackMax, %ebp  # clear pstack
   PNT_NT_STR $mainStartNtStr
-  call test_suite
+  call testSuite
   EXIT $0
