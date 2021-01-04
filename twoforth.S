@@ -235,7 +235,7 @@ snapshotRegisters:
   ret
 
 .macro RESTORE_REG r
-  movl (registerSnapshot + offset_\r) , %\r
+  movl (registerSnapshot+offset_\r) , %\r
 .endm
 
 restoreRegisters:
@@ -433,9 +433,9 @@ dbgRegNtStr_edx: .ascii " edx=\0"
 dbgRegNtStr_edi: .ascii " edi=\0"
 dbgEndNtStr: .ascii ")\n\0"
 .align 4
-.macro DBG_REG r
-  PNT_NTSTR $dbgRegNtStr_\r
-  PNT_UX_PRETTY registerSnapshot+offset_\r
+.macro DBG_REG reg
+  PNT_NTSTR $dbgRegNtStr_\reg
+  PNT_UX_PRETTY registerSnapshot+offset_\reg
 .endm
 
 dbgRegisters: # prints the snapshotted registers
@@ -672,6 +672,7 @@ assertClean:
     movl $testname_\name, testingNtStr
     call startingTest
     call assertClean
+  testStart_\name :
 .endm
 
 TESTCASE pureAsm
@@ -948,7 +949,7 @@ bmove: # %eax:count %ebx:&from %ecx:&to ( -- )
   call bmove
 .endm
 
-cStr_move: # %ebx:&fromCstr &ecx:&toCstr
+cStrMove: # %ebx:&fromCstr &ecx:&toCstr
   ZERO %eax
   movb (%ebx), %al   # eax = count of from
   movb %al, (%ecx)   # set `to` to same count
@@ -961,15 +962,18 @@ cStr_move: # %ebx:&fromCstr &ecx:&toCstr
 .macro CSTR_MOVE from, to
   SET_BC \from, \to
   DBG $3
-  call cStr_move
+  call cStrMove
 .endm
 
-test_bmoveCStr: .ascii "/x06abcDEz"
-test_bmoveCStr2: .ascii "/x03p12"
+test_bmoveCStr: .byte 0x06
+  .ascii "abcDEz"
+test_bmoveCStr2: .byte 0x03
+  .ascii "p12"
 .align 4
 TESTCASE bmove
   subl $0x20, %ebp
   DBG $0x20
+rightHereTODO:
   CSTR_MOVE $test_bmoveCStr, %ebp
   ASSERT_CSTR_NOCASE_EQ $test_bmoveCStr, %ebp
   DBG $0x21
