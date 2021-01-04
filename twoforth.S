@@ -136,6 +136,24 @@ panicRestore: .int 0
   movl \d, %edx
 .endm
 
+# These set byte values
+.macro MOVB_A value
+  ZERO %eax
+  movb \value, %al
+.endm
+.macro MOVB_B value
+  ZERO %ebx
+  movb \value, %bl
+.endm
+.macro MOVB_C value
+  ZERO %ecx
+  movb \value, %cl
+.endm
+.macro MOVB_D value
+  ZERO %edx
+  movb \value, %dl
+.endm
+
 .macro JRZ reg , loc
   // Jump to location if the register is zero.  This uses `test`, which does an
   // AND that only mutates the eflags register.
@@ -393,8 +411,7 @@ pntEbxUxPretty: # %ebx:f ( -- )
 .macro PNT_CSTR cStr
   movl pntFd, %ebx
   movl $\cStr+1, %ecx
-  ZERO %edx
-  movb \cStr, %dl
+  MOVB_D \cStr
   call syswriteall
 .endm
 
@@ -921,12 +938,10 @@ TESTCASE beqNocase
 .macro ASSERT_CSTR_NOCASE_EQ a, b
   # a and b are the addresses to counted bytes (bytes where first byte=count)
   movl \a, %ebx
-  ZERO %eax
-  movb (%ebx), %al  # aCount
+  MOVB_A (%ebx)     # aCount
   inc %ebx          # &a
   movl \b, %edx
-  ZERO %ecx
-  movb (%edx), %cl  # bCount
+  MOVB_C (%edx)     # bCount
   inc %edx          # &b
   call beqNocase
   ASSERT_REG_EQ %eax, $TRUE
@@ -949,8 +964,7 @@ bmove: # %eax:count %ebx:&from %ecx:&to ( -- )
 .endm
 
 cStrMove: # %ebx:&fromCstr &ecx:&toCstr
-  ZERO %eax
-  movb (%ebx), %al   # eax = count of from
+  MOVB_A (%ebx)      # eax = count of from
   movb %al, (%ecx)   # set `to` to same count
   inc %ebx  # inc both to point at bytes (not count)
   inc %ecx
@@ -1045,8 +1059,7 @@ findWhitespaceEnd_none:
 fillSourceCStr:
   # Attempt to fill the sourceStr buffer.
   # Modifies sourceEof, sourceCStr, sourceStr with the result
-  ZERO %ecx
-  movb sourceCStr, %cl  # count of sourceStr
+  MOVB_C sourceCStr     # count of sourceStr
   leal sourceStr(%ecx), %ecx # ecx=&buff, end of sourceStr space
   movl $SOURCE_STR_CNT_MAX, %edx
   subb sourceCStr, %dl  # edx=countToRead
@@ -1085,8 +1098,7 @@ word: # ( b[0x24]:wordCStr -- b[0x24]:wordCStr)
   # The word can be up to x22 characters long.
   call fillSourceCStr
 
-  ZERO %eax
-  movb sourceCStr, %al
+  MOVB_A sourceCStr
   movl $sourceStr, %ebx
   call findWhitespaceStart # note: eax:count_remain %ebx:&whitespace
   JRZ %ebx, word_noWhitespace
@@ -1111,16 +1123,14 @@ word_noWhitespace:
   jle word 
   PANIC MAX_WORD_CNT
 word_eof: # eof reached, return what we have
-  ZERO %eax # eax will = count
-  movb sourceCStr, %al
+  MOVB_A sourceCStr
   call flush_sourceCStr_to_wordCStr
   ret
 
 .macro TEST_FIND_WHITESPACE fn, cStr, expectedCountRemaining
   # Test findWhitespace using the cStr and the count
   # First, assert expectedCountRemaining is correct.
-  ZERO %eax
-  movb \cStr, %al
+  MOVB_A \cStr
   movl $\cStr+1, %ebx
   call \fn
   movl %ebx, %ecx # cache ebx for next assert
@@ -1168,6 +1178,14 @@ TESTCASE fillSourceCStr
 TESTCASE flush_sourceCStr_to_wordCStr
   subl $WORD_STACK_SIZE, %ebp
   CSTR_MOVE $test_wordCStr1, $sourceCStr
+  TODO
+  movl $3, %eax
+  call flush_sourceCStr_to_wordCStr # moves "the" to stack, keeps "quick"
+  movl %ebp, %ebx
+  inc %ebx
+  ASSERT_BYTES_CMP $EQ, $3, %ebx, $3, test_wordCStr1 # stack = "fox"
+  MOVB_A (%ebp)
+  ASSERT_REG_EQ %eax, $3
   addl $WORD_STACK_SIZE, %ebp
   ret
 
