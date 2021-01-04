@@ -408,11 +408,21 @@ pntEbxUxPretty: # %ebx:f ( -- )
   call pntEcxNtStr
 .endm
 
-.macro PNT_CSTR cStr
+pntCStr: # %ecx=&cStr
   movl pntFd, %ebx
-  movl $\cStr+1, %ecx
-  MOVB_D \cStr
+  MOVB_D (%ecx)
+  inc %ecx
   call syswriteall
+  ret
+
+.macro PNT_CSTR cStr
+  movl \cStr, %ecx
+  call pntCStr
+.endm
+
+.macro PNT_CSTR_NL cStr
+  PNT_CSTR \cStr
+  PNT_ASCII $'\n'
 .endm
 
 todoNtStr: .ascii "!! TODO reached !!\n\0"
@@ -1085,10 +1095,11 @@ flush_sourceCStr_to_wordCStr:
   leal 1(%ebp), %ecx # &to
   call bmove # note: eax already=count
 
-  movb sourceCStr, %al # eax will = leftover bytes in sourceCStr
+  movb sourceCStr, %al # eax will = count leftover in sourceCStr
   subb (%ebp), %al
   leal sourceStr(%eax), %ebx # ebx=start of whitespace
-  call findWhitespaceEnd # eax=count bytes non-whitespace, ebx=&non-whitespace
+  call findWhitespaceEnd
+  # eax=count-after-non-whitespace, ebx=&after-non-whitespace
   movl $sourceStr, %ecx # ecx=&to
   call bmove
   ret
@@ -1185,7 +1196,9 @@ TESTCASE flush_sourceCStr_to_wordCStr
   ASSERT_BYTES_CMP $EQ, $3, %ebx, $3, $test_wordStr1 # stack = "the"
   MOVB_A (%ebp)
   ASSERT_REG_EQ %eax, $3
-  PNT_CSTR sourceCStr
+  PNT_CSTR_NL $test_wordCStr1
+  PNT_CSTR_NL %ebp
+  PNT_CSTR_NL $sourceCStr
   ASSERT_BYTES_CMP $EQ, $5, $sourceStr, $5, $test_wordStr1+7 # remaining source="quick"
   addl $WORD_STACK_SIZE, %ebp
   ret
