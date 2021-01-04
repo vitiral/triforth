@@ -646,6 +646,7 @@ assertStackEmpty:
 
 assertPanicClean_str1: .ascii "!! Not clean panic==panicExpected\n\0"
 assertPanicClean_str2: .ascii "!! Not clean panicErr==\0"
+.align 4
 assertPanicClean:
   cmpl $panicExpected, panic
   je 1f
@@ -962,6 +963,7 @@ cStr_move: # %ebx:&fromCstr &ecx:&toCstr
 
 test_bmoveCStr: .ascii "/x06abcDEz"
 test_bmoveCStr2: .ascii "/x03p12"
+.align 4
 TESTCASE bmove
   subl $0x20, %ebp
   CSTR_MOVE $test_bmoveCStr, %ebp
@@ -999,10 +1001,8 @@ sysclose: # %ebx:fd ( -- )
   call sysclose
   JMP_L $0, %eax, panicNow_eaxIsErrno
   movl $STDIN, sourceFd
-.endm
-.macro REOPEN_SOURCE_FD filepathNt
-  CLOSE_SOURCE_FD
-  OPEN_SOURCE_FD \filepathNt
+  movb $0, sourceEof  # reset source Eof
+  movb $0, sourceCStr # reset source Count
 .endm
 
 sysread: # %ebx:fd %ecx:&buff %edx:maxLength ( -- ) %eax:numRead
@@ -1056,22 +1056,23 @@ readSource_eof:
   movb $TRUE, sourceEof
   ret
 
+.equ WORD_STACK_SIZE, WORD_CNT_MAX+1
 flush_sourceCStr_to_wordCStr:
-  // %eax:count ( b[0x24]:wordCStr -- b[0x24]:wordCStr)
+  // %eax:count ( b[WORD_STACK_SIZE]:wordCStr -- b[WORD_STACK_SIZE]:wordCStr)
   // Does two things:
   // - Moves the word of length %eax into wordCStr
-  // - Moves the remaining bytes to beginning of sourceCStr and updates count
+  // - Moves the remaining (non-whitespace) bytes to beginning of sourceCStr
+  //   and updates count
   movb %al, (%ebp)  # update wordCnt
   movl $sourceStr, %ebx # &from
   leal 1(%ebp), %ecx # &to
   call bmove # note: eax already=count
 
-  # TODO: need to findWhiteSpaceEnd first
   movb sourceCStr, %al # eax will = leftover bytes in sourceCStr
   subb (%ebp), %al
-  movb %al, sourceCStr
-  leal sourceStr(%eax), %ebx # ebx=&from
-  movl $sourceStr, %ecx # ec&to
+  leal sourceStr(%eax), %ebx # ebx=start of whitespace
+  call findWhitespaceEnd # eax=count bytes non-whitespace, ebx=&non-whitespace
+  movl $sourceStr, %ecx # ecx=&to
   call bmove
   ret
 
@@ -1143,7 +1144,6 @@ test_wordCStr_specialFill: .byte 0x46
   .ascii "the     quick\n\n\t\t    \tbrown\n  fox jumped over    the "
   .ascii "lazy    dog\n\n    "
 .align 4
-
 TESTCASE findWhitespace
   TEST_FIND_WHITESPACE findWhitespaceStart, test_wordCStr1, 9 # note: 9 REMAIN
   TEST_FIND_WHITESPACE findWhitespaceStart, test_wordCStr2, 8
@@ -1161,7 +1161,11 @@ TESTCASE fillSourceCStr
   ASSERT_CSTR_NOCASE_EQ $sourceCStr, $test_wordCStr_specialFill
   CLOSE_SOURCE_FD
   ret
-
+TESTCASE flush_sourceCStr_to_wordCStr
+  subl $WORD_STACK_SIZE, %ebp
+  CSTR_MOVE $test_wordStr1, $sourceCStr
+  addl $WORD_STACK_SIZE, %ebp
+  ret
 
 ##############################
 # Main Entrypoint and test suite
@@ -1171,11 +1175,14 @@ testSuite:
 
   call test_pureAsm
   call test_pstack
+
   call test_bcmp
   call test_beqNocase
   call test_bmove
+
   call test_findWhitespace
   call test_fillSourceCStr
+  call test_flush_sourceCStr_to_wordCStr
 
   call assertClean
   ret
