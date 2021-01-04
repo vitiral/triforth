@@ -668,7 +668,7 @@ assertClean:
 .macro TESTCASE name
   testname_\name : .ascii "\name\0"
   .align 4
-  test_\name :
+  testcase_\name :
     movl $testname_\name, testingNtStr
     call startingTest
     call assertClean
@@ -935,7 +935,6 @@ TESTCASE beqNocase
 bmove: # %eax:count %ebx:&from %ecx:&to ( -- )
   // Moves count bytes from &from to &to starting at the beginning.
   // Uses registers a-d
-  DBG $0x100
   JRZ %eax, return
   movb (%ebx), %dl
   movb %dl, (%ecx)
@@ -955,13 +954,11 @@ cStrMove: # %ebx:&fromCstr &ecx:&toCstr
   movb %al, (%ecx)   # set `to` to same count
   inc %ebx  # inc both to point at bytes (not count)
   inc %ecx
-  DBG $4
   call bmove
   ret
 
 .macro CSTR_MOVE from, to
   SET_BC \from, \to
-  DBG $3
   call cStrMove
 .endm
 
@@ -972,14 +969,11 @@ test_bmoveCStr2: .byte 0x03
 .align 4
 TESTCASE bmove
   subl $0x20, %ebp
-  DBG $0x20
 rightHereTODO:
   CSTR_MOVE $test_bmoveCStr, %ebp
   ASSERT_CSTR_NOCASE_EQ $test_bmoveCStr, %ebp
-  DBG $0x21
   CSTR_MOVE $test_bmoveCStr2, %ebp
   ASSERT_CSTR_NOCASE_EQ $test_bmoveCStr2, %ebp
-  DBG $0x22
   addl $0x20, %ebp
   ret
 
@@ -1172,11 +1166,8 @@ TESTCASE fillSourceCStr
   CLOSE_SOURCE_FD
   ret
 TESTCASE flush_sourceCStr_to_wordCStr
-  DBG $1
   subl $WORD_STACK_SIZE, %ebp
-  DBG $2
-  CSTR_MOVE $test_wordStr1, $sourceCStr
-  DBG $0x100
+  CSTR_MOVE $test_wordCStr1, $sourceCStr
   addl $WORD_STACK_SIZE, %ebp
   ret
 
@@ -1186,16 +1177,16 @@ TESTCASE flush_sourceCStr_to_wordCStr
 testSuite:
   call assertClean
 
-  call test_pureAsm
-  call test_pstack
+  call testcase_pureAsm
+  call testcase_pstack
 
-  call test_bcmp
-  call test_beqNocase
-  call test_bmove
+  call testcase_bcmp
+  call testcase_beqNocase
+  call testcase_bmove
 
-  call test_findWhitespace
-  call test_fillSourceCStr
-  call test_flush_sourceCStr_to_wordCStr
+  call testcase_findWhitespace
+  call testcase_fillSourceCStr
+  call testcase_flush_sourceCStr_to_wordCStr
 
   call assertClean
   ret
