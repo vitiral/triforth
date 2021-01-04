@@ -1178,14 +1178,15 @@ TESTCASE fillSourceCStr
 TESTCASE flush_sourceCStr_to_wordCStr
   subl $WORD_STACK_SIZE, %ebp
   CSTR_MOVE $test_wordCStr1, $sourceCStr
-  TODO
   movl $3, %eax
   call flush_sourceCStr_to_wordCStr # moves "the" to stack, keeps "quick"
   movl %ebp, %ebx
   inc %ebx
-  ASSERT_BYTES_CMP $EQ, $3, %ebx, $3, test_wordCStr1 # stack = "fox"
+  ASSERT_BYTES_CMP $EQ, $3, %ebx, $3, $test_wordStr1 # stack = "the"
   MOVB_A (%ebp)
   ASSERT_REG_EQ %eax, $3
+  PNT_CSTR sourceCStr
+  ASSERT_BYTES_CMP $EQ, $5, $sourceStr, $5, $test_wordStr1+7 # remaining source="quick"
   addl $WORD_STACK_SIZE, %ebp
   ret
 
