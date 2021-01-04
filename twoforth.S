@@ -90,7 +90,7 @@ pstackMax: .int 0
 
 # ONLY USED IN TESTING
 testingNtStr: .int 0
-panicRestore: .int 0 
+panicRestore: .int 0
 
 .section .text
 
@@ -139,7 +139,7 @@ panicRestore: .int 0
 .macro JRZ reg , loc
   // Jump to location if the register is zero.  This uses `test`, which does an
   // AND that only mutates the eflags register.
-  test \reg , \reg
+  test \reg, \reg
   jz \loc
 .endm
 
@@ -934,6 +934,7 @@ TESTCASE beqNocase
 bmove: # %eax:count %ebx:&from %ecx:&to ( -- )
   // Moves count bytes from &from to &to starting at the beginning.
   // Uses registers a-d
+  DBG $0x100
   JRZ %eax, return
   movb (%ebx), %dl
   movb %dl, (%ecx)
@@ -949,15 +950,17 @@ bmove: # %eax:count %ebx:&from %ecx:&to ( -- )
 
 cStr_move: # %ebx:&fromCstr &ecx:&toCstr
   ZERO %eax
-  movb (%ebx), %al   # get count of from
+  movb (%ebx), %al   # eax = count of from
   movb %al, (%ecx)   # set `to` to same count
-  inc %ebx
+  inc %ebx  # inc both to point at bytes (not count)
   inc %ecx
+  DBG $4
   call bmove
   ret
 
 .macro CSTR_MOVE from, to
   SET_BC \from, \to
+  DBG $3
   call cStr_move
 .endm
 
@@ -966,10 +969,13 @@ test_bmoveCStr2: .ascii "/x03p12"
 .align 4
 TESTCASE bmove
   subl $0x20, %ebp
+  DBG $0x20
   CSTR_MOVE $test_bmoveCStr, %ebp
   ASSERT_CSTR_NOCASE_EQ $test_bmoveCStr, %ebp
+  DBG $0x21
   CSTR_MOVE $test_bmoveCStr2, %ebp
   ASSERT_CSTR_NOCASE_EQ $test_bmoveCStr2, %ebp
+  DBG $0x22
   addl $0x20, %ebp
   ret
 
@@ -1162,8 +1168,11 @@ TESTCASE fillSourceCStr
   CLOSE_SOURCE_FD
   ret
 TESTCASE flush_sourceCStr_to_wordCStr
+  DBG $1
   subl $WORD_STACK_SIZE, %ebp
+  DBG $2
   CSTR_MOVE $test_wordStr1, $sourceCStr
+  DBG $0x100
   addl $WORD_STACK_SIZE, %ebp
   ret
 
