@@ -205,10 +205,6 @@ sysexit: # %ebx:rc ( -- )
   jmp sysexit
 .endm
 
-.macro TODO
-  EXIT 42
-.endm
-
 asmInvariantViolated: EXIT $RC_ASM_INVARIANT
 unreachable: EXIT $RC_UNREACHABLE
 
@@ -307,12 +303,6 @@ pntEcxAscii: # %ecx:byte ( -- )
   call pntEcxAscii
 .endm
 
-.macro PNT_NT_STR s
-  // Print a null-terminated string.
-  movl \s, %ecx
-  call pntEcxNtStr
-.endm
-
 toasciiEbx: # ( u -- c )
   // Convert a number (typically 1-16) into ascii equivalent
   cmpl $9, %ebx
@@ -394,6 +384,13 @@ pntEbxUxPretty: # %ebx:f ( -- )
 .macro PNT_NTSTR s
   movl \s, %ecx
   call pntEcxNtStr
+.endm
+
+todoNtStr: .ascii "!! TODO reached !!\n\0"
+.align 4
+.macro TODO
+  PNT_NTSTR $todoNtStr
+  EXIT $42
 .endm
 
 .macro PNT_UX v
@@ -551,7 +548,7 @@ checkErrno:
   // Checks that errno is zero or panics
   // Mutates no registers.
   JMP_E $0, errno, return
-  PNT_NT_STR $checkErrno_str
+  PNT_NTSTR $checkErrno_str
   PNT_UX_NL errno
   jmp panicNow_ERRNO
 
@@ -565,14 +562,14 @@ testStartNtStr: .ascii "## Test \0"
 testFailedNtStr: .ascii "!! Test failed: \0"
 .align 4
 startingTest:
-  PNT_NT_STR $testStartNtStr
-  PNT_NT_STR testingNtStr
+  PNT_NTSTR $testStartNtStr
+  PNT_NTSTR testingNtStr
   PNT_ASCII $'\n'
   ret
 
 exitFailTest:
-  PNT_NT_STR $testFailedNtStr
-  PNT_NT_STR testingNtStr
+  PNT_NTSTR $testFailedNtStr
+  PNT_NTSTR testingNtStr
   PNT_ASCII $'\n'
   call pntPstack
   PNT_ASCII $'\n'
@@ -587,9 +584,9 @@ assertEaxEbxEq:
   subl $8, %ebp
   movl %eax, (%ebp)
   movl %ebx, 4(%ebp)
-  PNT_NT_STR $assertFailStr
+  PNT_NTSTR $assertFailStr
   PNT_UX (%ebp)
-  PNT_NT_STR $assertEaxEbxEq_str
+  PNT_NTSTR $assertEaxEbxEq_str
   PNT_UX_NL 4(%ebp)
   addl $8, %ebp
   jmp exitFailTest
@@ -613,7 +610,7 @@ panicExpected:
 panicErrInvalidStr: .ascii "!! panicErr not expected value: \0"
 .align 4
 panicErrInvalid:
-  PNT_NT_STR $panicErrInvalidStr
+  PNT_NTSTR $panicErrInvalidStr
   PNT_UX_NL panicErr
   jmp exitFailTest
 
@@ -630,7 +627,7 @@ assertStackEmpty:
   movl pstackMax, %eax
   subl %ebp, %eax
   jz return
-  PNT_NT_STR $assertStackEmptyStr
+  PNT_NTSTR $assertStackEmptyStr
   call pntPstack
   PNT_ASCII $'\n'
   call exitFailTest
@@ -642,11 +639,11 @@ assertPanicClean:
   je 1f
   cmpl $0, panicErr
   je return
-  PNT_NT_STR $assertPanicClean_str2
+  PNT_NTSTR $assertPanicClean_str2
   PNT_UX_NL panicErr
   call exitFailTest
 1:
-  PNT_NT_STR $assertPanicClean_str1
+  PNT_NTSTR $assertPanicClean_str1
   call exitFailTest
 
 assertClean:
@@ -1131,6 +1128,7 @@ word_eof: # eof reached, return what we have
   movl %ebx, %ecx # cache ebx for next assert
   movl $\expectedCountRemaining, %ebx
   call assertEaxEbxEq
+  DBG $0x130
 
   TODO
 .endm
@@ -1174,6 +1172,6 @@ _start:
   movl $pstackMaxRoot, pstackMax
   movl rstackMax, %esp  # clear rstack
   movl pstackMax, %ebp  # clear pstack
-  PNT_NT_STR $mainStartNtStr
+  PNT_NTSTR $mainStartNtStr
   call testSuite
   EXIT $0

@@ -5,3 +5,9 @@ triforth: triforth.S
 twoforth: twoforth.S
 	@as twoforth.S --32 -o out/twoforth.o
 	@ld out/twoforth.o -m elf_i386 -o out/twoforth
+
+run: twoforth
+	out/twoforth
+
+gdb: twoforth
+	gdb out/twoforth
