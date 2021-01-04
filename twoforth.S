@@ -1136,23 +1136,29 @@ test_wordStr1: .ascii "the    quick"
 test_wordCStr2: .byte 8
 test_wordStr2: .ascii "   quick"
 file_some_words: .ascii "tests/some_words.txt\0"
-file_some_words_cStr: .byte 0x40
-  .ascii "the     quick\n\n\t\t    \tbrown\n  fox jumped over    the lazy    dog"
+file_some_words_cStr: .byte 0x46
+  .ascii "the     quick\n\n\t\t    \tbrown\n  fox jumped over    the "
+  .ascii "lazy    dog\n\nthe "
+test_wordCStr_specialFill: .byte 0x46
+  .ascii "the     quick\n\n\t\t    \tbrown\n  fox jumped over    the "
+  .ascii "lazy    dog\n\n    "
 .align 4
-TESTCASE word
-  # Tests all functions used in `word`, then tests the whole thing.
 
-  // findWhitespaceStart
+TESTCASE findWhitespace
   TEST_FIND_WHITESPACE findWhitespaceStart, test_wordCStr1, 9 # note: 9 REMAIN
   TEST_FIND_WHITESPACE findWhitespaceStart, test_wordCStr2, 8
-
-  // findWhitespaceEnd
   TEST_FIND_WHITESPACE findWhitespaceEnd, test_wordCStr1, 0xC
   TEST_FIND_WHITESPACE findWhitespaceEnd, test_wordCStr2, 5
-
+  ret
+TESTCASE fillSourceCStr
   OPEN_SOURCE_FD $file_some_words
-  call fillSourceCStr
+  call fillSourceCStr # do a normal fill, assert as expected
   ASSERT_CSTR_NOCASE_EQ $sourceCStr, $file_some_words_cStr
+
+  # now fill only 4 characters
+  movb $0x42, sourceCStr  # 0x46 - 4
+  call fillSourceCStr # do a normal fill, assert as expected
+  ASSERT_CSTR_NOCASE_EQ $sourceCStr, $test_wordCStr_specialFill
   CLOSE_SOURCE_FD
   ret
 
@@ -1168,7 +1174,8 @@ testSuite:
   call test_bcmp
   call test_beqNocase
   call test_bmove
-  call test_word
+  call test_findWhitespace
+  call test_fillSourceCStr
 
   call assertClean
   ret
