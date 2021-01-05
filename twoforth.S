@@ -287,6 +287,7 @@ syswriteall_error:
 countntEcx: # %ecx:ntstr ( -- ) %ecx:ntstr %edx:count
   // Count the number of bytes in a null-terminated string
   // Writes the count to edx so it can be used in syswrite
+  // uses: ecx, edx
   movl $-1, %edx
 countntEcx_loop:
   inc %edx
@@ -754,7 +755,7 @@ pushDsInvalid:
   addl $4, %ebp
   PANIC PSTACK_OVERFLOW
 
-.macro PUSH reg
+.macro PUSHP reg
   subl $4, %ebp
   cmpl pstackMin, %ebp
   jl pushDsInvalid
@@ -766,7 +767,7 @@ popDsInvalid:
   # If it has, re-decrements and panics with appropriate error.
   PANIC PSTACK_UNDERFLOW
 
-.macro POP reg
+.macro POPP reg
   movl (%ebp) , \reg
   cmpl pstackMax, %ebp
   jge popDsInvalid
@@ -780,30 +781,30 @@ drop:
   ret
 
 assertEq: # ( a b -- )
-  POP %eax
-  POP %ebx
+  POPP %eax
+  POPP %ebx
   call assertEaxEbxEq
   ret
 
 .macro ASSERT_TOP v
-  PUSH \v
+  PUSHP \v
   call assertEq
 .endm
 
 TESTCASE pstack
-  PUSH $0x42
-  PUSH $0x4422
+  PUSHP $0x42
+  PUSHP $0x4422
   ASSERT_TOP $0x4422
   ASSERT_TOP $0x42
   EXPECT_PANIC $1f
-  POP %eax # pop from empty stack
+  POPP %eax # pop from empty stack
   call unreachable
 1:ASSERT_PANICED $ERR_PSTACK_UNDERFLOW
   call assertStackEmpty
 
   movl pstackMin, %ebp # mimick full stack
   EXPECT_PANIC $1f
-  PUSH $0x42
+  PUSHP $0x42
   call unreachable
 1:ASSERT_PANICED $ERR_PSTACK_OVERFLOW
   movl pstackMax, %ebp
@@ -816,7 +817,7 @@ pushRsInvalid:
   addl $4, %esp
   PANIC RSTACK_OVERFLOW
 
-.macro RPUSH reg
+.macro PUSHR reg
   pushl \reg
   cmpl rstackMin, %esp
   jl pushRsInvalid
@@ -828,7 +829,7 @@ popRsInvalid:
   subl $4, %esp
   PANIC RSTACK_UNDERFLOW
 
-.macro RPOP reg
+.macro POPR reg
   popl \reg
   cmpl rstackMax, %esp
   jge popRsInvalid
@@ -842,7 +843,7 @@ popRsInvalid:
 .equ EQ, 0
 .equ GT, 1
 
-bcmp: # %eax:aCount %ebx:&a %ecx:bCount %edx:&b ( -- ) %eax:cmp
+bcmp: # %eax:&a %ebx:aCount %ecx:&b %edx:bCount ( -- ) %eax:cmp
   // Compares bytes at address &a to &b. Returns:
   // eax=-1 if a<b
   // eax=0 if a==b
@@ -850,19 +851,19 @@ bcmp: # %eax:aCount %ebx:&a %ecx:bCount %edx:&b ( -- ) %eax:cmp
   // "a is less than b " is defined as `a` having a byte with a lesser ascii
   // value OR (if no such byte is found) fewer count.
   // Uses: %edi
-  PUSH %eax
+  PUSHP %ebx
   ZERO %edi
 bcmp_loop:
   JMP_GE (%ebp), %edi, bcmp_aCountExhausted
-  JMP_GE %ecx, %edi, bcmp_gt # jmp if b was exhausted, a wasn't, therefore a>b
-  movb (%edi, %ebx, 1), %al
-  cmpb (%edi, %edx, 1), %al # cmp b, a
+  JMP_GE %edx, %edi, bcmp_gt # jmp if b was exhausted, a wasn't, therefore a>b
+  movb (%eax,%edi,1), %bl
+  cmpb (%ecx,%edi,1), %bl # cmp b, a
   jl bcmp_lt
   jg bcmp_gt
   inc %edi
   jmp bcmp_loop
 bcmp_aCountExhausted:
-  JMP_GE %ecx, %edi, bcmp_eq # eq if bCount was also exhausted
+  JMP_GE %edx, %edi, bcmp_eq # eq if bCount was also exhausted
   jmp bcmp_lt # else a<b
 bcmp_eq:
   ZERO %eax # EQ
@@ -874,8 +875,8 @@ bcmp_lt:
   movl $LT, %eax
   jmp drop
 
-.macro ASSERT_BYTES_CMP cmp, aCount, a, bCount, b
-  SET_ABCD \aCount, \a, \bCount, \b
+.macro ASSERT_BYTES_CMP cmp, a, aCount, b, bCount
+  SET_ABCD \a, \aCount, \b, \bCount
   call bcmp
   ASSERT_REG_EQ %eax, \cmp
 .endm
@@ -883,10 +884,10 @@ bcmp_lt:
 test_bcmpStr: .ascii "aabbcc\0"
 .align 4
 TESTCASE bcmp
-  ASSERT_BYTES_CMP $EQ, $3, $test_bcmpStr, $3, $test_bcmpStr   # same string is equal
-  ASSERT_BYTES_CMP $LT, $2, $test_bcmpStr, $3, $test_bcmpStr   # less count is less than
-  ASSERT_BYTES_CMP $LT, $5, $test_bcmpStr, $3, $test_bcmpStr+1 # a<b
-  ASSERT_BYTES_CMP $GT, $2, $test_bcmpStr+4, $3, $test_bcmpStr # c>a
+  ASSERT_BYTES_CMP $EQ, $test_bcmpStr,   $3, $test_bcmpStr   ,$3 # same string is equal
+  ASSERT_BYTES_CMP $LT, $test_bcmpStr,   $2, $test_bcmpStr   ,$3 # less count is less than
+  ASSERT_BYTES_CMP $LT, $test_bcmpStr,   $5, $test_bcmpStr+1 ,$3 # a<b
+  ASSERT_BYTES_CMP $GT, $test_bcmpStr+4, $2, $test_bcmpStr   ,$3 # c>a
   ret
 
 .macro TO_UPPER v
@@ -1095,10 +1096,12 @@ flush_sourceCStr_to_wordCStr:
   leal 1(%ebp), %ecx # &to
   call bmove # note: eax already=count
 
-  movb sourceCStr, %al # eax will = count leftover in sourceCStr
-  subb (%ebp), %al
-  leal sourceStr(%eax), %ebx # ebx=start of whitespace
+  MOVB_A sourceCStr  # eax will = count leftover in sourceCStr
+  subb (%ebp), %al   # eax=sourceCount-wordCount
+  MOVB_B (%ebp)
+  leal sourceStr(%ebx), %ebx # ebx=&start-of-whitespace
   call findWhitespaceEnd
+  movb %al, sourceCStr  # update count
   # eax=count-after-non-whitespace, ebx=&after-non-whitespace
   movl $sourceStr, %ecx # ecx=&to
   call bmove
@@ -1109,7 +1112,8 @@ word: # ( b[0x24]:wordCStr -- b[0x24]:wordCStr)
   # The word can be up to x22 characters long.
   call fillSourceCStr
 
-  MOVB_A sourceCStr
+  MOVB_A sourceCStr # eax=sourceCount
+  JRZ %eax, word_noWhitespace # if zero, check Eof and try again
   movl $sourceStr, %ebx
   call findWhitespaceStart # note: eax:count_remain %ebx:&whitespace
   JRZ %ebx, word_noWhitespace
@@ -1127,11 +1131,11 @@ word_noWhitespace:
   // - We simply didn't read enough bytes, try again.
   // - The word was too large to fit in the buffer, this is an error.
   cmpb $0, sourceEof
-  je word_eof
+  jne word_eof
   cmpb $WORD_CNT_MAX, sourceCStr
-  // jle: didn't read enough bytes, try again. Note, if equal may be
+  // jbe: didn't read enough bytes, try again. Note, if equal may be
   // because we reached EOF, but we won't know until we try again.
-  jle word 
+  jbe word
   PANIC MAX_WORD_CNT
 word_eof: # eof reached, return what we have
   MOVB_A sourceCStr
@@ -1168,6 +1172,9 @@ file_some_words_cStr: .byte 0x46
 test_wordCStr_specialFill: .byte 0x46
   .ascii "the     quick\n\n\t\t    \tbrown\n  fox jumped over    the "
   .ascii "lazy    dog\n\n    "
+test_wordWordsNtStr:
+  .ascii "the\0quick\0brown\0fox jumped\0over\0the\0lazy\0dog\0"
+  .ascii "the\0quick\0brown\0fox\0jumped\0over\0the\0lazy\0dog\0\0"
 .align 4
 TESTCASE findWhitespace
   TEST_FIND_WHITESPACE findWhitespaceStart, test_wordCStr1, 9 # note: 9 REMAIN
@@ -1193,15 +1200,25 @@ TESTCASE flush_sourceCStr_to_wordCStr
   call flush_sourceCStr_to_wordCStr # moves "the" to stack, keeps "quick"
   movl %ebp, %ebx
   inc %ebx
-  ASSERT_BYTES_CMP $EQ, $3, %ebx, $3, $test_wordStr1 # stack = "the"
+  ASSERT_BYTES_CMP $EQ, %ebx, $3,$test_wordStr1, $3 # stack = "the"
   MOVB_A (%ebp)
   ASSERT_REG_EQ %eax, $3
-  PNT_CSTR_NL $test_wordCStr1
-  PNT_CSTR_NL %ebp
-  PNT_CSTR_NL $sourceCStr
-  ASSERT_BYTES_CMP $EQ, $5, $sourceStr, $5, $test_wordStr1+7 # remaining source="quick"
+  ASSERT_BYTES_CMP $EQ, $sourceStr, $5, $test_wordStr1+7, $5  # remaining source="quick"
   addl $WORD_STACK_SIZE, %ebp
   ret
+TESTCASE word
+  PUSHR $test_wordWordsNtStr # (%esp)=expected word
+  OPEN_SOURCE_FD $file_some_words
+test_words:
+  call word
+  movl (%esp), %ecx
+  call countntEcx
+
+test_words_end:
+  CLOSE_SOURCE_FD
+  POPR %eax
+  ret
+
 
 ##############################
 # Main Entrypoint and test suite
