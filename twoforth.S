@@ -409,6 +409,11 @@ pntEbxUxPretty: # %ebx:f ( -- )
   call pntEcxNtStr
 .endm
 
+.macro PNT_NTSTR_NL s
+  PNT_NTSTR \s
+  PNT_ASCII $'\n'
+.endm
+
 pntCStr: # %ecx=&cStr
   movl pntFd, %ebx
   MOVB_D (%ecx)
@@ -1107,20 +1112,20 @@ flush_sourceCStr_to_wordCStr:
   call bmove
   ret
 
-word: # ( b[0x24]:wordCStr -- b[0x24]:wordCStr)
+word: # ( b[WORD_STACK_SIZE]:wordCStr -- b[WORD_STACK_SIZE]:wordCStr)
   # Store the next word from the source into (%ebp).
   # The word can be up to x22 characters long.
   call fillSourceCStr
 
   MOVB_A sourceCStr # eax=sourceCount
-  JRZ %eax, word_noWhitespace # if zero, check Eof and try again
+  JRZ %eax, word_noWhitespace # if count=0, check Eof and try again
   movl $sourceStr, %ebx
   call findWhitespaceStart # note: eax:count_remain %ebx:&whitespace
   JRZ %ebx, word_noWhitespace
 
   # Found a word, update wordCStr and sourceCStr and return
   movl %eax, %ebx # eax will = wordCount
-  movb sourceCStr, %al
+  MOVB_A sourceCStr
   subl %ebx, %eax
   call flush_sourceCStr_to_wordCStr
   ret
@@ -1165,16 +1170,6 @@ test_wordCStr1: .byte 0xC
 test_wordStr1: .ascii "the    quick"
 test_wordCStr2: .byte 8
 test_wordStr2: .ascii "   quick"
-file_some_words: .ascii "tests/some_words.txt\0"
-file_some_words_cStr: .byte 0x46
-  .ascii "the     quick\n\n\t\t    \tbrown\n  fox jumped over    the "
-  .ascii "lazy    dog\n\nthe "
-test_wordCStr_specialFill: .byte 0x46
-  .ascii "the     quick\n\n\t\t    \tbrown\n  fox jumped over    the "
-  .ascii "lazy    dog\n\n    "
-test_wordWordsNtStr:
-  .ascii "the\0quick\0brown\0fox jumped\0over\0the\0lazy\0dog\0"
-  .ascii "the\0quick\0brown\0fox\0jumped\0over\0the\0lazy\0dog\0\0"
 .align 4
 TESTCASE findWhitespace
   TEST_FIND_WHITESPACE findWhitespaceStart, test_wordCStr1, 9 # note: 9 REMAIN
@@ -1182,6 +1177,15 @@ TESTCASE findWhitespace
   TEST_FIND_WHITESPACE findWhitespaceEnd, test_wordCStr1, 0xC
   TEST_FIND_WHITESPACE findWhitespaceEnd, test_wordCStr2, 5
   ret
+
+file_some_words: .ascii "tests/some_words.txt\0"
+file_some_words_cStr: .byte 0x46
+  .ascii "the     quick\n\n\t\t    \tbrown\n  fox jumped over    the "
+  .ascii "lazy    dog\n\nthe "
+test_wordCStr_specialFill: .byte 0x46
+  .ascii "the     quick\n\n\t\t    \tbrown\n  fox jumped over    the "
+  .ascii "lazy    dog\n\n    "
+.align 4
 TESTCASE fillSourceCStr
   OPEN_SOURCE_FD $file_some_words
   call fillSourceCStr # do a normal fill, assert as expected
@@ -1193,6 +1197,7 @@ TESTCASE fillSourceCStr
   ASSERT_CSTR_NOCASE_EQ $sourceCStr, $test_wordCStr_specialFill
   CLOSE_SOURCE_FD
   ret
+
 TESTCASE flush_sourceCStr_to_wordCStr
   subl $WORD_STACK_SIZE, %ebp
   CSTR_MOVE $test_wordCStr1, $sourceCStr
@@ -1205,18 +1210,36 @@ TESTCASE flush_sourceCStr_to_wordCStr
   ASSERT_REG_EQ %eax, $3
   ASSERT_BYTES_CMP $EQ, $sourceStr, $5, $test_wordStr1+7, $5  # remaining source="quick"
   addl $WORD_STACK_SIZE, %ebp
+  movb $0, sourceEof  # reset source Eof
+  movb $0, sourceCStr # reset source Count
   ret
+
+test_wordWordsNtStr:
+  .ascii "the\0quick\0brown\0fox\0jumped\0over\0the\0lazy\0dog\0"
+  .ascii "the\0quick\0brown\0fox\0jumped\0over\0the\0lazy\0dog\0\0"
+.align 4
 TESTCASE word
+  subl $WORD_STACK_SIZE, %ebp
   PUSHR $test_wordWordsNtStr # (%esp)=expected word
   OPEN_SOURCE_FD $file_some_words
 test_words:
-  call word
+  call word # get word from sourceFd
+  # Get expected word
   movl (%esp), %ecx
-  call countntEcx
-
+  call countntEcx    # ecx=ntstr edx=count
+  # Update expected word for next loop (%esp) = (%exp) + %edx + 1
+  addl %edx, (%esp)
+  addl $1, (%esp)
+  # Assert expected = found
+  MOVB_B (%ebp)      # ebx=word count
+  leal 1(%ebp), %eax # eax=&word
+  call bcmp
+  ASSERT_REG_EQ %eax, $EQ
+  JRNZ %edx, test_words  # if the word len != 0, loop again
 test_words_end:
   CLOSE_SOURCE_FD
   POPR %eax
+  addl $WORD_STACK_SIZE, %ebp
   ret
 
 
@@ -1236,6 +1259,7 @@ testSuite:
   call testcase_findWhitespace
   call testcase_fillSourceCStr
   call testcase_flush_sourceCStr_to_wordCStr
+  call testcase_word
 
   call assertClean
   ret
