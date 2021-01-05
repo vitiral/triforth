@@ -62,6 +62,8 @@
 #### DATA SECTION -- mutable memory must go here.                           ####
 ################################################################################
 .section .data
+######
+# Stacks
 .equ RSTACK_SIZE, 0x2000
 rstackExtraRoot: .space 0x4
 rstackMinRoot: .space RSTACK_SIZE # return stack
@@ -70,8 +72,14 @@ rstackMaxRoot:
 pstackExtraRoot: .space 0x20      # guaranteed space above the pstack
 pstackMinRoot: .space PSTACK_SIZE # data stack
 pstackMaxRoot:
-registerSnapshot: .space 0x20
+rstackMin: .int 0
+rstackMax: .int 0
+pstackMin: .int 0
+pstackMax: .int 0
 
+######
+# Global Variables / State / Buffers
+initialEsp: .int 0
 pntFd: .int STDERR # where to PNT to
 .equ EMIT_BUFFER_SIZE, 16
 sourceFd: .int STDIN   # where the source code is read from
@@ -80,15 +88,34 @@ sourceFd: .int STDIN   # where the source code is read from
 sourceEof: .byte 0 # Whether an EOF was encountered at the last read
 sourceCStr: .byte 0 # Used for reading source word
 sourceStr: .space SOURCE_STR_CNT_MAX
+wordCStr: .byte 0
+wordStr: .space WORD_CNT_MAX
 errno: .int 0
 panic: .int panicDefault # function to call when panicing
 panicErr: .int 0  # error to print while panicing
-rstackMin: .int 0
-rstackMax: .int 0
-pstackMin: .int 0
-pstackMax: .int 0
 
-# ONLY USED IN TESTING
+
+######
+# Dictionaries
+# runtime dict
+rDictMetaHere: .int 0
+rDictMetaMax: .int 0
+rDictCodeHere: .int 0
+rDictCodeMax: .int 0
+# compiletime dict
+cDictMetaHere: .int 0
+cDictMetaMax: .int 0
+cDictCodeHere: .int 0
+cDictCodeMax: .int 0
+# localtime dict
+lDictMetaHere: .int 0
+lDictMetaMax: .int 0
+lDictCodeHere: .int 0
+lDictCodeMax: .int 0
+
+######
+# Debugging / Testing Variables
+registerSnapshot: .space 0x20
 testingNtStr: .int 0
 panicRestore: .int 0
 
@@ -1040,8 +1067,7 @@ sysclose: # %ebx:fd ( -- )
 .endm
 
 sysread: # %ebx:fd %ecx:&buff %edx:maxLength ( -- ) %eax:numRead
-  # Read from a filedescriptor. This does NOT panic on failure, the caller must
-  # check %eax for errors.
+  # eax=0 for EOF and negative for error
   movl $SYS_READ, %eax
   int $LINUX_SYSCALL
   ret
@@ -1190,7 +1216,6 @@ TESTCASE fillSourceCStr
   OPEN_SOURCE_FD $file_some_words
   call fillSourceCStr # do a normal fill, assert as expected
   ASSERT_CSTR_NOCASE_EQ $sourceCStr, $file_some_words_cStr
-
   # now fill only 4 characters
   movb $0x42, sourceCStr  # 0x46 - 4
   call fillSourceCStr # do a normal fill, assert as expected
@@ -1242,6 +1267,26 @@ test_words_end:
   addl $WORD_STACK_SIZE, %ebp
   ret
 
+################################################################################
+#### Forth Dictionary                                                       ####
+################################################################################
+// Our forth dictionary is going to be unlike most implementations. Primary
+// differences:
+// - Dictionary metadata such as the ascii representation of the word,
+//   immediacy, and type information (we'll get to that) are in a separate
+//   memory region from the code.
+// - There are really 3 dictionaries:
+//   1. Runtime: this is the "standard" one containing forth words that can be
+//      run at runtime. Runtime words never depend on any other dictionary's
+//      words 
+//   2. Compiletime: this is a separate dictionary of words which can be
+//      completely discarded when "compilation" is complete. Compiletime
+//      words can contain depend on runtime words but not localtime words.
+//   3. Localtime: yet another dictionary containing immediate-only words for
+//      use within a function. Can be used to make one-off macros for helpful
+//      variable naming, etc.
+// - Dictionaries are binary search trees. Assembly only implements push.
+//   Other features will be implemented in forth.
 
 ##############################
 # Main Entrypoint and test suite
@@ -1264,16 +1309,26 @@ testSuite:
   call assertClean
   ret
 
-mainStartNtStr: .ascii "Starting Triforth...\n\0"
-.align 4
-.globl _start
-_start:
+setupStack:
   movl $rstackMinRoot, rstackMin
   movl $rstackMaxRoot, rstackMax
   movl $pstackMinRoot, pstackMin
   movl $pstackMaxRoot, pstackMax
   movl rstackMax, %esp  # clear rstack
   movl pstackMax, %ebp  # clear pstack
+  jmp afterSetupStack # Note: cannot `ret` as we've modified rstack
+
+setupDicts:
+  ret
+
+mainStartNtStr: .ascii "Starting Triforth...\n\0"
+.align 4
+.globl _start
+_start:
+  movl %esp, initialEsp # arguments and environment variables stored here
+  jmp setupStack
+afterSetupStack:
+  call setupDicts
   PNT_NTSTR $mainStartNtStr
   call testSuite
   EXIT $0

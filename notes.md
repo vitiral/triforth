@@ -40,3 +40,26 @@ These are _very_ important :D
 - ba5eba11 f005ba11
 - bedabb1e aCab005e DeadBea7 0Ea7Beef 00Defec8 deadBeef
 - ca11ab1e f01dab1e 5ca1ab1e a0ddba11 b01dface ca55e77e b0a710ad
+
+# Data Structure Ideas
+A pyramid list is a "list" which has pointers to lists which increase in size
+by power of 2. There are
+* 1 item in the first index 2^0 = 1
+* 1 items in the second index  2^1 = 2
+* 2 items in the third  2^3 = 4
+* 4 in the fourth
+* 8 in the fifth
+* etc, until the maximum container size (if there is one)
+
+The idea is that if you have an index you can use the BSR Instruction to find
+it's power of 2 and jump to the correct container of values. In addition,
+growing the list costs O(1) and never requires moving values.
+
+The primary benefits are:
+- Growing the list always costs O(1), so you no longer need to grow the list
+  size by double in order to maintain amatorized O(1) insertion. This helps
+  in embedded situations where consequitive memory blocks are at a premium.
+- Access and insert operations are still O(1) although require an extra pointer
+  lookup. However, iteration implementations can avoid the extra pointer lookup
+  on average.
+
