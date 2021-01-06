@@ -98,20 +98,20 @@ panicErr: .int 0  # error to print while panicing
 ######
 # Dictionaries
 # runtime dict
-rDictMetaHere: .int 0
-rDictMetaMax: .int 0
 rDictCodeHere: .int 0
 rDictCodeMax: .int 0
+rDictMetaHere: .int 0
+rDictMetaMax: .int 0
 # compiletime dict
-cDictMetaHere: .int 0
-cDictMetaMax: .int 0
 cDictCodeHere: .int 0
 cDictCodeMax: .int 0
+cDictMetaHere: .int 0
+cDictMetaMax: .int 0
 # localtime dict
-lDictMetaHere: .int 0
-lDictMetaMax: .int 0
 lDictCodeHere: .int 0
 lDictCodeMax: .int 0
+lDictMetaHere: .int 0
+lDictMetaMax: .int 0
 
 ######
 # Debugging / Testing Variables
@@ -1115,22 +1115,21 @@ readSource_eof:
   movb $TRUE, sourceEof
   ret
 
-.equ WORD_STACK_SIZE, WORD_CNT_MAX+1
 flush_sourceCStr_to_wordCStr:
-  // %eax:count ( b[WORD_STACK_SIZE]:wordCStr -- b[WORD_STACK_SIZE]:wordCStr)
+  // %eax:count ( -- )
   // Does two things:
   // - Moves the word of length %eax into wordCStr
   // - Moves the remaining (non-whitespace) bytes to beginning of sourceCStr
   //   and updates count
-  movb %al, (%ebp)  # update wordCnt
+  movb %al, wordCStr  # update wordCnt
   movl $sourceStr, %ebx # &from
-  leal 1(%ebp), %ecx # &to
+  movl $wordStr, %ecx # &to
   call bmove # note: eax already=count
 
   MOVB_A sourceCStr  # eax will = count leftover in sourceCStr
-  subb (%ebp), %al   # eax=sourceCount-wordCount
-  MOVB_B (%ebp)
-  leal sourceStr(%ebx), %ebx # ebx=&start-of-whitespace
+  subb wordCStr, %al   # eax=sourceCount - wordCount
+  MOVB_B wordCStr
+  leal sourceStr(%ebx), %ebx # ebx=&start_of_whitespace
   call findWhitespaceEnd
   movb %al, sourceCStr  # update count
   # eax=count-after-non-whitespace, ebx=&after-non-whitespace
@@ -1138,9 +1137,7 @@ flush_sourceCStr_to_wordCStr:
   call bmove
   ret
 
-word: # ( b[WORD_STACK_SIZE]:wordCStr -- b[WORD_STACK_SIZE]:wordCStr)
-  # Store the next word from the source into (%ebp).
-  # The word can be up to x22 characters long.
+word: # Store the next word from the source into wordCStr
   call fillSourceCStr
 
   MOVB_A sourceCStr # eax=sourceCount
@@ -1224,17 +1221,14 @@ TESTCASE fillSourceCStr
   ret
 
 TESTCASE flush_sourceCStr_to_wordCStr
-  subl $WORD_STACK_SIZE, %ebp
   CSTR_MOVE $test_wordCStr1, $sourceCStr
   movl $3, %eax
   call flush_sourceCStr_to_wordCStr # moves "the" to stack, keeps "quick"
-  movl %ebp, %ebx
-  inc %ebx
+  movl $wordStr, %ebx
   ASSERT_BYTES_CMP $EQ, %ebx, $3,$test_wordStr1, $3 # stack = "the"
-  MOVB_A (%ebp)
+  MOVB_A wordCStr # eax=wordCnt
   ASSERT_REG_EQ %eax, $3
   ASSERT_BYTES_CMP $EQ, $sourceStr, $5, $test_wordStr1+7, $5  # remaining source="quick"
-  addl $WORD_STACK_SIZE, %ebp
   movb $0, sourceEof  # reset source Eof
   movb $0, sourceCStr # reset source Count
   ret
@@ -1244,7 +1238,6 @@ test_wordWordsNtStr:
   .ascii "the\0quick\0brown\0fox\0jumped\0over\0the\0lazy\0dog\0\0"
 .align 4
 TESTCASE word
-  subl $WORD_STACK_SIZE, %ebp
   PUSHR $test_wordWordsNtStr # (%esp)=expected word
   OPEN_SOURCE_FD $file_some_words
 test_words:
@@ -1256,15 +1249,14 @@ test_words:
   addl %edx, (%esp)
   addl $1, (%esp)
   # Assert expected = found
-  MOVB_B (%ebp)      # ebx=word count
-  leal 1(%ebp), %eax # eax=&word
+  MOVB_B wordCStr     # ebx=wordCnt
+  movl $wordStr, %eax # eax=&word
   call bcmp
   ASSERT_REG_EQ %eax, $EQ
   JRNZ %edx, test_words  # if the word len != 0, loop again
 test_words_end:
   CLOSE_SOURCE_FD
   POPR %eax
-  addl $WORD_STACK_SIZE, %ebp
   ret
 
 ################################################################################
@@ -1287,6 +1279,10 @@ test_words_end:
 //      variable naming, etc.
 // - Dictionaries are binary search trees. Assembly only implements push.
 //   Other features will be implemented in forth.
+
+bmapPushWord: # %eax:bmapRoot ( -- ) %eax:mt
+  // Pushes the string into the metadata 
+
 
 ##############################
 # Main Entrypoint and test suite
@@ -1318,7 +1314,44 @@ setupStack:
   movl pstackMax, %ebp  # clear pstack
   jmp afterSetupStack # Note: cannot `ret` as we've modified rstack
 
+.equ RDICT_CODE_DEFAULT_SIZE,           0x40000 # 256 KiB
+.equ RDICT_META_DEFAULT_STARTING_SIZE,  0x1000  # 4 KiB
+.equ CDICT_CODE_DEFAULT_SIZE,           0x40000 # 256 KiB
+.equ CDICT_META_DEFAULT_STARTING_SIZE,  0x1000  # 4 KiB
+.equ LDICT_CODE_DEFAULT_SIZE,           0x3000  # 12 KiB
+.equ LDICT_META_DEFAULT_SIZE,           0x3000  # 12 KiB
+
+# Memory locations
+.equ RDICT_CODE_MIN, heap
+.equ RDICT_CODE_MAX, RDICT_CODE_MIN+RDICT_CODE_DEFAULT_SIZE
+.equ CDICT_CODE_MIN, RDICT_CODE_MAX
+.equ CDICT_CODE_MAX, CDICT_CODE_MIN+CDICT_CODE_DEFAULT_SIZE
+.equ LDICT_CODE_MIN, CDICT_CODE_MAX
+.equ LDICT_CODE_MAX, LDICT_CODE_MIN+LDICT_CODE_DEFAULT_SIZE
+
+# Starting dictionary space
+.equ RDICT_META_MIN, RDICT_CODE_MAX
+.equ RDICT_META_MAX, RDICT_META_MIN+RDICT_META_DEFAULT_STARTING_SIZE
+.equ CDICT_META_MIN, RDICT_CODE_MAX
+.equ CDICT_META_MAX, CDICT_META_MIN+CDICT_META_DEFAULT_STARTING_SIZE
+.equ LDICT_META_MIN, CDICT_CODE_MAX
+.equ LDICT_META_MAX, LDICT_META_MIN+LDICT_META_DEFAULT_SIZE
+
 setupDicts:
+  movl $RDICT_CODE_MIN, rDictCodeHere
+  movl $RDICT_CODE_MAX, rDictCodeMax
+  movl $RDICT_META_MIN, rDictMetaHere
+  movl $RDICT_META_MAX, rDictMetaMax
+
+  movl $CDICT_CODE_MIN, cDictCodeHere
+  movl $CDICT_CODE_MAX, cDictCodeMax
+  movl $CDICT_META_MIN, cDictMetaHere
+  movl $CDICT_META_MAX, cDictMetaMax
+
+  movl $LDICT_CODE_MIN, lDictCodeHere
+  movl $LDICT_CODE_MAX, lDictCodeMax
+  movl $LDICT_META_MIN, lDictMetaHere
+  movl $LDICT_META_MAX, lDictMetaMax
   ret
 
 mainStartNtStr: .ascii "Starting Triforth...\n\0"
@@ -1332,3 +1365,9 @@ afterSetupStack:
   PNT_NTSTR $mainStartNtStr
   call testSuite
   EXIT $0
+
+
+.align 0x100
+.section .data
+heap:                     .space 0x100000  # 1MiB TODO: do dynamically from runtime
+heapDefaultMax:
