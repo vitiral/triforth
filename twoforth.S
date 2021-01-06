@@ -94,24 +94,15 @@ errno: .int 0
 panic: .int panicDefault # function to call when panicing
 panicErr: .int 0  # error to print while panicing
 
-
-######
-# Dictionaries
-# runtime dict
-rDictCodeHere: .int 0
-rDictCodeMax: .int 0
-rDictMetaHere: .int 0
-rDictMetaMax: .int 0
-# compiletime dict
-cDictCodeHere: .int 0
-cDictCodeMax: .int 0
-cDictMetaHere: .int 0
-cDictMetaMax: .int 0
-# localtime dict
-lDictCodeHere: .int 0
-lDictCodeMax: .int 0
-lDictMetaHere: .int 0
-lDictMetaMax: .int 0
+.macro DECLARE_DICT type
+  dictCodeHere\type : .int 0
+  dictCodeMax\type : .int 0
+  dictMetaHere\type : .int 0
+  dictMetaMax\type : .int 0
+.endm
+DECLARE_DICT Runtime
+DECLARE_DICT Compiletime
+DECLARE_DICT Localtime
 
 ######
 # Debugging / Testing Variables
@@ -1314,44 +1305,36 @@ setupStack:
   movl pstackMax, %ebp  # clear pstack
   jmp afterSetupStack # Note: cannot `ret` as we've modified rstack
 
-.equ RDICT_CODE_DEFAULT_SIZE,           0x40000 # 256 KiB
-.equ RDICT_META_DEFAULT_STARTING_SIZE,  0x1000  # 4 KiB
-.equ CDICT_CODE_DEFAULT_SIZE,           0x40000 # 256 KiB
-.equ CDICT_META_DEFAULT_STARTING_SIZE,  0x1000  # 4 KiB
-.equ LDICT_CODE_DEFAULT_SIZE,           0x3000  # 12 KiB
-.equ LDICT_META_DEFAULT_SIZE,           0x3000  # 12 KiB
+.set HEAP_REAL_MIN, heap
 
-# Memory locations
-.equ RDICT_CODE_MIN, heap
-.equ RDICT_CODE_MAX, RDICT_CODE_MIN+RDICT_CODE_DEFAULT_SIZE
-.equ CDICT_CODE_MIN, RDICT_CODE_MAX
-.equ CDICT_CODE_MAX, CDICT_CODE_MIN+CDICT_CODE_DEFAULT_SIZE
-.equ LDICT_CODE_MIN, CDICT_CODE_MAX
-.equ LDICT_CODE_MAX, LDICT_CODE_MIN+LDICT_CODE_DEFAULT_SIZE
+.macro SETUP_DICT_CODE type, defaultSize
+  .equ DICT_CODE_DEFAULT_SIZE_\type, \defaultSize
+  .equ DICT_CODE_MIN_\type, HEAP_REAL_MIN
+  .equ DICT_CODE_MAX_\type, DICT_CODE_MIN_\type + DICT_CODE_DEFAULT_SIZE_\type
+  movl $DICT_CODE_MIN_\type, dictCodeHere\type
+  movl $DICT_CODE_MAX_\type, dictCodeMax\type
+  .set HEAP_REAL_MIN, DICT_CODE_MAX_\type
+.endm
 
-# Starting dictionary space
-.equ RDICT_META_MIN, RDICT_CODE_MAX
-.equ RDICT_META_MAX, RDICT_META_MIN+RDICT_META_DEFAULT_STARTING_SIZE
-.equ CDICT_META_MIN, RDICT_CODE_MAX
-.equ CDICT_META_MAX, CDICT_META_MIN+CDICT_META_DEFAULT_STARTING_SIZE
-.equ LDICT_META_MIN, CDICT_CODE_MAX
-.equ LDICT_META_MAX, LDICT_META_MIN+LDICT_META_DEFAULT_SIZE
+.macro SETUP_DICT_META type, defaultSize
+  .equ DICT_META_DEFAULT_SIZE_\type, \defaultSize
+  .equ DICT_META_MIN_\type, HEAP_REAL_MIN
+  .equ DICT_META_MAX_\type, DICT_META_MIN_\type + DICT_META_DEFAULT_SIZE_\type
+  movl $DICT_META_MIN_\type, dictMetaHere\type
+  movl $DICT_META_MAX_\type, dictMetaMax\type
+  .set HEAP_REAL_MIN, DICT_META_MAX_\type
+.endm
 
 setupDicts:
-  movl $RDICT_CODE_MIN, rDictCodeHere
-  movl $RDICT_CODE_MAX, rDictCodeMax
-  movl $RDICT_META_MIN, rDictMetaHere
-  movl $RDICT_META_MAX, rDictMetaMax
+  # Note: 0x40000 bytes = 256 KiB
+  # Note:  0x3000 bytes =  12 KiB
+  SETUP_DICT_CODE Runtime,      0x40000
+  SETUP_DICT_CODE Compiletime,  0x40000
+  SETUP_DICT_CODE Localtime,    0x3000
 
-  movl $CDICT_CODE_MIN, cDictCodeHere
-  movl $CDICT_CODE_MAX, cDictCodeMax
-  movl $CDICT_META_MIN, cDictMetaHere
-  movl $CDICT_META_MAX, cDictMetaMax
-
-  movl $LDICT_CODE_MIN, lDictCodeHere
-  movl $LDICT_CODE_MAX, lDictCodeMax
-  movl $LDICT_META_MIN, lDictMetaHere
-  movl $LDICT_META_MAX, lDictMetaMax
+  SETUP_DICT_META Runtime,      0x40000
+  SETUP_DICT_META Compiletime,  0x40000
+  SETUP_DICT_META Localtime,    0x40000
   ret
 
 mainStartNtStr: .ascii "Starting Triforth...\n\0"
@@ -1367,6 +1350,8 @@ afterSetupStack:
   EXIT $0
 
 
+.align 4
+heapMin: .int HEAP_REAL_MIN
 .align 0x100
 .section .data
 heap:                     .space 0x100000  # 1MiB TODO: do dynamically from runtime
