@@ -46,7 +46,6 @@
 .equ RC_STACK_OVERFLOW, 106
 .equ RC_ASM_INVARIANT, 107
 
-
 .equ FALSE, 0
 .equ TRUE, 1
 
@@ -85,6 +84,7 @@ pntFd: .int STDERR # where to PNT to
 sourceFd: .int STDIN   # where the source code is read from
 .equ SOURCE_STR_CNT_MAX, 0x46  # maximim bytes of source read
 .equ WORD_CNT_MAX, 0x23        # maximum word size
+.equ WORD_STACK_SIZE, WORD_CNT_MAX+1
 sourceEof: .byte 0 # Whether an EOF was encountered at the last read
 sourceCStr: .byte 0 # Used for reading source word
 sourceStr: .space SOURCE_STR_CNT_MAX
@@ -94,9 +94,22 @@ errno: .int 0
 panic: .int panicDefault # function to call when panicing
 panicErr: .int 0  # error to print while panicing
 
+# Offsets into the global "dict struct"
+.equ DICT_OFFSET_ROOT,      0x0
+.equ DICT_OFFSET_CODE_MIN,  0x4
+.equ DICT_OFFSET_CODE_HERE, 0x8
+.equ DICT_OFFSET_CODE_MAX,  0xC
+.equ DICT_OFFSET_META_MIN,  0x10
+.equ DICT_OFFSET_META_HERE, 0x14
+.equ DICT_OFFSET_META_MAX,  0x18
+
 .macro DECLARE_DICT type
+  dict\type :
+  dictRoot\type : .int 0
+  dictCodeMin\type : .int 0
   dictCodeHere\type : .int 0
   dictCodeMax\type : .int 0
+  dictMetaMin\type : .int 0
   dictMetaHere\type : .int 0
   dictMetaMax\type : .int 0
 .endm
@@ -110,6 +123,7 @@ registerSnapshot: .space 0x20
 testingNtStr: .int 0
 panicRestore: .int 0
 
+.set HEAP_REAL_MIN, heap # keeps track of compile-time heap
 .section .text
 
 ################################################################################
@@ -1026,6 +1040,34 @@ rightHereTODO:
   ret
 
 ################################################################################
+#### Simple Pure Assembly Utility Functions                                 ####
+################################################################################
+.macro ALIGN4 reg
+  // modify reg so it is aligned by 4
+  addl $3, \reg   # Add 3 to the number, pushing it up to or over 4byte boundary
+                  # iff not aligned
+  andl $~3, \reg  # Same as %4 (but faster). Gets rid of two lowest bytes.
+.endm
+
+.macro TEST_ALIGN4 before, expected
+  movl \before, %eax
+  ALIGN4 %eax
+  movl \expected, %ebx
+  call assertEaxEbxEq
+.endm
+TESTCASE align4
+  TEST_ALIGN4 $0, $0
+  TEST_ALIGN4 $1, $4
+  TEST_ALIGN4 $2, $4
+  TEST_ALIGN4 $3, $4
+  TEST_ALIGN4 $4, $4
+  TEST_ALIGN4 $0x4000, $0x4000
+  TEST_ALIGN4 $0x4001, $0x4004
+  TEST_ALIGN4 $0x4004, $0x4004
+  ret
+
+
+################################################################################
 #### Reading words from source                                              ####
 ################################################################################
 
@@ -1271,8 +1313,70 @@ test_words_end:
 // - Dictionaries are binary search trees. Assembly only implements push.
 //   Other features will be implemented in forth.
 
-bmapPushWord: # %eax:bmapRoot ( -- ) %eax:mt
-  // Pushes the string into the metadata 
+.macro SETUP_DICT_CODE type, defaultSize
+  .equ DICT_CODE_DEFAULT_SIZE_\type, \defaultSize
+  .equ DICT_CODE_MIN_\type, HEAP_REAL_MIN
+  .equ DICT_CODE_MAX_\type, DICT_CODE_MIN_\type + DICT_CODE_DEFAULT_SIZE_\type
+  movl $DICT_CODE_MIN_\type, dictCodeMin\type
+  movl $DICT_CODE_MIN_\type, dictCodeHere\type
+  movl $DICT_CODE_MAX_\type, dictCodeMax\type
+  .set HEAP_REAL_MIN, DICT_CODE_MAX_\type
+.endm
+
+.macro SETUP_DICT_META type, defaultSize
+  .equ DICT_META_DEFAULT_SIZE_\type, \defaultSize
+  .equ DICT_META_MIN_\type, HEAP_REAL_MIN
+  .equ DICT_META_MAX_\type, DICT_META_MIN_\type + DICT_META_DEFAULT_SIZE_\type
+  movl $DICT_META_MIN_\type, dictMetaMin\type
+  movl $DICT_META_MIN_\type, dictMetaHere\type
+  movl $DICT_META_MAX_\type, dictMetaMax\type
+  .set HEAP_REAL_MIN, DICT_META_MAX_\type
+.endm
+
+setupDicts:
+  # Note: 0x40_000 bytes = 256 KiB
+  # Note:  0x3000 bytes =  12 KiB
+  SETUP_DICT_CODE Runtime,      0x40000
+  SETUP_DICT_CODE Compiletime,  0x40000
+  SETUP_DICT_CODE Localtime,    0x3000
+
+  SETUP_DICT_META Runtime,      0x40000
+  SETUP_DICT_META Compiletime,  0x40000
+  SETUP_DICT_META Localtime,    0x40000
+  ret
+
+pushWordOnRStack: # ( -- R: WORD_STACK_SIZE )
+  subl $WORD_STACK_SIZE, %esp
+  CSTR_MOVE $wordCStr, %esp
+  ret
+
+getDictAddr: # %eax:dictType ( -- ) %eax:dictAddr
+  JRZ %eax, dictAddr_Runtime
+  JMP_E $1, %eax, dictAddr_Compiletime
+  JMP_E $2, %eax, dictAddr_Localtime
+  jmp asmInvariantViolated
+.macro dictAddr_ type
+  dictAddr_\type :
+    movl $dict\type , %eax
+    ret
+.endm
+dictAddr_ Runtime
+dictAddr_ Compiletime
+dictAddr_ Localtime
+
+// Metadata looks like:
+// left | right | info0 | nameCStr
+//
+// All items are 4 bytes except nameCStr which is always exactly 36
+.equ I0_IMM,             0x10000000  # 1 bit: immediate mode
+.equ IO_TYPE_ID,         0x0003FFFF  # 18 bits: type id (up to 256K)
+
+dictPushWord: # %eax:dictType %ebx:xt %ecx:wordCStr
+  // Pushes the word into the metadata.
+  // dictType: 0=runtime 1=compiletime 2=localtime
+  call getDictAddr
+
+  ret
 
 
 ##############################
@@ -1287,6 +1391,7 @@ testSuite:
   call testcase_bcmp
   call testcase_beqNocase
   call testcase_bmove
+  call testcase_align4
 
   call testcase_findWhitespace
   call testcase_fillSourceCStr
@@ -1304,38 +1409,6 @@ setupStack:
   movl rstackMax, %esp  # clear rstack
   movl pstackMax, %ebp  # clear pstack
   jmp afterSetupStack # Note: cannot `ret` as we've modified rstack
-
-.set HEAP_REAL_MIN, heap
-
-.macro SETUP_DICT_CODE type, defaultSize
-  .equ DICT_CODE_DEFAULT_SIZE_\type, \defaultSize
-  .equ DICT_CODE_MIN_\type, HEAP_REAL_MIN
-  .equ DICT_CODE_MAX_\type, DICT_CODE_MIN_\type + DICT_CODE_DEFAULT_SIZE_\type
-  movl $DICT_CODE_MIN_\type, dictCodeHere\type
-  movl $DICT_CODE_MAX_\type, dictCodeMax\type
-  .set HEAP_REAL_MIN, DICT_CODE_MAX_\type
-.endm
-
-.macro SETUP_DICT_META type, defaultSize
-  .equ DICT_META_DEFAULT_SIZE_\type, \defaultSize
-  .equ DICT_META_MIN_\type, HEAP_REAL_MIN
-  .equ DICT_META_MAX_\type, DICT_META_MIN_\type + DICT_META_DEFAULT_SIZE_\type
-  movl $DICT_META_MIN_\type, dictMetaHere\type
-  movl $DICT_META_MAX_\type, dictMetaMax\type
-  .set HEAP_REAL_MIN, DICT_META_MAX_\type
-.endm
-
-setupDicts:
-  # Note: 0x40000 bytes = 256 KiB
-  # Note:  0x3000 bytes =  12 KiB
-  SETUP_DICT_CODE Runtime,      0x40000
-  SETUP_DICT_CODE Compiletime,  0x40000
-  SETUP_DICT_CODE Localtime,    0x3000
-
-  SETUP_DICT_META Runtime,      0x40000
-  SETUP_DICT_META Compiletime,  0x40000
-  SETUP_DICT_META Localtime,    0x40000
-  ret
 
 mainStartNtStr: .ascii "Starting Triforth...\n\0"
 .align 4
