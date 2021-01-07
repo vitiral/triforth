@@ -103,6 +103,12 @@ panicErr: .int 0  # error to print while panicing
 .equ DICT_OFFSET_META_HERE, 0x14
 .equ DICT_OFFSET_META_MAX,  0x18
 
+.macro DICT_GLOBAL_GET_ADDR field, dictGlobalAddr, reg
+  // Get a field from the dictionary (ROOT, [CODE|META]_[MIN|MAX|HERE])
+  movl \dictGlobalAddr, \reg
+  addl $DICT_OFFSET_\field, \reg
+.endm
+
 .macro DECLARE_DICT type
   dict\type :
   dictRoot\type : .int 0
@@ -800,8 +806,6 @@ pushDsInvalid:
 .endm
 
 popDsInvalid:
-  # Checks to make sure that the datastack hasn't underflowed.
-  # If it has, re-decrements and panics with appropriate error.
   PANIC PSTACK_UNDERFLOW
 
 .macro POPP reg
@@ -809,6 +813,24 @@ popDsInvalid:
   cmpl pstackMax, %ebp
   jge popDsInvalid
   addl $4, %ebp
+.endm
+
+
+.macro DROP_INVALID_LANDING n
+dropInvalid\n :
+  subl $4*\n , %ebp
+  PANIC PSTACK_UNDERFLOW
+.endm
+
+DROP_INVALID_LANDING 1
+DROP_INVALID_LANDING 2
+DROP_INVALID_LANDING 3
+DROP_INVALID_LANDING 4
+
+.macro DROPP n
+  addl $4*\n , %ebp
+  cmpl pstackMax, %ebp
+  jge dropInvalid\n
 .endm
 
 drop:
@@ -870,6 +892,29 @@ popRsInvalid:
   popl \reg
   cmpl rstackMax, %esp
   jge popRsInvalid
+.endm
+
+.macro PUSHP2 a, b  # ( -- a b )
+  PUSHP \b
+  PUSHP \a
+.endm
+.macro PUSHP3 a, b, c # ( -- a b c )
+  PUSHP \c
+  PUSHP2 \a, \b
+.endm
+.macro PUSHP4 a, b, c, d # ( -- a b c d )
+  PUSHP \d
+  PUSHP3 \a, \b, \c
+.endm
+.macro PUSHP5 a, b, c, d, e # ( -- a b c d e )
+  PUSHP \e
+  PUSHP4 \a, \b, \c, \d
+.endm
+.macro GET_P index, reg
+  movl 4*\index(%ebp), \reg
+.endm
+.macro SET_P index, reg
+  movl \reg, 4*\index(%ebp)
 .endm
 
 ################################################################################
@@ -1039,8 +1084,16 @@ rightHereTODO:
   addl $0x20, %ebp
   ret
 
+cmpCStr: # %eax:&aCStr %ecx:&aCStr ( -- ) %eax:cmp
+  MOVB_B (%eax)
+  inc %eax
+  MOVB_D (%ecx)
+  inc %ecx
+  call bcmp
+  ret
+
 ################################################################################
-#### Simple Pure Assembly Utility Functions                                 ####
+#### Simple Pure Assembly Utility Functions and Macros                      ####
 ################################################################################
 .macro ALIGN4 reg
   // modify reg so it is aligned by 4
@@ -1313,6 +1366,31 @@ test_words_end:
 // - Dictionaries are binary search trees. Assembly only implements push.
 //   Other features will be implemented in forth.
 
+// Macros for getting dictionary metadata, given an address
+.equ DICT_SIZE_WITHOUT_NAME, 4 * 4
+.equ DICT_FIELD_left,     0x00
+.equ DICT_FIELD_right,    0x04
+.equ DICT_FIELD_xt,       0x08
+.equ DICT_FIELD_info0,    0x0C
+.equ DICT_FIELD_nameCStr, 0x10
+.macro DICT_META_GET_ADDR metaAddr, field, reg
+  movl \metaAddr, \reg
+  addl $DICT_FIELD_\field, \reg
+.endm
+.macro DICT_META_GET metaAddr, field, reg
+  DICT_META_GET_ADDR \metaAddr, \field, \reg
+  movl (\reg), \reg
+.endm
+.macro DICT_META_SET metaAddr, field, value, reg
+  # Set value to field. Use reg as temporary register.
+  DICT_META_GET_ADDR \metaAddr, \field, \reg
+  movl \value, (\reg)
+.endm
+
+// INFO0 fyte
+.equ INFO0_IMM,             0x10000000  # 1 bit: immediate mode
+.equ INFO0_TYPE_ID,         0x0003FFFF  # 18 bits: type id (up to 256K)
+
 .macro SETUP_DICT_CODE type, defaultSize
   .equ DICT_CODE_DEFAULT_SIZE_\type, \defaultSize
   .equ DICT_CODE_MIN_\type, HEAP_REAL_MIN
@@ -1350,10 +1428,13 @@ pushWordOnRStack: # ( -- R: WORD_STACK_SIZE )
   CSTR_MOVE $wordCStr, %esp
   ret
 
-getDictAddr: # %eax:dictType ( -- ) %eax:dictAddr
+.equ DICT_TYPE_RUNTIME, 0
+.equ DICT_TYPE_COMPILETIME, 1
+.equ DICT_TYPE_LOCALTIME, 2
+getDictTypeGlobalAddr: # %eax:dictType ( -- ) %eax:dictGlobalAddr
   JRZ %eax, dictAddr_Runtime
-  JMP_E $1, %eax, dictAddr_Compiletime
-  JMP_E $2, %eax, dictAddr_Localtime
+  JMP_E $DICT_TYPE_COMPILETIME, %eax, dictAddr_Compiletime
+  JMP_E $DICT_TYPE_LOCALTIME, %eax, dictAddr_Localtime
   jmp asmInvariantViolated
 .macro dictAddr_ type
   dictAddr_\type :
@@ -1364,20 +1445,55 @@ dictAddr_ Runtime
 dictAddr_ Compiletime
 dictAddr_ Localtime
 
-// Metadata looks like:
-// left | right | info0 | nameCStr
-//
-// All items are 4 bytes except nameCStr which is always exactly 36
-.equ I0_IMM,             0x10000000  # 1 bit: immediate mode
-.equ IO_TYPE_ID,         0x0003FFFF  # 18 bits: type id (up to 256K)
-
-dictPushWord: # %eax:dictType %ebx:xt %ecx:wordCStr
-  // Pushes the word into the metadata.
+dictPushWord: # %eax:dictType %ebx:xt %ecx:wordCStr ( -- ) %eax:mt (meta token)
+  // Pushes the word into the metadata. Returns the meta token
   // dictType: 0=runtime 1=compiletime 2=localtime
-  call getDictAddr
-
+  call getDictTypeGlobalAddr # eax:&dictGlobal which is also &&rootNode
+  # set stack: ( &&node &globalDict xt wordCStr )
+  PUSHP4 %eax, %eax, %ebx, %ecx
+  movl %eax, %ebx
+dictPushWord_loop: # %ebx:&&node
+  JMP_E $0, (%ebx), dictPushWord_empty # if zero, found null (empty) node
+  GET_P 3, %ecx # set ecx=&wordCStr
+  DICT_META_GET_ADDR (%ebx), nameCStr, %eax # eax=&nodeWordCStr
+  call cmpCStr # note: eax:&nodeCStr ecx:&wordCStr, backwards comparison
+  GET_P 0, %ebx # ebx=&&node
+  JMP_LE $0, %eax, dictPushWord_new_greater_than_node
+  # else go left, new is less-then-equal to node
+  DICT_META_GET_ADDR (%ebx), left, %ebx # ebx=&&nodeAtLeft
+  jmp 1f
+dictPushWord_new_greater_than_node: # go right
+  DICT_META_GET_ADDR (%ebx), right, %ebx # ebx=&&nodeAtRight
+1:
+  SET_P 0, %ebx # set &&node to new one
+  jmp dictPushWord_loop
+dictPushWord_empty: # %ebx:&&node ( &&node &globalDict xt wordCStr -- )
+  GET_P 1, %eax # eax=&globalDict
+  DICT_GLOBAL_GET_ADDR META_HERE, %eax, %eax # %eax=&metaHere
+  movl (%eax), %edx # edx=metaHere
+  # Calculate new metaHere
+  GET_P 3, %ecx # ecx=&wordCStr
+  MOVB_C (%ecx) # ecx=wordCnt
+  inc %ecx      # plus Cnt byte
+  addl %edx, %ecx # plus original metaHere
+  addl $DICT_SIZE_WITHOUT_NAME, %ecx # plus normal size of dict
+  # TODO: check META_MAX
+  movl %ecx, (%eax) # set metaHere to be AFTER this node
+  movl %edx, (%ebx) # update left/right with this node
+  # Recap: %edx=metaHere=&node
+  # Stack: ( &&node &globalDict xt &wordCStr )
+  DICT_META_SET %edx, left, $0, %eax  # set left to null
+  DICT_META_SET %edx, right, $0, %eax # set right to null
+  GET_P 2, %ebx # ebx=xt
+  DICT_META_SET %edx, xt, %ebx, %eax  # update xt
+  DICT_META_SET %edx, info0, $0, %eax # inital info0=0
+  DICT_META_GET_ADDR %edx, nameCStr, %ecx  # %ecx=&toCStr
+  GET_P 3, %ebx # ebx=&fromCStr
+  call cStrMove
+  GET_P 0, %eax # %eax:&&node
+  movl (%eax), %eax # %eax:&node, the mt a.k.a meta token
+  DROPP 4 # drop the stack items
   ret
-
 
 ##############################
 # Main Entrypoint and test suite
