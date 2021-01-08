@@ -111,17 +111,19 @@ panicErr: .int 0  # error to print while panicing
 
 .macro DECLARE_DICT type
   dict\type :
-  dictRoot\type : .int 0
-  dictCodeMin\type : .int 0
+  dictCodeMin\type  : .int 0
   dictCodeHere\type : .int 0
-  dictCodeMax\type : .int 0
-  dictMetaMin\type : .int 0
+  dictCodeMax\type  : .int 0
+  dictMetaMin\type  : .int 0
   dictMetaHere\type : .int 0
-  dictMetaMax\type : .int 0
+  dictMetaMax\type  : .int 0
 .endm
 DECLARE_DICT Runtime
 DECLARE_DICT Compiletime
-DECLARE_DICT Localtime
+
+dictBucketsAddr : .int 0
+dictBucketsAndValue : .int 0 # Value used to MOD via AND (power_of_2-1)
+.equ DEFAULT_DICT_BUCKETS_AND_VALUE, 0x3FF # 1024 buckets
 
 ######
 # Debugging / Testing Variables
@@ -987,14 +989,15 @@ TESTCASE bcmp
 alToUpper: TO_UPPER %al
 ahToUpper: TO_UPPER %ah
 
-beqNocase: # %eax:aCount %ebx:&a %ecx:bCount %edx:&b ( -- ) %eax:bool
+beqNocase: # %eax:&a %ebx:aCount %ecx:&b %edx:bCount ( -- ) %eax:bool
   // Compare byte sequence a to b for equality, ignoring case
-  JMP_NE %eax, %ecx, beqNocase_neq
+  JMP_NE %ebx, %edx, beqNocase_neq
+  movl %eax, %ebx  # ebx:&a
   ZERO %edi
 beqNocase_loop:
-  JMP_GE %ecx, %edi, beqNocase_eq
+  JMP_GE %edx, %edi, beqNocase_eq
   movb (%edi, %ebx, 1), %al
-  movb (%edi, %edx, 1), %ah # cmp b, a
+  movb (%edi, %ecx, 1), %ah
   call alToUpper
   call ahToUpper
   inc %edi
@@ -1008,13 +1011,13 @@ beqNocase_eq:
   ret
 
 .macro ASSERT_BYTES_NOCASE_EQ aCount, a, bCount, b
-  SET_ABCD \aCount, \a, \bCount, \b
+  SET_ABCD \a, \aCount, \b, \bCount
   call beqNocase
   ASSERT_REG_EQ %eax, $TRUE
 .endm
 
 .macro ASSERT_BYTES_NOCASE_NE aCount, a, bCount, b
-  SET_ABCD \aCount, \a, \bCount, \b
+  SET_ABCD \a, \aCount, \b, \bCount
   call beqNocase
   ASSERT_REG_EQ %eax, $FALSE
 .endm
@@ -1030,12 +1033,12 @@ TESTCASE beqNocase
 
 .macro ASSERT_CSTR_NOCASE_EQ a, b
   # a and b are the addresses to counted bytes (bytes where first byte=count)
-  movl \a, %ebx
-  MOVB_A (%ebx)     # aCount
-  inc %ebx          # &a
-  movl \b, %edx
-  MOVB_C (%edx)     # bCount
-  inc %edx          # &b
+  movl \a, %eax
+  MOVB_B (%eax)     # aCount
+  inc %eax          # &a
+  movl \b, %ecx
+  MOVB_D (%ecx)     # bCount
+  inc %ecx          # &b
   call beqNocase
   ASSERT_REG_EQ %eax, $TRUE
 .endm
@@ -1084,13 +1087,22 @@ rightHereTODO:
   addl $0x20, %ebp
   ret
 
-cmpCStr: # %eax:&aCStr %ecx:&aCStr ( -- ) %eax:cmp
+cmpCStr: # %eax:&aCStr %ecx:&bCStr ( -- ) %eax:cmp
   MOVB_B (%eax)
   inc %eax
   MOVB_D (%ecx)
   inc %ecx
   call bcmp
   ret
+
+cStrNoCaseEq: # %eax:&aCStr %ecx:&bCStr
+  MOVB_B (%eax)
+  inc %eax
+  MOVB_D (%ecx)
+  inc %ecx
+  call beqNocase
+  ret
+  
 
 ################################################################################
 #### Simple Pure Assembly Utility Functions and Macros                      ####
@@ -1348,31 +1360,12 @@ test_words_end:
 ################################################################################
 #### Forth Dictionary                                                       ####
 ################################################################################
-// Our forth dictionary is going to be unlike most implementations. Primary
-// differences:
-// - Dictionary metadata such as the ascii representation of the word,
-//   immediacy, and type information (we'll get to that) are in a separate
-//   memory region from the code.
-// - There are really 3 dictionaries:
-//   1. Runtime: this is the "standard" one containing forth words that can be
-//      run at runtime. Runtime words never depend on any other dictionary's
-//      words 
-//   2. Compiletime: this is a separate dictionary of words which can be
-//      completely discarded when "compilation" is complete. Compiletime
-//      words can contain depend on runtime words but not localtime words.
-//   3. Localtime: yet another dictionary containing immediate-only words for
-//      use within a function. Can be used to make one-off macros for helpful
-//      variable naming, etc.
-// - Dictionaries are binary search trees. Assembly only implements push.
-//   Other features will be implemented in forth.
 
-// Macros for getting dictionary metadata, given an address
-.equ DICT_SIZE_WITHOUT_NAME, 4 * 4
-.equ DICT_FIELD_left,     0x00
-.equ DICT_FIELD_right,    0x04
-.equ DICT_FIELD_xt,       0x08
-.equ DICT_FIELD_info0,    0x0C
-.equ DICT_FIELD_nameCStr, 0x10
+.equ DICT_SIZE_WITHOUT_NAME, 3 * 4
+.equ DICT_FIELD_nextAddr, 0x0
+.equ DICT_FIELD_xt,       0x4
+.equ DICT_FIELD_info0,    0x8
+.equ DICT_FIELD_nameCStr, 0xC
 .macro DICT_META_GET_ADDR metaAddr, field, reg
   movl \metaAddr, \reg
   addl $DICT_FIELD_\field, \reg
@@ -1387,115 +1380,205 @@ test_words_end:
   movl \value, (\reg)
 .endm
 
-// INFO0 fyte
-.equ INFO0_IMM,             0x10000000  # 1 bit: immediate mode
-.equ INFO0_TYPE_ID,         0x0003FFFF  # 18 bits: type id (up to 256K)
 
-.macro SETUP_DICT_CODE type, defaultSize
-  .equ DICT_CODE_DEFAULT_SIZE_\type, \defaultSize
-  .equ DICT_CODE_MIN_\type, HEAP_REAL_MIN
-  .equ DICT_CODE_MAX_\type, DICT_CODE_MIN_\type + DICT_CODE_DEFAULT_SIZE_\type
-  movl $DICT_CODE_MIN_\type, dictCodeMin\type
-  movl $DICT_CODE_MIN_\type, dictCodeHere\type
-  movl $DICT_CODE_MAX_\type, dictCodeMax\type
-  .set HEAP_REAL_MIN, DICT_CODE_MAX_\type
-.endm
-
-.macro SETUP_DICT_META type, defaultSize
-  .equ DICT_META_DEFAULT_SIZE_\type, \defaultSize
-  .equ DICT_META_MIN_\type, HEAP_REAL_MIN
-  .equ DICT_META_MAX_\type, DICT_META_MIN_\type + DICT_META_DEFAULT_SIZE_\type
-  movl $DICT_META_MIN_\type, dictMetaMin\type
-  movl $DICT_META_MIN_\type, dictMetaHere\type
-  movl $DICT_META_MAX_\type, dictMetaMax\type
-  .set HEAP_REAL_MIN, DICT_META_MAX_\type
-.endm
-
-setupDicts:
-  # Note: 0x40_000 bytes = 256 KiB
-  # Note:  0x3000 bytes =  12 KiB
-  SETUP_DICT_CODE Runtime,      0x40000
-  SETUP_DICT_CODE Compiletime,  0x40000
-  SETUP_DICT_CODE Localtime,    0x3000
-
-  SETUP_DICT_META Runtime,      0x40000
-  SETUP_DICT_META Compiletime,  0x40000
-  SETUP_DICT_META Localtime,    0x40000
+sllPush: # %eax:root=&&rootNode %ebx:&node ( -- )
+  // push node to be first in root
+  movl (%eax), %ecx  # ecx=&prevRootNode
+  movl %ecx, (%ebx)  # %ebx.&next=&prevRootNode
+  movl %ebx, (%eax)  # root=&node
   ret
 
-pushWordOnRStack: # ( -- R: WORD_STACK_SIZE )
-  subl $WORD_STACK_SIZE, %esp
-  CSTR_MOVE $wordCStr, %esp
-  ret
+sllFindName: # %eax:&node %ecx:&cStr
+  PUSHP2 %eax, %ecx # ( &node, &cStr )
+  DICT_META_GET_ADDR %eax, nextAddr, %ebx
 
-.equ DICT_TYPE_RUNTIME, 0
-.equ DICT_TYPE_COMPILETIME, 1
-.equ DICT_TYPE_LOCALTIME, 2
-getDictTypeGlobalAddr: # %eax:dictType ( -- ) %eax:dictGlobalAddr
-  JRZ %eax, dictAddr_Runtime
-  JMP_E $DICT_TYPE_COMPILETIME, %eax, dictAddr_Compiletime
-  JMP_E $DICT_TYPE_LOCALTIME, %eax, dictAddr_Localtime
-  jmp asmInvariantViolated
-.macro dictAddr_ type
-  dictAddr_\type :
-    movl $dict\type , %eax
-    ret
-.endm
-dictAddr_ Runtime
-dictAddr_ Compiletime
-dictAddr_ Localtime
-
-dictPushWord: # %eax:dictType %ebx:xt %ecx:wordCStr ( -- ) %eax:mt (meta token)
-  // Pushes the word into the metadata. Returns the meta token
-  // dictType: 0=runtime 1=compiletime 2=localtime
-  call getDictTypeGlobalAddr # eax:&dictGlobal which is also &&rootNode
-  # set stack: ( &&node &globalDict xt wordCStr )
-  PUSHP4 %eax, %eax, %ebx, %ecx
-  movl %eax, %ebx
-dictPushWord_loop: # %ebx:&&node
-  JMP_E $0, (%ebx), dictPushWord_new # if zero, found null (empty) node
-  GET_P 3, %ecx # set ecx=&wordCStr
-  DICT_META_GET_ADDR (%ebx), nameCStr, %eax # eax=&nodeWordCStr
-  call cmpCStr # note: eax:&nodeCStr ecx:&wordCStr, backwards comparison
-  GET_P 0, %ebx # ebx=&&node
-  JMP_LE $0, %eax, dictPushWord_new_greater_than_node
-  # else go left, new is less-then-equal to node
-  DICT_META_GET_ADDR (%ebx), left, %ebx # ebx=&&nodeAtLeft
-  jmp 1f
-dictPushWord_new_greater_than_node: # go right
-  DICT_META_GET_ADDR (%ebx), right, %ebx # ebx=&&nodeAtRight
+pjwHashEax: # %ecx:&bytes %edi:count  ( -- ) %eax:hash
+  // Do a PJW hash on count bytes.
+  // https://en.wikipedia.org/wiki/PJW_hash_function
+  ZERO %eax
+  movl $0, %eax  # eax=hash
+  addl %edi, %ecx # edi=end addr
+pjwHashEax_loop:
+  JMP_AE %ecx, %edi, return
+  # Next 4 lines: h = (h << 4) + *s++
+  shll $4, %eax
+  MOVB_D (%ecx)
+  addl %edx, %eax
+  inc %eax
+  movl %eax, %ebx  # ebx will = high bits
+  andl $0xF0000000, %ebx
+  JRZ %ebx, 1f # if(high)
+  # Next three lines are: h ^= high >> 24
+  movl %ebx, %edx
+  shrl $24, %edx
+  xorl %edx, %eax
 1:
-  SET_P 0, %ebx # set &&node to new one
-  jmp dictPushWord_loop
+  # Next two lines are: h &= ~high
+  notl %ebx
+  andl %ebx, %eax
+  inc %ecx
+  jmp pjwHashEax_loop
 
-dictPushWord_new: # %ebx:&&node ( &&node &globalDict xt wordCStr -- )
-  // Push a word to the globalDict and update &node
-  GET_P 1, %eax # eax=&globalDict
-  DICT_GLOBAL_GET_ADDR META_HERE, %eax, %eax # %eax=&metaHere
-  movl (%eax), %edx # edx=metaHere
-  # Calculate new metaHere
-  GET_P 3, %ecx # ecx=&wordCStr
-  MOVB_C (%ecx) # ecx=wordCnt
-  inc %ecx      # plus Cnt byte
-  addl %edx, %ecx # plus original metaHere
-  addl $DICT_SIZE_WITHOUT_NAME, %ecx # plus normal size of dict
-  # TODO: check META_MAX
-  movl %ecx, (%eax) # set metaHere to be AFTER this node
-  movl %edx, (%ebx) # update left/right with this node
-  # Recap: %edx=metaHere=&node
-  # Stack: ( &&node &globalDict xt &wordCStr )
-  DICT_META_SET %edx, left, $0, %eax  # set left to null
-  DICT_META_SET %edx, right, $0, %eax # set right to null
-  GET_P 2, %ebx # ebx=xt
-  DICT_META_SET %edx, xt, %ebx, %eax  # update xt
-  DICT_META_SET %edx, info0, $0, %eax # inital info0=0
-  DICT_META_GET_ADDR %edx, nameCStr, %ecx  # %ecx=&toCStr
-  GET_P 3, %ebx # ebx=&fromCStr
-  call cStrMove
-  GET_P 0, %eax # %eax:&&node
-  movl (%eax), %eax # %eax:&node, the mt a.k.a meta token
-  DROPP 4 # drop the stack items
+dictCStrBucket: # %ecx:&cStr ( -- ) %eax:bucketIndex
+  MOVB_D (%ecx)
+  movl %ecx, %edi
+  inc %ecx
+  call pjwHashEax
+  andl dictBucketsAndValue, %eax
   ret
+
+
+### ################################################################################
+### #### BAD Forth Dictionary                                                       ####
+### ################################################################################
+### // Our forth dictionary is going to be unlike most implementations. Primary
+### // differences:
+### // - Dictionary metadata such as the ascii representation of the word,
+### //   immediacy, and type information (we'll get to that) are in a separate
+### //   memory region from the code.
+### // - There are really 3 dictionaries:
+### //   1. Runtime: this is the "standard" one containing forth words that can be
+### //      run at runtime. Runtime words never depend on any other dictionary's
+### //      words 
+### //   2. Compiletime: this is a separate dictionary of words which can be
+### //      completely discarded when "compilation" is complete. Compiletime
+### //      words can contain depend on runtime words but not localtime words.
+### //   3. Localtime: yet another dictionary containing immediate-only words for
+### //      use within a function. Can be used to make one-off macros for helpful
+### //      variable naming, etc.
+### // - Dictionaries are binary search trees. Assembly only implements push.
+### //   Other features will be implemented in forth.
+### 
+### // Macros for getting dictionary metadata, given an address
+### .equ DICT_SIZE_WITHOUT_NAME, 4 * 4
+### .equ DICT_FIELD_left,     0x00
+### .equ DICT_FIELD_right,    0x04
+### .equ DICT_FIELD_xt,       0x08
+### .equ DICT_FIELD_info0,    0x0C
+### .equ DICT_FIELD_nameCStr, 0x10
+### .macro DICT_META_GET_ADDR metaAddr, field, reg
+###   movl \metaAddr, \reg
+###   addl $DICT_FIELD_\field, \reg
+### .endm
+### .macro DICT_META_GET metaAddr, field, reg
+###   DICT_META_GET_ADDR \metaAddr, \field, \reg
+###   movl (\reg), \reg
+### .endm
+### .macro DICT_META_SET metaAddr, field, value, reg
+###   # Set value to field. Use reg as temporary register.
+###   DICT_META_GET_ADDR \metaAddr, \field, \reg
+###   movl \value, (\reg)
+### .endm
+### 
+### // INFO0 fyte
+### .equ INFO0_IMM,             0x10000000  # 1 bit: immediate mode
+### .equ INFO0_TYPE_ID,         0x0003FFFF  # 18 bits: type id (up to 256K)
+### 
+### .macro SETUP_DICT_CODE type, defaultSize
+###   .equ DICT_CODE_DEFAULT_SIZE_\type, \defaultSize
+###   .equ DICT_CODE_MIN_\type, HEAP_REAL_MIN
+###   .equ DICT_CODE_MAX_\type, DICT_CODE_MIN_\type + DICT_CODE_DEFAULT_SIZE_\type
+###   movl $DICT_CODE_MIN_\type, dictCodeMin\type
+###   movl $DICT_CODE_MIN_\type, dictCodeHere\type
+###   movl $DICT_CODE_MAX_\type, dictCodeMax\type
+###   .set HEAP_REAL_MIN, DICT_CODE_MAX_\type
+### .endm
+### 
+### .macro SETUP_DICT_META type, defaultSize
+###   .equ DICT_META_DEFAULT_SIZE_\type, \defaultSize
+###   .equ DICT_META_MIN_\type, HEAP_REAL_MIN
+###   .equ DICT_META_MAX_\type, DICT_META_MIN_\type + DICT_META_DEFAULT_SIZE_\type
+###   movl $DICT_META_MIN_\type, dictMetaMin\type
+###   movl $DICT_META_MIN_\type, dictMetaHere\type
+###   movl $DICT_META_MAX_\type, dictMetaMax\type
+###   .set HEAP_REAL_MIN, DICT_META_MAX_\type
+### .endm
+### 
+### setupDicts:
+###   # Note: 0x40_000 bytes = 256 KiB
+###   # Note:  0x3000 bytes =  12 KiB
+###   SETUP_DICT_CODE Runtime,      0x40000
+###   SETUP_DICT_CODE Compiletime,  0x40000
+###   SETUP_DICT_CODE Localtime,    0x3000
+### 
+###   SETUP_DICT_META Runtime,      0x40000
+###   SETUP_DICT_META Compiletime,  0x40000
+###   SETUP_DICT_META Localtime,    0x40000
+###   ret
+### 
+### pushWordOnRStack: # ( -- R: WORD_STACK_SIZE )
+###   subl $WORD_STACK_SIZE, %esp
+###   CSTR_MOVE $wordCStr, %esp
+###   ret
+### 
+### .equ DICT_TYPE_RUNTIME, 0
+### .equ DICT_TYPE_COMPILETIME, 1
+### .equ DICT_TYPE_LOCALTIME, 2
+### getDictTypeGlobalAddr: # %eax:dictType ( -- ) %eax:dictGlobalAddr
+###   JRZ %eax, dictAddr_Runtime
+###   JMP_E $DICT_TYPE_COMPILETIME, %eax, dictAddr_Compiletime
+###   JMP_E $DICT_TYPE_LOCALTIME, %eax, dictAddr_Localtime
+###   jmp asmInvariantViolated
+### .macro dictAddr_ type
+###   dictAddr_\type :
+###     movl $dict\type , %eax
+###     ret
+### .endm
+### dictAddr_ Runtime
+### dictAddr_ Compiletime
+### dictAddr_ Localtime
+### 
+### dictPushWord: # %eax:dictType %ebx:xt %ecx:wordCStr ( -- ) %eax:mt (meta token)
+###   // Pushes the word into the metadata. Returns the meta token
+###   // dictType: 0=runtime 1=compiletime 2=localtime
+###   call getDictTypeGlobalAddr # eax:&dictGlobal which is also &&rootNode
+###   # set stack: ( &&node &globalDict xt wordCStr )
+###   PUSHP4 %eax, %eax, %ebx, %ecx
+###   movl %eax, %ebx
+### dictPushWord_loop: # %ebx:&&node
+###   JMP_E $0, (%ebx), dictPushWord_new # if zero, found null (empty) node
+###   GET_P 3, %ecx # set ecx=&wordCStr
+###   DICT_META_GET_ADDR (%ebx), nameCStr, %eax # eax=&nodeWordCStr
+###   call cmpCStr # note: eax:&nodeCStr ecx:&wordCStr, backwards comparison
+###   GET_P 0, %ebx # ebx=&&node
+###   JMP_LE $0, %eax, dictPushWord_new_greater_than_node
+###   # else go left, new is less-then-equal to node
+###   DICT_META_GET_ADDR (%ebx), left, %ebx # ebx=&&nodeAtLeft
+###   jmp 1f
+### dictPushWord_new_greater_than_node: # go right
+###   DICT_META_GET_ADDR (%ebx), right, %ebx # ebx=&&nodeAtRight
+### 1:
+###   SET_P 0, %ebx # set &&node to new one
+###   jmp dictPushWord_loop
+### 
+### dictPushWord_new: # %ebx:&&node ( &&node &globalDict xt wordCStr -- )
+###   // Push a word to the globalDict and update &node
+###   GET_P 1, %eax # eax=&globalDict
+###   DICT_GLOBAL_GET_ADDR META_HERE, %eax, %eax # %eax=&metaHere
+###   movl (%eax), %edx # edx=metaHere
+###   # Calculate new metaHere
+###   GET_P 3, %ecx # ecx=&wordCStr
+###   MOVB_C (%ecx) # ecx=wordCnt
+###   inc %ecx      # plus Cnt byte
+###   addl %edx, %ecx # plus original metaHere
+###   addl $DICT_SIZE_WITHOUT_NAME, %ecx # plus normal size of dict
+###   # TODO: check META_MAX
+###   movl %ecx, (%eax) # set metaHere to be AFTER this node
+###   movl %edx, (%ebx) # update left/right with this node
+###   # Recap: %edx=metaHere=&node
+###   # Stack: ( &&node &globalDict xt &wordCStr )
+###   DICT_META_SET %edx, left, $0, %eax  # set left to null
+###   DICT_META_SET %edx, right, $0, %eax # set right to null
+###   GET_P 2, %ebx # ebx=xt
+###   DICT_META_SET %edx, xt, %ebx, %eax  # update xt
+###   DICT_META_SET %edx, info0, $0, %eax # inital info0=0
+###   DICT_META_GET_ADDR %edx, nameCStr, %ecx  # %ecx=&toCStr
+###   GET_P 3, %ebx # ebx=&fromCStr
+###   call cStrMove
+###   GET_P 0, %eax # %eax:&&node
+###   movl (%eax), %eax # %eax:&node, the mt a.k.a meta token
+###   DROPP 4 # drop the stack items
+###   ret
 
 ##############################
 # Main Entrypoint and test suite
@@ -1535,7 +1618,7 @@ _start:
   movl %esp, initialEsp # arguments and environment variables stored here
   jmp setupStack
 afterSetupStack:
-  call setupDicts
+  # call setupDicts
   PNT_NTSTR $mainStartNtStr
   call testSuite
   EXIT $0
