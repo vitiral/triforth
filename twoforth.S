@@ -121,9 +121,9 @@ panicErr: .int 0  # error to print while panicing
 DECLARE_DICT Runtime
 DECLARE_DICT Compiletime
 
+.equ DEFAULT_BUCKETS_SIZE, 0x1000
 dictBucketsAddr : .int 0
 dictBucketsAndValue : .int 0 # Value used to MOD via AND (power_of_2-1)
-.equ DEFAULT_DICT_BUCKETS_AND_VALUE, 0x3FF # 1024 buckets
 
 ######
 # Debugging / Testing Variables
@@ -679,6 +679,20 @@ assertEaxEbxEq:
   addl $8, %ebp
   jmp exitFailTest
 
+assertEaxEbxNe_str: .ascii " = \0"
+.align 4
+assertEaxEbxNe:
+  JMP_NE %eax, %ebx, return
+  subl $8, %ebp
+  movl %eax, (%ebp)
+  movl %ebx, 4(%ebp)
+  PNT_NTSTR $assertFailStr
+  PNT_UX (%ebp)
+  PNT_NTSTR $assertEaxEbxNe_str
+  PNT_UX_NL 4(%ebp)
+  addl $8, %ebp
+  jmp exitFailTest
+
 .macro ASSERT_REG_EQ a, b
   SET_AB \a, \b
   call assertEaxEbxEq
@@ -1129,14 +1143,28 @@ TESTCASE align4
   TEST_ALIGN4 $0x4004, $0x4004
   ret
 
-sllPush: # %eax:root ( i.e. &&firstNode) %ebx:&node ( -- )
-  // Singly-linked-list: push node to be first in root
+sllPush: # %eax:&node (or &root) %ebx:&newNode ( -- )
+  // Singly-linked-list: push newNode to be after node
   // uses: eax, ebx, ecx
-  movl (%eax), %ecx  # ecx=&prevRootNode
-  movl %ecx, (%ebx)  # %ebx.&next=&prevRootNode
-  movl %ebx, (%eax)  # root=&node
+  // Before: node -> nextNode
+  // After:  node -> newNode -> nextNode
+  movl (%eax), %ecx  # ecx=node.&next
+  movl %ecx, (%ebx)  # newNode.&next=node.&next
+  movl %ebx, (%eax)  # node.&next=&newNode
   ret
 
+sllPop: # %eax:&prev &ebx:&node
+  // pop node
+  // Before: prev -> node -> nextNode
+  // After: prev -> nextNode
+  movl (%ebx), %ecx  # ecx=node.&next
+  movl %ecx, (%eax)  # set prev.&next = node.&next
+  movl $0, (%ebx)    # clear node.&next
+  ret
+
+TESTCASE sllPushPop
+  TODO
+  ret
 
 ################################################################################
 #### Reading words from source                                              ####
@@ -1386,14 +1414,42 @@ test_words_end:
   movl \value, (\reg)
 .endm
 
+.macro SETUP_DICT_CODE type, defaultSize
+  movl heap, %eax
+  movl %eax, dictCodeMin\type
+  movl %eax, dictCodeHere\type
+  addl $\defaultSize, %eax
+  movl %eax, dictCodeMax\type
+  movl %eax, heap
+.endm
+.macro SETUP_DICT_META type, defaultSize
+  movl heap, %eax
+  movl %eax, dictMetaMin\type
+  movl %eax, dictMetaHere\type
+  addl $\defaultSize, %eax
+  movl %eax, dictMetaMax\type
+  movl %eax, heap
+.endm
+setupDict:
+  SETUP_DICT_CODE Runtime,      0x40000
+  SETUP_DICT_CODE Compiletime,  0x40000
+
+  SETUP_DICT_META Runtime,      0x40000
+  SETUP_DICT_META Compiletime,  0x40000
+  movl $DEFAULT_BUCKETS_SIZE-1, dictBucketsAndValue
+  movl heap, %eax
+  movl %eax, dictBucketsAddr
+  addl $DEFAULT_BUCKETS_SIZE*4, heap
+  ret
+
 pjwHashEax: # %ecx:&bytes %edi:count  ( -- ) %eax:hash
   // Do a PJW hash on count bytes.
   // https://en.wikipedia.org/wiki/PJW_hash_function
   ZERO %eax
   movl $0, %eax  # eax=hash
-  addl %edi, %ecx # edi=end addr
+  addl %ecx, %edi # edi=end addr
 pjwHashEax_loop:
-  JMP_AE %ecx, %edi, return
+  JMP_AE %edi, %ecx, return
   # Next 4 lines: h = (h << 4) + *s++
   shll $4, %eax
   MOVB_D (%ecx)
@@ -1487,11 +1543,49 @@ metaSllFindName_dne:
 
 dictFindName: # %ecx:&cStr ( -- ) &eax:&node
   PUSHP %ecx
-  call dictCStrBucket
+  call dictCStrBucketAddr
   movl (%eax), %eax # eax=&firstNode
   POPP %ecx
   call metaSllFindName
   ret
+
+######
+# Dictionary tests
+.macro TEST_HASH assert, aCStr, bCStr
+  # asserts that a compares to b
+  MOVB_D \aCStr
+  movl %edx, %edi
+  movl $\aCStr+1, %ecx
+  call pjwHashEax
+  PUSHP %eax
+  MOVB_D \bCStr
+  movl %edx, %edi
+  movl $\bCStr+1, %ecx
+  call pjwHashEax
+  POPP %ebx
+  call \assert
+.endm
+hashTest_cStr1: .byte 1
+  .ascii "a"
+hashTest_cStr2: .byte 2
+  .ascii "aa"
+hashTest_cStr3: .byte 5
+  .ascii "zzzzz"
+hashTest_cStr4: .byte 5
+  .ascii "zzazz"
+.align 4
+TESTCASE pjwHashEax
+  // This isn't a very good test, but makes sure there is some spread in the
+  // values.
+  TEST_HASH assertEaxEbxEq, hashTest_cStr1, hashTest_cStr1
+  TEST_HASH assertEaxEbxEq, hashTest_cStr2, hashTest_cStr2
+  TEST_HASH assertEaxEbxEq, hashTest_cStr4, hashTest_cStr4
+  TEST_HASH assertEaxEbxNe, hashTest_cStr1, hashTest_cStr2
+  TEST_HASH assertEaxEbxNe, hashTest_cStr1, hashTest_cStr3
+  TEST_HASH assertEaxEbxNe, hashTest_cStr3, hashTest_cStr4
+  ret
+
+
 
 
 ### ################################################################################
@@ -1659,11 +1753,13 @@ testSuite:
   call testcase_beqNocase
   call testcase_bmove
   call testcase_align4
+  call testcase_sllPushPop
 
   call testcase_findWhitespace
   call testcase_fillSourceCStr
   call testcase_flush_sourceCStr_to_wordCStr
   call testcase_word
+  call testcase_pjwHashEax
 
   call assertClean
   ret
@@ -1684,7 +1780,7 @@ _start:
   movl %esp, initialEsp # arguments and environment variables stored here
   jmp setupStack
 afterSetupStack:
-  # call setupDicts
+  call setupDict
   PNT_NTSTR $mainStartNtStr
   call testSuite
   EXIT $0
