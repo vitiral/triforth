@@ -1453,7 +1453,7 @@ dictPushWord: # %eax:dictType %ebx:xt %ecx:wordCStr ( -- ) %eax:mt (meta token)
   PUSHP4 %eax, %eax, %ebx, %ecx
   movl %eax, %ebx
 dictPushWord_loop: # %ebx:&&node
-  JMP_E $0, (%ebx), dictPushWord_empty # if zero, found null (empty) node
+  JMP_E $0, (%ebx), dictPushWord_new # if zero, found null (empty) node
   GET_P 3, %ecx # set ecx=&wordCStr
   DICT_META_GET_ADDR (%ebx), nameCStr, %eax # eax=&nodeWordCStr
   call cmpCStr # note: eax:&nodeCStr ecx:&wordCStr, backwards comparison
@@ -1467,7 +1467,9 @@ dictPushWord_new_greater_than_node: # go right
 1:
   SET_P 0, %ebx # set &&node to new one
   jmp dictPushWord_loop
-dictPushWord_empty: # %ebx:&&node ( &&node &globalDict xt wordCStr -- )
+
+dictPushWord_new: # %ebx:&&node ( &&node &globalDict xt wordCStr -- )
+  // Push a word to the globalDict and update &node
   GET_P 1, %eax # eax=&globalDict
   DICT_GLOBAL_GET_ADDR META_HERE, %eax, %eax # %eax=&metaHere
   movl (%eax), %edx # edx=metaHere
