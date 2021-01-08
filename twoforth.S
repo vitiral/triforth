@@ -249,6 +249,9 @@ panicRestore: .int 0
 .macro JMP_A a, b, location # jmp above
   CMP_JMP cmp, \a, \b, ja, \location
 .endm
+.macro MUL4 a
+  shll $2, \a # x<<2 is same as x*2^2=x*4
+.endm
 
 return:
   // Functions can conditionally jump here to return
@@ -1031,18 +1034,6 @@ TESTCASE beqNocase
   ASSERT_BYTES_NOCASE_NE $2, $test_beqNocaseStr, $2, $test_beqNocaseStr+3 # different letter !=
   ret
 
-.macro ASSERT_CSTR_NOCASE_EQ a, b
-  # a and b are the addresses to counted bytes (bytes where first byte=count)
-  movl \a, %eax
-  MOVB_B (%eax)     # aCount
-  inc %eax          # &a
-  movl \b, %ecx
-  MOVB_D (%ecx)     # bCount
-  inc %ecx          # &b
-  call beqNocase
-  ASSERT_REG_EQ %eax, $TRUE
-.endm
-
 bmove: # %eax:count %ebx:&from %ecx:&to ( -- )
   // Moves count bytes from &from to &to starting at the beginning.
   // Uses registers a-d
@@ -1072,6 +1063,29 @@ cStrMove: # %ebx:&fromCstr &ecx:&toCstr
   call cStrMove
 .endm
 
+cmpCStr: # %eax:&aCStr %ecx:&bCStr ( -- ) %eax:cmp
+  MOVB_B (%eax)
+  inc %eax
+  MOVB_D (%ecx)
+  inc %ecx
+  call bcmp
+  ret
+
+cStrNocaseEq: # %eax:&aCStr %ecx:&bCStr
+  MOVB_B (%eax)
+  inc %eax
+  MOVB_D (%ecx)
+  inc %ecx
+  call beqNocase
+  ret
+
+.macro ASSERT_CSTR_NOCASE_EQ aCStr, bCStr
+  movl \aCStr, %eax
+  movl \bCStr, %ecx
+  call cStrNocaseEq
+  ASSERT_REG_EQ %eax, $TRUE
+.endm
+
 test_bmoveCStr: .byte 0x06
   .ascii "abcDEz"
 test_bmoveCStr2: .byte 0x03
@@ -1087,22 +1101,6 @@ rightHereTODO:
   addl $0x20, %ebp
   ret
 
-cmpCStr: # %eax:&aCStr %ecx:&bCStr ( -- ) %eax:cmp
-  MOVB_B (%eax)
-  inc %eax
-  MOVB_D (%ecx)
-  inc %ecx
-  call bcmp
-  ret
-
-cStrNoCaseEq: # %eax:&aCStr %ecx:&bCStr
-  MOVB_B (%eax)
-  inc %eax
-  MOVB_D (%ecx)
-  inc %ecx
-  call beqNocase
-  ret
-  
 
 ################################################################################
 #### Simple Pure Assembly Utility Functions and Macros                      ####
@@ -1129,6 +1127,14 @@ TESTCASE align4
   TEST_ALIGN4 $0x4000, $0x4000
   TEST_ALIGN4 $0x4001, $0x4004
   TEST_ALIGN4 $0x4004, $0x4004
+  ret
+
+sllPush: # %eax:root ( i.e. &&firstNode) %ebx:&node ( -- )
+  // Singly-linked-list: push node to be first in root
+  // uses: eax, ebx, ecx
+  movl (%eax), %ecx  # ecx=&prevRootNode
+  movl %ecx, (%ebx)  # %ebx.&next=&prevRootNode
+  movl %ebx, (%eax)  # root=&node
   ret
 
 
@@ -1380,18 +1386,6 @@ test_words_end:
   movl \value, (\reg)
 .endm
 
-
-sllPush: # %eax:root=&&rootNode %ebx:&node ( -- )
-  // push node to be first in root
-  movl (%eax), %ecx  # ecx=&prevRootNode
-  movl %ecx, (%ebx)  # %ebx.&next=&prevRootNode
-  movl %ebx, (%eax)  # root=&node
-  ret
-
-sllFindName: # %eax:&node %ecx:&cStr
-  PUSHP2 %eax, %ecx # ( &node, &cStr )
-  DICT_META_GET_ADDR %eax, nextAddr, %ebx
-
 pjwHashEax: # %ecx:&bytes %edi:count  ( -- ) %eax:hash
   // Do a PJW hash on count bytes.
   // https://en.wikipedia.org/wiki/PJW_hash_function
@@ -1419,12 +1413,84 @@ pjwHashEax_loop:
   inc %ecx
   jmp pjwHashEax_loop
 
-dictCStrBucket: # %ecx:&cStr ( -- ) %eax:bucketIndex
+dictCStrBucketAddr: # %ecx:&cStr ( -- ) %eax:&&firstNode
   MOVB_D (%ecx)
   movl %ecx, %edi
   inc %ecx
   call pjwHashEax
   andl dictBucketsAndValue, %eax
+  MUL4 %eax
+  addl dictBucketsAddr, %eax
+  ret
+
+.equ DICT_TYPE_RUNTIME, 0
+.equ DICT_TYPE_COMPILETIME, 1
+getDictTypeGlobalAddr: # %eax:dictType ( -- ) %eax:dictGlobalAddr
+  JRZ %eax, dictAddr_Runtime
+  JMP_E $DICT_TYPE_COMPILETIME, %eax, dictAddr_Compiletime
+  jmp asmInvariantViolated
+.macro dictAddr_ type
+  dictAddr_\type :
+    movl $dict\type , %eax
+    ret
+.endm
+dictAddr_ Runtime
+dictAddr_ Compiletime
+
+dictPush: # %eax:dictType %ecx:&cStr ( -- ) %eax:mt (aka &newNode)
+  PUSHP %ecx # stack: ( &cStr )
+  call getDictTypeGlobalAddr
+  DICT_GLOBAL_GET_ADDR META_HERE, %eax, %eax # %eax=&metaHere
+  movl (%eax), %edx # edx=metaHere=&newNode
+  # Calculate new metaHere by adding size of newNode and update it
+  GET_P 3, %ecx # ecx=&wordCStr
+  MOVB_C (%ecx) # ecx=wordCnt
+  inc %ecx      # plus Cnt byte
+  addl %edx, %ecx # plus original metaHere
+  addl $DICT_SIZE_WITHOUT_NAME, %ecx # plus normal size of dict
+  // TODO: check META_MAX
+  movl %ecx, (%eax)
+  // Set initial fields in new entry (xt, info0, nameCStr)
+  DICT_META_SET %edx, xt, $0, %eax    # initial xt=0
+  DICT_META_SET %edx, info0, $0, %eax # inital info0=0
+  DICT_META_GET_ADDR %edx, nameCStr, %ecx  # %ecx=&toCStr
+  POPP %ebx   # ebx=&fromCStr stack: ( )
+  PUSHP %edx  # ( &newNode )
+  call cStrMove
+  // Insert new node into dictionary
+  GET_P 0, %edx # edx=&newNode
+  DICT_META_GET_ADDR %edx, nameCStr, %ecx # %ecx=&nameCStr
+  call dictCStrBucketAddr # eax=&&firstNode
+  GET_P 0, %ebx           # ebx=&newNode stack: ( )
+  call sllPush
+  POPP %eax # eax=&node=mt
+  ret
+
+metaSllFindName: # %eax:&node %ecx:&cStr ( -- ) %eax:&node
+  // Find the name in the meta dictionary given the first node.
+  PUSHP2 %eax, %ecx # ( &node, &cStr )
+metaSllFindName_loop:
+  JRZ %eax, metaSllFindName_dne
+  DICT_META_GET_ADDR %eax, nextAddr, %eax
+  call cStrNocaseEq
+  JMP_E $TRUE, %eax, metaSllFindName_found
+  GET_P 0, %eax
+  movl (%eax), %eax # eax=eax.&next
+  SET_P 0, %eax # store new &node in pstack
+  GET_P 1, %ecx # ecx:&cStr
+  jmp metaSllFindName_loop
+metaSllFindName_found:
+  GET_P 0, %eax
+metaSllFindName_dne:
+  DROPP 2
+  ret
+
+dictFindName: # %ecx:&cStr ( -- ) &eax:&node
+  PUSHP %ecx
+  call dictCStrBucket
+  movl (%eax), %eax # eax=&firstNode
+  POPP %ecx
+  call metaSllFindName
   ret
 
 
