@@ -130,6 +130,11 @@ dictBucketsAndValue : .int 0 # Value used to MOD via AND (power_of_2-1)
 registerSnapshot: .space 0x20
 testingNtStr: .int 0
 panicRestore: .int 0
+testSpace_00: .int 0
+testSpace_04: .int 0
+testSpace_08: .int 0
+testSpace_0C: .int 0
+testSpace_10: .int 0
 
 .set HEAP_REAL_MIN, heap # keeps track of compile-time heap
 .section .text
@@ -1162,9 +1167,32 @@ sllPop: # %eax:&prev &ebx:&node
   movl $0, (%ebx)    # clear node.&next
   ret
 
-TESTCASE sllPushPop
-  TODO
+.macro SLL_PUSH node, newNode
+  SET_AB \node, \newNode
+  call sllPush # a -> b
+.endm
+.macro SLL_POP prevNode, node
+  SET_AB \prevNode, \node
+  call sllPop
+.endm
+
+TESTCASE sll
+  movl $0, testSpace_00 # 00 (root) starts at null
+  movl $0xDeadBeef, testSpace_04 # 04 starts at something else
+  SLL_PUSH $testSpace_00, $testSpace_04
+  ASSERT_REG_EQ (testSpace_00), $testSpace_04
+  ASSERT_REG_EQ (testSpace_04), $0
+  SLL_PUSH $testSpace_00, $testSpace_08
+  ASSERT_REG_EQ (testSpace_00), $testSpace_08
+  ASSERT_REG_EQ (testSpace_08), $testSpace_04
+  ASSERT_REG_EQ (testSpace_04), $0
+
+  SLL_POP $testSpace_00, $testSpace_08
+  ASSERT_REG_EQ (testSpace_08), $0
+  ASSERT_REG_EQ testSpace_00, $testSpace_04
+  ASSERT_REG_EQ testSpace_04, $0
   ret
+
 
 ################################################################################
 #### Reading words from source                                              ####
@@ -1753,7 +1781,7 @@ testSuite:
   call testcase_beqNocase
   call testcase_bmove
   call testcase_align4
-  call testcase_sllPushPop
+  call testcase_sll
 
   call testcase_findWhitespace
   call testcase_fillSourceCStr
