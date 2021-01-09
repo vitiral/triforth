@@ -1522,6 +1522,7 @@ dictAddr_ Runtime
 dictAddr_ Compiletime
 
 dictPush: # %eax:dictType %ecx:&cStr ( -- ) %eax:mt (aka &newNode)
+  DBG $0x1000
   PUSHP %ecx # stack: ( &cStr )
   call getDictTypeGlobalAddr
   DICT_GLOBAL_GET_ADDR META_HERE, %eax, %eax # %eax=&metaHere
@@ -1613,7 +1614,30 @@ TESTCASE pjwHashEax
   TEST_HASH assertEaxEbxNe, hashTest_cStr3, hashTest_cStr4
   ret
 
+.macro DICT_PUSH type, name
+  SET_ABC \type, $0xDeadBeef, \name
+  call dictPush
+.endm
 
+test_dictWord1CStr: .byte 9
+  .ascii "TestWord1"
+.align 4
+TESTCASE dict
+  DBG $0x01
+  movl dictMetaMinRuntime, %eax
+  PUSHP %eax # cache where word will be stored
+  DBG $0x02
+  DICT_PUSH $DICT_TYPE_RUNTIME, $test_dictWord1CStr
+  GET_P 0, %ebx
+  DBG $0x10
+  call assertEaxEbxEq  # Got put at the start of meta
+  movl %eax, %edi
+  ASSERT_REG_EQ (%edi),   $0  # nextAddr=0
+  ASSERT_REG_EQ 4(%edi),  $0  # xt=0
+  ASSERT_REG_EQ 8(%edi),  $0  # info0=0
+  addl $0xC, %edi # edi=nameCStr
+  ASSERT_CSTR_NOCASE_EQ $test_dictWord1CStr, %edi
+  ret
 
 
 ### ################################################################################
@@ -1787,9 +1811,17 @@ testSuite:
   call testcase_fillSourceCStr
   call testcase_flush_sourceCStr_to_wordCStr
   call testcase_word
+
   call testcase_pjwHashEax
+  call testcase_dict
 
   call assertClean
+  ret
+
+setupHeap:
+  // Sets up the heap, including the dictionary and other data structures.
+  movl $heapMin, heap
+  call setupDict
   ret
 
 setupStack:
@@ -1808,15 +1840,14 @@ _start:
   movl %esp, initialEsp # arguments and environment variables stored here
   jmp setupStack
 afterSetupStack:
-  call setupDict
+  call setupHeap
   PNT_NTSTR $mainStartNtStr
   call testSuite
   EXIT $0
 
-
-.align 4
-heapMin: .int HEAP_REAL_MIN
-.align 0x100
 .section .data
-heap:                     .space 0x100000  # 1MiB TODO: do dynamically from runtime
+.align 4
+heap: .int 0 # see setupMem
+.align 0x100
+heapMin:                     .space 0x100000  # 1MiB TODO: do dynamically from runtime
 heapDefaultMax:
