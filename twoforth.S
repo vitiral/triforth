@@ -1394,11 +1394,11 @@ test_words_end:
 .endm
 .equ DEFAULT_DICT_SECTION_SIZE, 0x40000
 setupDict:
-  SETUP_DICT_CODE Runtime,      $DEFAULT_DICT_SECTION_SIZE
-  SETUP_DICT_CODE Compiletime,  $DEFAULT_DICT_SECTION_SIZE
+  SETUP_DICT_CODE RTime,      $DEFAULT_DICT_SECTION_SIZE
+  SETUP_DICT_CODE CTime,  $DEFAULT_DICT_SECTION_SIZE
 
-  SETUP_DICT_META Runtime,      $DEFAULT_DICT_SECTION_SIZE
-  SETUP_DICT_META Compiletime,  $DEFAULT_DICT_SECTION_SIZE
+  SETUP_DICT_META RTime,      $DEFAULT_DICT_SECTION_SIZE
+  SETUP_DICT_META CTime,  $DEFAULT_DICT_SECTION_SIZE
   movl $DEFAULT_DICT_BUCKETS_CNT-1, dictBucketsAndValue
   movl heap, %eax
   movl %eax, dictBucketsAddr
@@ -1445,19 +1445,19 @@ dictCStrBucketAddr: # %ecx:&cStr ( -- ) %edi:&root
   addl dictBucketsAddr, %edi
   ret
 
-.equ DICT_TYPE_RUNTIME, 0
-.equ DICT_TYPE_COMPILETIME, 1
+.equ DICT_TYPE_RTIME, 0 # runtime
+.equ DICT_TYPE_CTIME, 1 # compiletime
 getDictTypeGlobalAddr: # %eax:dictType ( -- ) %eax:dictGlobalAddr
-  JRZ %eax, dictAddr_Runtime
-  JMP_E $DICT_TYPE_COMPILETIME, %eax, dictAddr_Compiletime
+  JRZ %eax, dictAddr_RTime
+  JMP_E $DICT_TYPE_CTIME, %eax, dictAddr_CTime
   jmp asmInvariantViolated
 .macro dictAddr_ type
   dictAddr_\type :
     movl $dict\type , %eax
     ret
 .endm
-dictAddr_ Runtime
-dictAddr_ Compiletime
+dictAddr_ RTime
+dictAddr_ CTime
 
 .align 4
 dictPush: # %eax:dictType %ecx:&nameCStr ( -- ) %eax:mt (aka &newNode)
@@ -1573,17 +1573,17 @@ TESTCASE pjwHashEax
 .endm
 TESTCASE dictMacros
 .set TEST_HEAP, heapMin
-.equ TEST_DICT_CODE_MIN_RUNTIME, TEST_HEAP
-.set TEST_HEAP, TEST_DICT_CODE_MIN_RUNTIME+DEFAULT_DICT_SECTION_SIZE
-.equ TEST_DICT_CODE_MAX_RUNTIME, TEST_HEAP
-  TEST_GET_DICT_TYPE_GLOBAL_ADDR $DICT_TYPE_RUNTIME, Runtime
-  TEST_DICT_GLOBAL_GET $DICT_TYPE_RUNTIME, ROOT, $dictRuntime, $heapMin
-  TEST_DICT_GLOBAL_GET $DICT_TYPE_RUNTIME, CODE_MIN, $dictRuntime, $heapMin
-  TEST_DICT_GLOBAL_GET $DICT_TYPE_RUNTIME, CODE_MIN, $dictCodeMinRuntime, $heapMin
-  TEST_DICT_GLOBAL_GET $DICT_TYPE_RUNTIME, CODE_HERE, $dictCodeHereRuntime, $heapMin
-  TEST_DICT_GLOBAL_GET $DICT_TYPE_RUNTIME, CODE_MAX, $dictCodeMaxRuntime, $TEST_DICT_CODE_MAX_RUNTIME
+.equ TEST_DICT_CODE_MIN_RTIME, TEST_HEAP
+.set TEST_HEAP, TEST_DICT_CODE_MIN_RTIME+DEFAULT_DICT_SECTION_SIZE
+.equ TEST_DICT_CODE_MAX_RTIME, TEST_HEAP
+  TEST_GET_DICT_TYPE_GLOBAL_ADDR $DICT_TYPE_RTIME, RTime
+  TEST_DICT_GLOBAL_GET $DICT_TYPE_RTIME, ROOT, $dictRTime, $heapMin
+  TEST_DICT_GLOBAL_GET $DICT_TYPE_RTIME, CODE_MIN, $dictRTime, $heapMin
+  TEST_DICT_GLOBAL_GET $DICT_TYPE_RTIME, CODE_MIN, $dictCodeMinRTime, $heapMin
+  TEST_DICT_GLOBAL_GET $DICT_TYPE_RTIME, CODE_HERE, $dictCodeHereRTime, $heapMin
+  TEST_DICT_GLOBAL_GET $DICT_TYPE_RTIME, CODE_MAX, $dictCodeMaxRTime, $TEST_DICT_CODE_MAX_RTIME
   # TODO: test others
-  TEST_GET_DICT_TYPE_GLOBAL_ADDR $DICT_TYPE_COMPILETIME, Compiletime
+  TEST_GET_DICT_TYPE_GLOBAL_ADDR $DICT_TYPE_CTIME, CTime
   # TODO: test compiletime
   ret
 
@@ -1593,10 +1593,10 @@ test_dictNameDneCStr: .byte 3
   .ascii "DNE"
 .align 4
 TESTCASE dict
-  movl dictMetaMinRuntime, %eax
+  movl dictMetaMinRTime, %eax
   PUSHP %eax # cache where word will be stored
-  movl dictMetaHereRuntime, %ebx
-  DICT_PUSH $DICT_TYPE_RUNTIME, $test_dictWord1CStr
+  movl dictMetaHereRTime, %ebx
+  DICT_PUSH $DICT_TYPE_RTIME, $test_dictWord1CStr
   GET_P 0, %ebx
   call assertEaxEbxEq  # Got put at the start of meta
   movl %eax, %edi
@@ -1722,8 +1722,9 @@ panicErr: .int 0  # error to print while panicing
   dictMetaHere\type : .int 0
   dictMetaMax\type  : .int 0
 .endm
-DECLARE_DICT Runtime
-DECLARE_DICT Compiletime
+DECLARE_DICT RTime
+DECLARE_DICT CTime
+DECLARE_DICT LTime
 
 dictBucketsAddr : .int 0
 dictBucketsAndValue : .int 0 # Value used to MOD via AND (power_of_2-1)
