@@ -1393,8 +1393,9 @@ test_words_end:
   movl %eax, heap
 .endm
 .equ DEFAULT_DICT_SECTION_SIZE, 0x40000
-setupDict:
-  SETUP_DICT_CODE RTime,      $DEFAULT_DICT_SECTION_SIZE
+.equ DEFAULT_LTIME_SIZE,        0x3000 # 12 KiB
+dictSetup:
+  SETUP_DICT_CODE RTime,  $DEFAULT_DICT_SECTION_SIZE
   SETUP_DICT_CODE CTime,  $DEFAULT_DICT_SECTION_SIZE
 
   SETUP_DICT_META RTime,      $DEFAULT_DICT_SECTION_SIZE
@@ -1406,7 +1407,22 @@ setupDict:
   movl $DEFAULT_DICT_BUCKETS_CNT, %eax
   movl dictBucketsAddr, %ebx
   call zeroFyte
+
+  movl heap, %eax
+  movl %eax, dictLTimeMin
+  addl $DEFAULT_LTIME_SIZE, %eax
+  movl %eax, dictLTimeMax
+  call dictResetLTime
   ret
+
+dictResetLTime:
+  // The Localtime dict can be completely reset quickly.
+  movl dictLTimeMin, %eax
+  movl %eax, dictLTimeHere
+  movl $0, dictLTimeRoot
+  ret
+
+
 
 pjwHashEax: # %ecx:&bytes %edx:count  ( -- ) %edi:hash
   // Do a PJW hash on count bytes.
@@ -1653,7 +1669,7 @@ testSuite:
 setupHeap:
   // Sets up the heap, including the dictionary and other data structures.
   movl $heapMin, heap
-  call setupDict
+  call dictSetup
   ret
 
 setupStack:
