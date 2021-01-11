@@ -1524,18 +1524,10 @@ dictAddr_ Compiletime
 
 .align 4
 dictPush: # %eax:dictType %ecx:&nameCStr ( -- ) %eax:mt (aka &newNode)
-  DBG $0x1000
   PUSHP %ecx # stack: ( &nameCStr )
   call getDictTypeGlobalAddr
   DICT_GLOBAL_GET_ADDR META_HERE, %eax # %eax=&metaHere
   movl (%eax), %edx # edx=metaHere=&newNode
-  DBG $0x1001
-  DBG dictMetaMinRuntime
-  DBG dictMetaHereRuntime
-  DBG $dictRuntime
-  DBG $dictRuntime+DICT_OFFSET_META_HERE
-  DBG dictMetaMinCompiletime
-  DBG $dictCompiletime+DICT_OFFSET_META_HERE
   # Calculate new metaHere via ecx=newNodeSize
   GET_P 3, %ebx # ebx=&wordCStr
   MOVB_C (%ebx) # ecx=wordCnt
@@ -1544,7 +1536,6 @@ dictPush: # %eax:dictType %ecx:&nameCStr ( -- ) %eax:mt (aka &newNode)
   addl $DICT_SIZE_WITHOUT_NAME, %ecx # plus normal size of dict
   // TODO: check META_MAX
   movl %ecx, (%eax)
-  DBG $0x1002
   // Set initial fields in new entry (xt, info0, nameCStr)
   DICT_META_SET %edx, xt, $0, %eax    # initial xt=0
   DICT_META_SET %edx, info0, $0, %eax # inital info0=0
@@ -1654,7 +1645,7 @@ TESTCASE dictMacros
   TEST_DICT_GLOBAL_GET $DICT_TYPE_RUNTIME, CODE_MIN, $dictCodeMinRuntime, $heapMin
   TEST_DICT_GLOBAL_GET $DICT_TYPE_RUNTIME, CODE_HERE, $dictCodeHereRuntime, $heapMin
   TEST_DICT_GLOBAL_GET $DICT_TYPE_RUNTIME, CODE_MAX, $dictCodeMaxRuntime, $TEST_DICT_CODE_MAX_RUNTIME
-
+  # TODO: test others
   TEST_GET_DICT_TYPE_GLOBAL_ADDR $DICT_TYPE_COMPILETIME, Compiletime
   # TODO: test compiletime
   ret
@@ -1663,24 +1654,17 @@ test_dictWord1CStr: .byte 9
   .ascii "TestWord1"
 .align 4
 TESTCASE dict
-  DBG $0x01
   movl dictMetaMinRuntime, %eax
   PUSHP %eax # cache where word will be stored
   movl dictMetaHereRuntime, %ebx
-  DBG $0x02
   DICT_PUSH $DICT_TYPE_RUNTIME, $test_dictWord1CStr
   GET_P 0, %ebx
-  DBG $0x03
   call assertEaxEbxEq  # Got put at the start of meta
   movl %eax, %edi
-  DBG $0x04
   ASSERT_REG_EQ (%edi),   $0  # nextAddr=0
-  DBG $0x05
   ASSERT_REG_EQ 4(%edi),  $0  # xt=0
-  DBG $0x06
   ASSERT_REG_EQ 8(%edi),  $0  # info0=0
   addl $0xC, %edi # edi=nameCStr
-  DBG $0x07
   ASSERT_CSTR_NOCASE_EQ $test_dictWord1CStr, %edi
   DROPP 1
   ret
