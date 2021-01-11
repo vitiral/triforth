@@ -96,12 +96,12 @@ panicErr: .int 0  # error to print while panicing
 
 # Offsets into the global "dict struct"
 .equ DICT_OFFSET_ROOT,      0x0
-.equ DICT_OFFSET_CODE_MIN,  0x4
-.equ DICT_OFFSET_CODE_HERE, 0x8
-.equ DICT_OFFSET_CODE_MAX,  0xC
-.equ DICT_OFFSET_META_MIN,  0x10
-.equ DICT_OFFSET_META_HERE, 0x14
-.equ DICT_OFFSET_META_MAX,  0x18
+.equ DICT_OFFSET_CODE_MIN,  0x0
+.equ DICT_OFFSET_CODE_HERE, 0x4
+.equ DICT_OFFSET_CODE_MAX,  0x8
+.equ DICT_OFFSET_META_MIN,  0xC
+.equ DICT_OFFSET_META_HERE, 0x10
+.equ DICT_OFFSET_META_MAX,  0x14
 
 .macro DICT_GLOBAL_GET_ADDR field, dictGlobalAddr
   // Get a field from the dictionary (ROOT, [CODE|META]_[MIN|MAX|HERE])
@@ -854,7 +854,7 @@ DROP_INVALID_LANDING 4
 .macro DROPP n
   addl $4*\n , %ebp
   cmpl pstackMax, %ebp
-  jge dropInvalid\n
+  jg dropInvalid\n
 .endm
 
 drop:
@@ -1446,7 +1446,7 @@ test_words_end:
   movl heap, %eax
   movl %eax, dictCodeMin\type
   movl %eax, dictCodeHere\type
-  addl $\defaultSize, %eax
+  addl \defaultSize, %eax
   movl %eax, dictCodeMax\type
   movl %eax, heap
 .endm
@@ -1454,16 +1454,17 @@ test_words_end:
   movl heap, %eax
   movl %eax, dictMetaMin\type
   movl %eax, dictMetaHere\type
-  addl $\defaultSize, %eax
+  addl \defaultSize, %eax
   movl %eax, dictMetaMax\type
   movl %eax, heap
 .endm
+.equ DEFAULT_DICT_SECTION_SIZE, 0x40000
 setupDict:
-  SETUP_DICT_CODE Runtime,      0x40000
-  SETUP_DICT_CODE Compiletime,  0x40000
+  SETUP_DICT_CODE Runtime,      $DEFAULT_DICT_SECTION_SIZE
+  SETUP_DICT_CODE Compiletime,  $DEFAULT_DICT_SECTION_SIZE
 
-  SETUP_DICT_META Runtime,      0x40000
-  SETUP_DICT_META Compiletime,  0x40000
+  SETUP_DICT_META Runtime,      $DEFAULT_DICT_SECTION_SIZE
+  SETUP_DICT_META Compiletime,  $DEFAULT_DICT_SECTION_SIZE
   movl $DEFAULT_BUCKETS_SIZE-1, dictBucketsAndValue
   movl heap, %eax
   movl %eax, dictBucketsAddr
@@ -1630,6 +1631,34 @@ TESTCASE pjwHashEax
   call dictPush
 .endm
 
+.macro TEST_GET_DICT_TYPE_GLOBAL_ADDR typeVal, type
+  movl \typeVal, %eax
+  call getDictTypeGlobalAddr
+  ASSERT_REG_EQ %eax, $dict\type
+.endm
+.macro TEST_DICT_GLOBAL_GET typeVal, field, expectedAddr, expectedValue
+  movl \typeVal, %eax
+  call getDictTypeGlobalAddr
+  DICT_GLOBAL_GET_ADDR \field, %eax
+  ASSERT_REG_EQ %eax, \expectedAddr
+  ASSERT_REG_EQ (%eax), \expectedValue
+.endm
+TESTCASE dictMacros
+.set TEST_HEAP, heapMin
+.equ TEST_DICT_CODE_MIN_RUNTIME, TEST_HEAP
+.set TEST_HEAP, TEST_DICT_CODE_MIN_RUNTIME+DEFAULT_DICT_SECTION_SIZE
+.equ TEST_DICT_CODE_MAX_RUNTIME, TEST_HEAP
+  TEST_GET_DICT_TYPE_GLOBAL_ADDR $DICT_TYPE_RUNTIME, Runtime
+  TEST_DICT_GLOBAL_GET $DICT_TYPE_RUNTIME, ROOT, $dictRuntime, $heapMin
+  TEST_DICT_GLOBAL_GET $DICT_TYPE_RUNTIME, CODE_MIN, $dictRuntime, $heapMin
+  TEST_DICT_GLOBAL_GET $DICT_TYPE_RUNTIME, CODE_MIN, $dictCodeMinRuntime, $heapMin
+  TEST_DICT_GLOBAL_GET $DICT_TYPE_RUNTIME, CODE_HERE, $dictCodeHereRuntime, $heapMin
+  TEST_DICT_GLOBAL_GET $DICT_TYPE_RUNTIME, CODE_MAX, $dictCodeMaxRuntime, $TEST_DICT_CODE_MAX_RUNTIME
+
+  TEST_GET_DICT_TYPE_GLOBAL_ADDR $DICT_TYPE_COMPILETIME, Compiletime
+  # TODO: test compiletime
+  ret
+
 test_dictWord1CStr: .byte 9
   .ascii "TestWord1"
 .align 4
@@ -1653,6 +1682,7 @@ TESTCASE dict
   addl $0xC, %edi # edi=nameCStr
   DBG $0x07
   ASSERT_CSTR_NOCASE_EQ $test_dictWord1CStr, %edi
+  DROPP 1
   ret
 
 
@@ -1829,6 +1859,7 @@ testSuite:
   call testcase_word
 
   call testcase_pjwHashEax
+  call testcase_dictMacros
   call testcase_dict
 
   call assertClean
