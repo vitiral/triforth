@@ -49,94 +49,6 @@
 .equ FALSE, 0
 .equ TRUE, 1
 
-//###############
-// Data layout
-// |-rstack----|-pstack-|-"code"-------------------|-memory---...
-//
-// Code contains _only_ code (not the word dictionary). The word dictionary is
-// a normal linked-list, except the name, flags and type is all kept inside of
-// "memory" and so can be dropped once the "compilation" is complete.
-
-################################################################################
-#### DATA SECTION -- mutable memory must go here.                           ####
-################################################################################
-.section .data
-######
-# Stacks
-.equ RSTACK_SIZE, 0x2000
-rstackExtraRoot: .space 0x4
-rstackMinRoot: .space RSTACK_SIZE # return stack
-rstackMaxRoot:
-.equ PSTACK_SIZE, 0x100
-pstackExtraRoot: .space 0x20      # guaranteed space above the pstack
-pstackMinRoot: .space PSTACK_SIZE # data stack
-pstackMaxRoot:
-rstackMin: .int 0
-rstackMax: .int 0
-pstackMin: .int 0
-pstackMax: .int 0
-
-######
-# Global Variables / State / Buffers
-initialEsp: .int 0
-pntFd: .int STDERR # where to PNT to
-.equ EMIT_BUFFER_SIZE, 16
-sourceFd: .int STDIN   # where the source code is read from
-.equ SOURCE_STR_CNT_MAX, 0x46  # maximim bytes of source read
-.equ WORD_CNT_MAX, 0x23        # maximum word size
-.equ WORD_STACK_SIZE, WORD_CNT_MAX+1
-sourceEof: .byte 0 # Whether an EOF was encountered at the last read
-sourceCStr: .byte 0 # Used for reading source word
-sourceStr: .space SOURCE_STR_CNT_MAX
-wordCStr: .byte 0
-wordStr: .space WORD_CNT_MAX
-errno: .int 0
-panic: .int panicDefault # function to call when panicing
-panicErr: .int 0  # error to print while panicing
-
-# Offsets into the global "dict struct"
-.equ DICT_OFFSET_ROOT,      0x0
-.equ DICT_OFFSET_CODE_MIN,  0x0
-.equ DICT_OFFSET_CODE_HERE, 0x4
-.equ DICT_OFFSET_CODE_MAX,  0x8
-.equ DICT_OFFSET_META_MIN,  0xC
-.equ DICT_OFFSET_META_HERE, 0x10
-.equ DICT_OFFSET_META_MAX,  0x14
-
-.macro DICT_GLOBAL_GET_ADDR field, dictGlobalAddr
-  // Get a field from the dictionary (ROOT, [CODE|META]_[MIN|MAX|HERE])
-  // dictGlobalAddr becomes the address of the field
-  addl $DICT_OFFSET_\field, \dictGlobalAddr
-.endm
-
-.macro DECLARE_DICT type
-  dict\type :
-  dictCodeMin\type  : .int 0
-  dictCodeHere\type : .int 0
-  dictCodeMax\type  : .int 0
-  dictMetaMin\type  : .int 0
-  dictMetaHere\type : .int 0
-  dictMetaMax\type  : .int 0
-.endm
-DECLARE_DICT Runtime
-DECLARE_DICT Compiletime
-
-.equ DEFAULT_BUCKETS_SIZE, 0x1000
-dictBucketsAddr : .int 0
-dictBucketsAndValue : .int 0 # Value used to MOD via AND (power_of_2-1)
-
-######
-# Debugging / Testing Variables
-registerSnapshot: .space 0x20
-testingNtStr: .int 0
-panicRestore: .int 0
-testSpace_00: .int 0
-testSpace_04: .int 0
-testSpace_08: .int 0
-testSpace_0C: .int 0
-testSpace_10: .int 0
-
-.set HEAP_REAL_MIN, heap # keeps track of compile-time heap
 .section .text
 
 ################################################################################
@@ -1120,6 +1032,12 @@ rightHereTODO:
   addl $0x20, %ebp
   ret
 
+zeroFyte: # %eax:count %ebx:&fyte
+  // Zero memory in fyte sizes
+  JRZ %eax, return
+  dec %eax
+  movl $0, (%ebx, %eax, 4)
+  jmp zeroFyte
 
 ################################################################################
 #### Simple Pure Assembly Utility Functions and Macros                      ####
@@ -1423,6 +1341,22 @@ test_words_end:
 #### Forth Dictionary                                                       ####
 ################################################################################
 
+# Offsets into the global "dict struct"
+.equ DICT_OFFSET_ROOT,      0x0
+.equ DICT_OFFSET_CODE_MIN,  0x0
+.equ DICT_OFFSET_CODE_HERE, 0x4
+.equ DICT_OFFSET_CODE_MAX,  0x8
+.equ DICT_OFFSET_META_MIN,  0xC
+.equ DICT_OFFSET_META_HERE, 0x10
+.equ DICT_OFFSET_META_MAX,  0x14
+.equ DEFAULT_DICT_BUCKETS_CNT, 0x1000
+
+.macro DICT_GLOBAL_GET_ADDR field, dictGlobalAddr
+  // Get a field from the dictionary (ROOT, [CODE|META]_[MIN|MAX|HERE])
+  // dictGlobalAddr becomes the address of the field
+  addl $DICT_OFFSET_\field, \dictGlobalAddr
+.endm
+
 .equ DICT_SIZE_WITHOUT_NAME, 3 * 4
 .equ DICT_FIELD_nextAddr, 0x0
 .equ DICT_FIELD_xt,       0x4
@@ -1465,10 +1399,13 @@ setupDict:
 
   SETUP_DICT_META Runtime,      $DEFAULT_DICT_SECTION_SIZE
   SETUP_DICT_META Compiletime,  $DEFAULT_DICT_SECTION_SIZE
-  movl $DEFAULT_BUCKETS_SIZE-1, dictBucketsAndValue
+  movl $DEFAULT_DICT_BUCKETS_CNT-1, dictBucketsAndValue
   movl heap, %eax
   movl %eax, dictBucketsAddr
-  addl $DEFAULT_BUCKETS_SIZE*4, heap
+  addl $DEFAULT_DICT_BUCKETS_CNT*4, heap
+  movl $DEFAULT_DICT_BUCKETS_CNT, %eax
+  movl dictBucketsAddr, %ebx
+  call zeroFyte
   ret
 
 pjwHashEax: # %ecx:&bytes %edx:count  ( -- ) %edi:hash
@@ -1652,6 +1589,8 @@ TESTCASE dictMacros
 
 test_dictWord1CStr: .byte 9
   .ascii "TestWord1"
+test_dictNameDneCStr: .byte 3
+  .ascii "DNE"
 .align 4
 TESTCASE dict
   movl dictMetaMinRuntime, %eax
@@ -1670,6 +1609,9 @@ TESTCASE dict
   call dictFindName
   POPP %ebx
   call assertEaxEbxEq
+  movl $test_dictNameDneCStr, %ecx
+  call dictFindName
+  ASSERT_REG_EQ %eax, $0
   ret
 
 
@@ -1879,9 +1821,78 @@ afterSetupStack:
   call testSuite
   EXIT $0
 
+################################################################################
+#### DATA SECTION -- mutable memory must go here.                           ####
+################################################################################
+//###############
+// Data layout
+// |-rstack----|-pstack-|-"code"-------------------|-memory---...
+//
+// Code contains _only_ code (not the word dictionary). The word dictionary is
+// a normal linked-list, except the name, flags and type is all kept inside of
+// "memory" and so can be dropped once the "compilation" is complete.
 .section .data
-.align 4
+
+######
+# Stacks
+.equ RSTACK_SIZE, 0x2000
+rstackExtraRoot: .space 0x4
+rstackMinRoot: .space RSTACK_SIZE # return stack
+rstackMaxRoot:
+.equ PSTACK_SIZE, 0x100
+pstackExtraRoot: .space 0x20      # guaranteed space above the pstack
+pstackMinRoot: .space PSTACK_SIZE # data stack
+pstackMaxRoot:
+rstackMin: .int 0
+rstackMax: .int 0
+pstackMin: .int 0
+pstackMax: .int 0
+
+######
+# Global Variables / State / Buffers
+initialEsp: .int 0 # initial %esp register, use to get args/ENV
+pntFd: .int STDERR # where to PNT to
+.equ EMIT_BUFFER_SIZE, 16
+sourceFd: .int STDIN   # where the source code is read from
+.equ SOURCE_STR_CNT_MAX, 0x46  # maximim bytes of source read
+.equ WORD_CNT_MAX, 0x23        # maximum word size
+.equ WORD_STACK_SIZE, WORD_CNT_MAX+1
+sourceEof: .byte 0 # Whether an EOF was encountered at the last read
+sourceCStr: .byte 0 # Used for reading source word
+sourceStr: .space SOURCE_STR_CNT_MAX
+wordCStr: .byte 0
+wordStr: .space WORD_CNT_MAX
+errno: .int 0
+panic: .int panicDefault # function to call when panicing
+panicErr: .int 0  # error to print while panicing
+
+.macro DECLARE_DICT type
+  dict\type :
+  dictCodeMin\type  : .int 0
+  dictCodeHere\type : .int 0
+  dictCodeMax\type  : .int 0
+  dictMetaMin\type  : .int 0
+  dictMetaHere\type : .int 0
+  dictMetaMax\type  : .int 0
+.endm
+DECLARE_DICT Runtime
+DECLARE_DICT Compiletime
+
+dictBucketsAddr : .int 0
+dictBucketsAndValue : .int 0 # Value used to MOD via AND (power_of_2-1)
+
+######
+# Debugging / Testing Variables
+registerSnapshot: .space 0x20
+testingNtStr: .int 0
+panicRestore: .int 0
+testSpace_00: .int 0
+testSpace_04: .int 0
+testSpace_08: .int 0
+testSpace_0C: .int 0
+testSpace_10: .int 0
+
 heap: .int 0 # see setupMem
 .align 0x100
-heapMin:                     .space 0x100000  # 1MiB TODO: do dynamically from runtime
+heapMin:                     .space 0x200000  # 2MiB TODO: do dynamically from runtime
 heapDefaultMax:
