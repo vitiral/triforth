@@ -1512,11 +1512,20 @@ metaSllFindName_dne:
 dictFindName: # %ecx:&cStr ( -- ) &eax:&node
   // eax=0 if no node found.
   PUSHP %ecx
+  # First try to find in localtime dict
+  movl $dictLTimeRoot, %eax
+  call metaSllFindName
+  JRNZ %eax, foundLTime
+  # Then look for in Runtime/Compiletime dicts
+  GET_P 0, %ecx
   call dictCStrBucketAddr
   JRZ %edi, return
   movl (%edi), %eax # eax=&firstNode
   POPP %ecx
   call metaSllFindName
+  ret
+foundLTime:
+  DROPP 1
   ret
 
 ######
@@ -1724,10 +1733,15 @@ panicErr: .int 0  # error to print while panicing
 .endm
 DECLARE_DICT RTime
 DECLARE_DICT CTime
-DECLARE_DICT LTime
 
 dictBucketsAddr : .int 0
 dictBucketsAndValue : .int 0 # Value used to MOD via AND (power_of_2-1)
+
+# LocalTime dict, mostly implemented in forth
+dictLTimeRoot: .int 0
+dictLTimeMin:  .int 0
+dictLTimeHere: .int 0
+dictLTimeMax:  .int 0
 
 ######
 # Debugging / Testing Variables
