@@ -1558,7 +1558,7 @@ metaSllFindName: # %eax:&node %ecx:&cStr ( -- ) %eax:&node
   PUSHP2 %eax, %ecx # ( &node, &cStr )
 metaSllFindName_loop:
   JRZ %eax, metaSllFindName_dne
-  DICT_META_GET_ADDR %eax, nextAddr, %eax
+  addl $DICT_FIELD_nameCStr, %eax # eax=&nameCStr
   call cStrNocaseEq
   JMP_E $TRUE, %eax, metaSllFindName_found
   GET_P 0, %eax
@@ -1666,7 +1666,10 @@ TESTCASE dict
   ASSERT_REG_EQ 8(%edi),  $0  # info0=0
   addl $0xC, %edi # edi=nameCStr
   ASSERT_CSTR_NOCASE_EQ $test_dictWord1CStr, %edi
-  DROPP 1
+  movl $test_dictWord1CStr, %ecx
+  call dictFindName
+  POPP %ebx
+  call assertEaxEbxEq
   ret
 
 
