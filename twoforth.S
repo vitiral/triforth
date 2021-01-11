@@ -103,10 +103,10 @@ panicErr: .int 0  # error to print while panicing
 .equ DICT_OFFSET_META_HERE, 0x14
 .equ DICT_OFFSET_META_MAX,  0x18
 
-.macro DICT_GLOBAL_GET_ADDR field, dictGlobalAddr, reg
+.macro DICT_GLOBAL_GET_ADDR field, dictGlobalAddr
   // Get a field from the dictionary (ROOT, [CODE|META]_[MIN|MAX|HERE])
-  movl \dictGlobalAddr, \reg
-  addl $DICT_OFFSET_\field, \reg
+  // dictGlobalAddr becomes the address of the field
+  addl $DICT_OFFSET_\field, \dictGlobalAddr
 .endm
 
 .macro DECLARE_DICT type
@@ -1521,12 +1521,20 @@ getDictTypeGlobalAddr: # %eax:dictType ( -- ) %eax:dictGlobalAddr
 dictAddr_ Runtime
 dictAddr_ Compiletime
 
+.align 4
 dictPush: # %eax:dictType %ecx:&nameCStr ( -- ) %eax:mt (aka &newNode)
   DBG $0x1000
   PUSHP %ecx # stack: ( &nameCStr )
   call getDictTypeGlobalAddr
-  DICT_GLOBAL_GET_ADDR META_HERE, %eax, %eax # %eax=&metaHere
+  DICT_GLOBAL_GET_ADDR META_HERE, %eax # %eax=&metaHere
   movl (%eax), %edx # edx=metaHere=&newNode
+  DBG $0x1001
+  DBG dictMetaMinRuntime
+  DBG dictMetaHereRuntime
+  DBG $dictRuntime
+  DBG $dictRuntime+DICT_OFFSET_META_HERE
+  DBG dictMetaMinCompiletime
+  DBG $dictCompiletime+DICT_OFFSET_META_HERE
   # Calculate new metaHere via ecx=newNodeSize
   GET_P 3, %ebx # ebx=&wordCStr
   MOVB_C (%ebx) # ecx=wordCnt
@@ -1535,12 +1543,13 @@ dictPush: # %eax:dictType %ecx:&nameCStr ( -- ) %eax:mt (aka &newNode)
   addl $DICT_SIZE_WITHOUT_NAME, %ecx # plus normal size of dict
   // TODO: check META_MAX
   movl %ecx, (%eax)
+  DBG $0x1002
   // Set initial fields in new entry (xt, info0, nameCStr)
   DICT_META_SET %edx, xt, $0, %eax    # initial xt=0
   DICT_META_SET %edx, info0, $0, %eax # inital info0=0
   DICT_META_GET_ADDR %edx, nameCStr, %ecx  # %ecx=&toCStr
   POPP %ebx   # ebx=&nameCStr ecx=&toStr stack: ( )
-  PUSHP %edx  # ( &newNode )
+  PUSHP %edx  # stack: ( &newNode )
   call cStrMove
   // Insert new node into dictionary
   GET_P 0, %edx # edx=&newNode
@@ -1572,9 +1581,11 @@ metaSllFindName_dne:
   ret
 
 dictFindName: # %ecx:&cStr ( -- ) &eax:&node
+  // eax=0 if no node found.
   PUSHP %ecx
   call dictCStrBucketAddr
-  movl (%eax), %eax # eax=&firstNode
+  JRZ %edi, return
+  movl (%edi), %eax # eax=&firstNode
   POPP %ecx
   call metaSllFindName
   ret
@@ -1626,16 +1637,21 @@ TESTCASE dict
   DBG $0x01
   movl dictMetaMinRuntime, %eax
   PUSHP %eax # cache where word will be stored
+  movl dictMetaHereRuntime, %ebx
   DBG $0x02
   DICT_PUSH $DICT_TYPE_RUNTIME, $test_dictWord1CStr
   GET_P 0, %ebx
-  DBG $0x10
+  DBG $0x03
   call assertEaxEbxEq  # Got put at the start of meta
   movl %eax, %edi
+  DBG $0x04
   ASSERT_REG_EQ (%edi),   $0  # nextAddr=0
+  DBG $0x05
   ASSERT_REG_EQ 4(%edi),  $0  # xt=0
+  DBG $0x06
   ASSERT_REG_EQ 8(%edi),  $0  # info0=0
   addl $0xC, %edi # edi=nameCStr
+  DBG $0x07
   ASSERT_CSTR_NOCASE_EQ $test_dictWord1CStr, %edi
   ret
 
