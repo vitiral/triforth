@@ -1177,7 +1177,7 @@ sllPop: # %eax:&prev &ebx:&node
 .endm
 
 TESTCASE sll
-  movl $0, testSpace_00 # 00 (root) starts at null
+  movl $0, testSpace_00 # 00 (&root) starts at null
   movl $0xDeadBeef, testSpace_04 # 04 starts at something else
   SLL_PUSH $testSpace_00, $testSpace_04
   ASSERT_REG_EQ (testSpace_00), $testSpace_04
@@ -1470,41 +1470,41 @@ setupDict:
   addl $DEFAULT_BUCKETS_SIZE*4, heap
   ret
 
-pjwHashEax: # %ecx:&bytes %edi:count  ( -- ) %eax:hash
+pjwHashEax: # %ecx:&bytes %edx:count  ( -- ) %edi:hash
   // Do a PJW hash on count bytes.
   // https://en.wikipedia.org/wiki/PJW_hash_function
-  ZERO %eax
-  movl $0, %eax  # eax=hash
-  addl %ecx, %edi # edi=end addr
+  ZERO %edi
+  addl %ecx, %edx # edx=end addr
 pjwHashEax_loop:
-  JMP_AE %edi, %ecx, return
+  JMP_AE %edx, %ecx, return
   # Next 4 lines: h = (h << 4) + *s++
-  shll $4, %eax
-  MOVB_D (%ecx)
-  addl %edx, %eax
-  inc %eax
-  movl %eax, %ebx  # ebx will = high bits
+  shll $4, %edi
+  MOVB_A (%ecx)
+  addl %eax, %edi
+  inc %edi
+  movl %edi, %ebx  # ebx will = high bits below
   andl $0xF0000000, %ebx
   JRZ %ebx, 1f # if(high)
   # Next three lines are: h ^= high >> 24
-  movl %ebx, %edx
-  shrl $24, %edx
-  xorl %edx, %eax
+  movl %ebx, %eax # eax is used as temprary, need to keep high
+  shrl $24, %eax
+  xorl %eax, %edi
 1:
   # Next two lines are: h &= ~high
   notl %ebx
-  andl %ebx, %eax
+  andl %ebx, %edi
   inc %ecx
   jmp pjwHashEax_loop
 
-dictCStrBucketAddr: # %ecx:&cStr ( -- ) %eax:&&firstNode
+dictCStrBucketAddr: # %ecx:&cStr ( -- ) %edi:&root
+  // Note: &root isn't _really_ a node (has no data) but acts like a node for
+  // sll* methods since the first item is a pointer to a node.
   MOVB_D (%ecx)
-  movl %ecx, %edi
-  inc %ecx
+  inc %ecx # ecx=&str
   call pjwHashEax
-  andl dictBucketsAndValue, %eax
-  MUL4 %eax
-  addl dictBucketsAddr, %eax
+  andl dictBucketsAndValue, %edi
+  MUL4 %edi
+  addl dictBucketsAddr, %edi
   ret
 
 .equ DICT_TYPE_RUNTIME, 0
@@ -1521,15 +1521,15 @@ getDictTypeGlobalAddr: # %eax:dictType ( -- ) %eax:dictGlobalAddr
 dictAddr_ Runtime
 dictAddr_ Compiletime
 
-dictPush: # %eax:dictType %ecx:&cStr ( -- ) %eax:mt (aka &newNode)
+dictPush: # %eax:dictType %ecx:&nameCStr ( -- ) %eax:mt (aka &newNode)
   DBG $0x1000
-  PUSHP %ecx # stack: ( &cStr )
+  PUSHP %ecx # stack: ( &nameCStr )
   call getDictTypeGlobalAddr
   DICT_GLOBAL_GET_ADDR META_HERE, %eax, %eax # %eax=&metaHere
   movl (%eax), %edx # edx=metaHere=&newNode
-  # Calculate new metaHere by adding size of newNode and update it
-  GET_P 3, %ecx # ecx=&wordCStr
-  MOVB_C (%ecx) # ecx=wordCnt
+  # Calculate new metaHere via ecx=newNodeSize
+  GET_P 3, %ebx # ebx=&wordCStr
+  MOVB_C (%ebx) # ecx=wordCnt
   inc %ecx      # plus Cnt byte
   addl %edx, %ecx # plus original metaHere
   addl $DICT_SIZE_WITHOUT_NAME, %ecx # plus normal size of dict
@@ -1539,14 +1539,15 @@ dictPush: # %eax:dictType %ecx:&cStr ( -- ) %eax:mt (aka &newNode)
   DICT_META_SET %edx, xt, $0, %eax    # initial xt=0
   DICT_META_SET %edx, info0, $0, %eax # inital info0=0
   DICT_META_GET_ADDR %edx, nameCStr, %ecx  # %ecx=&toCStr
-  POPP %ebx   # ebx=&fromCStr stack: ( )
+  POPP %ebx   # ebx=&nameCStr ecx=&toStr stack: ( )
   PUSHP %edx  # ( &newNode )
   call cStrMove
   // Insert new node into dictionary
   GET_P 0, %edx # edx=&newNode
   DICT_META_GET_ADDR %edx, nameCStr, %ecx # %ecx=&nameCStr
-  call dictCStrBucketAddr # eax=&&firstNode
-  GET_P 0, %ebx           # ebx=&newNode stack: ( )
+  call dictCStrBucketAddr # edi=&root
+  movl %edi, %eax # eax=&root
+  GET_P 0, %ebx   # ebx=&newNode stack: ( )
   call sllPush
   POPP %eax # eax=&node=mt
   ret
@@ -1583,15 +1584,14 @@ dictFindName: # %ecx:&cStr ( -- ) &eax:&node
 .macro TEST_HASH assert, aCStr, bCStr
   # asserts that a compares to b
   MOVB_D \aCStr
-  movl %edx, %edi
   movl $\aCStr+1, %ecx
   call pjwHashEax
-  PUSHP %eax
+  PUSHP %edi
   MOVB_D \bCStr
-  movl %edx, %edi
   movl $\bCStr+1, %ecx
   call pjwHashEax
   POPP %ebx
+  movl %edi, %eax
   call \assert
 .endm
 hashTest_cStr1: .byte 1
