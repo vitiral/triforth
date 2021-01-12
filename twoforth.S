@@ -1493,9 +1493,8 @@ dictAddr_ RTime
 dictAddr_ CTime
 
 .align 4
-dictPush: # %eax:dictType %ecx:&nameCStr ( -- ) %eax:mt (aka &newNode)
+dictPush: # %eax:dictTypeGlobalAddr %ecx:&nameCStr ( -- ) %eax:mt (aka &newNode)
   PUSHP %ecx # stack: ( &nameCStr )
-  call getDictTypeGlobalAddr
   DICT_GLOBAL_GET_ADDR META_HERE, %eax # %eax=&metaHere
   movl (%eax), %edx # edx=metaHere=&newNode
   # Calculate new metaHere via ecx=newNodeSize
@@ -1506,8 +1505,7 @@ dictPush: # %eax:dictType %ecx:&nameCStr ( -- ) %eax:mt (aka &newNode)
   addl $DICT_SIZE_WITHOUT_NAME, %ecx # plus normal size of dict
   // TODO: check META_MAX
   movl %ecx, (%eax)
-  // Set initial fields in new entry (xt, info0, nameCStr)
-  DICT_META_SET %edx, xt, $0, %eax    # initial xt=0
+  // Set initial fields in new entry (info0, nameCStr). xt is set by dictNew
   DICT_META_SET %edx, info0, $0, %eax # inital info0=0
   DICT_META_GET_ADDR %edx, nameCStr, %ecx  # %ecx=&toCStr
   POPP %ebx   # ebx=&nameCStr ecx=&toStr stack: ( )
@@ -1596,8 +1594,8 @@ TESTCASE pjwHashEax
   TEST_HASH assertEaxEbxNe, hashTest_cStr3, hashTest_cStr4
   ret
 
-.macro DICT_PUSH type, name
-  SET_ABC \type, $0xDeadBeef, \name
+.macro DICT_PUSH globalAddr, name
+  SET_ABC \globalAddr, $0xDeadBeef, \name
   call dictPush
 .endm
 
@@ -1634,16 +1632,15 @@ test_dictWord1CStr: .byte 9
 test_dictNameDneCStr: .byte 3
   .ascii "DNE"
 .align 4
-TESTCASE dict
+TESTCASE dictPush
   movl dictMetaMinRTime, %eax
   PUSHP %eax # cache where word will be stored
   movl dictMetaHereRTime, %ebx
-  DICT_PUSH $DICT_TYPE_RTIME, $test_dictWord1CStr
+  DICT_PUSH $dictRTime, $test_dictWord1CStr
   GET_P 0, %ebx
   call assertEaxEbxEq  # Got put at the start of meta
   movl %eax, %edi
   ASSERT_REG_EQ (%edi),   $0  # nextAddr=0
-  ASSERT_REG_EQ 4(%edi),  $0  # xt=0
   ASSERT_REG_EQ 8(%edi),  $0  # info0=0
   addl $0xC, %edi # edi=nameCStr
   ASSERT_CSTR_NOCASE_EQ $test_dictWord1CStr, %edi
@@ -1654,6 +1651,32 @@ TESTCASE dict
   movl $test_dictNameDneCStr, %ecx
   call dictFindName
   ASSERT_REG_EQ %eax, $0
+  ret
+
+// Note: execution space looks like:
+// mt | &code (dereferenced xt) | ...
+//
+// mt is the meta-token and allows fast lookup from xt -> mt -> INFO.
+// For pure-assembly, &code points to "..." and "..." is the code to execute.
+// For forth words, &code points to an assembly location called "doWordNext"
+// which as you might expect executes words (aka xts)
+//
+// note: this is ONLY for new RTime or CTime words (not LTime words, which can
+// be added during compilation of RTime or CTime).
+dictNew: # %eax:dictType %ecx:&nameCStr ( -- ) %eax:mt %ebx:xt
+  movl %eax, compilingType # keep track of type of word being compiled.
+  call getDictTypeGlobalAddr
+  PUSHP %eax # stack: ( &dictGlobal )
+  DICT_GLOBAL_GET_ADDR CODE_HERE, %eax
+  movl (%eax), %ebx # ebx=xt-4
+  PUSHP %ebx # Stack: ( xt-4 )
+  addl $8, %ebx
+  movl %ebx, (%eax) # update codeHere to new location
+  call dictPush
+  POPP %ebx # ebx=xt-4
+  movl %eax, (%ebx) # set address left of xt to be backreference to mt
+  addl $4, %ebx
+  DICT_META_SET %eax, xt, %ebx, %edx # set xt in metadata
   ret
 
 ##############################
@@ -1678,7 +1701,7 @@ testSuite:
 
   call testcase_pjwHashEax
   call testcase_dictMacros
-  call testcase_dict
+  call testcase_dictPush
 
   call assertClean
   ret
@@ -1754,6 +1777,7 @@ wordStr: .space WORD_CNT_MAX
 errno: .int 0
 panic: .int panicDefault # function to call when panicing
 panicErr: .int 0  # error to print while panicing
+compilingType: .int 0xFFFFffff
 
 .macro DECLARE_DICT type
   dict\type :
