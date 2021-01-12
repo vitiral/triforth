@@ -1340,9 +1340,26 @@ test_words_end:
 ################################################################################
 #### Forth Dictionary                                                       ####
 ################################################################################
+// Our forth dictionary is going to be unlike most implementations. Primary
+// differences:
+// - Dictionary metadata such as the ascii representation of the word,
+//   immediacy, and type information (we'll get to that) are in a separate
+//   memory region from the code. They can be dropped when "compilation" is
+//   complete to save memory.
+// - There are really 3 dictionaries:
+//   1. Runtime: this is the "standard" one containing forth words that can be
+//      run at runtime. Runtime words should never depend on any other
+//      dictionary's words (and this is maintained by execOrCompile).
+//   2. Compiletime: this is a separate dictionary of words which can be
+//      completely discarded (code AND metadata) when "compilation" is
+//      complete. Compiletime words may depend on runtime words but not
+//      localtime words.
+//   3. Localtime: yet another dictionary containing words (typically
+//      immediate or debugging) for use within a function. Can be used to make one-off macros
+//      for helpful variable naming, etc.
 
 # Offsets into the global "dict struct"
-.equ DICT_OFFSET_ROOT,      0x0
+.equ DICT_OFFSET_STRUCT,    0x0  # start of the struct
 .equ DICT_OFFSET_CODE_MIN,  0x0
 .equ DICT_OFFSET_CODE_HERE, 0x4
 .equ DICT_OFFSET_CODE_MAX,  0x8
@@ -1352,7 +1369,7 @@ test_words_end:
 .equ DEFAULT_DICT_BUCKETS_CNT, 0x1000
 
 .macro DICT_GLOBAL_GET_ADDR field, dictGlobalAddr
-  // Get a field from the dictionary (ROOT, [CODE|META]_[MIN|MAX|HERE])
+  // Get a field from the dictionary (STRUCT, [CODE|META]_[MIN|MAX|HERE])
   // dictGlobalAddr becomes the address of the field
   addl $DICT_OFFSET_\field, \dictGlobalAddr
 .endm
@@ -1602,7 +1619,7 @@ TESTCASE dictMacros
 .set TEST_HEAP, TEST_DICT_CODE_MIN_RTIME+DEFAULT_DICT_SECTION_SIZE
 .equ TEST_DICT_CODE_MAX_RTIME, TEST_HEAP
   TEST_GET_DICT_TYPE_GLOBAL_ADDR $DICT_TYPE_RTIME, RTime
-  TEST_DICT_GLOBAL_GET $DICT_TYPE_RTIME, ROOT, $dictRTime, $heapMin
+  TEST_DICT_GLOBAL_GET $DICT_TYPE_RTIME, STRUCT, $dictRTime, $heapMin
   TEST_DICT_GLOBAL_GET $DICT_TYPE_RTIME, CODE_MIN, $dictRTime, $heapMin
   TEST_DICT_GLOBAL_GET $DICT_TYPE_RTIME, CODE_MIN, $dictCodeMinRTime, $heapMin
   TEST_DICT_GLOBAL_GET $DICT_TYPE_RTIME, CODE_HERE, $dictCodeHereRTime, $heapMin
