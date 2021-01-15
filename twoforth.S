@@ -60,6 +60,7 @@
 // a normal linked-list, except the name, flags and type is all kept inside of
 // "memory" and so can be dropped once the "compilation" is complete.
 .section .data
+.align 4
 
 ######
 # Stacks
@@ -90,6 +91,7 @@ sourceCStr: .byte 0 # Used for reading source word
 sourceStr: .space SOURCE_STR_CNT_MAX
 wordCStr: .byte 0
 wordStr: .space WORD_CNT_MAX
+.align 4
 errno: .int 0
 panic: .int panicDefault # function to call when panicing
 panicErr: .int 0    # error to print while panicing
@@ -143,6 +145,7 @@ testSpace_10: .int 0
 //
 // Finally, we develop a way to "panic", printing out debug information in the
 // process. We use indirection so that we can expect panics in our tests.
+.align 4
 .section .text
 .macro ZERO reg
   // Zero a register. Uses xor which is more compact than mov
@@ -857,6 +860,23 @@ DROP_INVALID_LANDING 4
   jg dropInvalid\n
 .endm
 
+.macro DROPR_INVALID_LANDING n
+droprInvalid\n :
+  subl $4*\n , %esp
+  PANIC RSTACK_UNDERFLOW
+.endm
+
+DROPR_INVALID_LANDING 1
+DROPR_INVALID_LANDING 2
+DROPR_INVALID_LANDING 3
+DROPR_INVALID_LANDING 4
+
+.macro DROPR n
+  addl $4*\n , %esp
+  cmpl rstackMax, %esp
+  jg droprInvalid\n
+.endm
+
 drop:
   cmpl pstackMax, %ebp
   jge popDsInvalid
@@ -1264,16 +1284,17 @@ TESTCASE asciiToHex
   TEST_ASCII_TO_HEX $test_asciiToHex_DeadBeef,    $0x8, $0xDeadBeef
   TEST_ASCII_TO_HEX $test_asciiToHex_2002_1111,   $0x9, $0x20021111
 
-#  // TODO: cannot get tests to work (panics actually happen...)
-#  EXPECT_PANIC $1f
-#  TEST_ASCII_TO_HEX $test_asciiToHex_1_0000_0000, $0xB, $0xD1E
-#1:ASSERT_PANICED $ERR_INVALID_HEX_OVERFLOW
-#  call assertPanicClean
-#
-#  EXPECT_PANIC $1f
-#  SET_CD $0, $0
-#  call asciiToHex
-#1:ASSERT_PANICED $ERR_INVALID_HEX_LEN
+  EXPECT_PANIC $1f
+  TEST_ASCII_TO_HEX $test_asciiToHex_1_0000_0000, $0xB, $0xD1E
+1:ASSERT_PANICED $ERR_INVALID_HEX_OVERFLOW
+  // handle extra item on the return stack (never returned from asciiToHex)
+  DROPR 1
+
+  EXPECT_PANIC $1f
+  SET_CD $0, $0
+  call asciiToHex
+1:ASSERT_PANICED $ERR_INVALID_HEX_LEN
+  DROPR 1 # handle extra return stack item
   addl $0x10, %ebp
   ret
 
