@@ -92,7 +92,8 @@ wordCStr: .byte 0
 wordStr: .space WORD_CNT_MAX
 errno: .int 0
 panic: .int panicDefault # function to call when panicing
-panicErr: .int 0  # error to print while panicing
+panicErr: .int 0    # error to print while panicing
+panicNtStr: .int 0  # error message to print while panicing
 compilingType: .int 0xFFFFffff
 
 .macro DECLARE_DICT type
@@ -166,6 +167,10 @@ testSpace_10: .int 0
 .endm
 .macro SET_BCD b, c, d
   SET_BC \b, \c
+  movl \d, %edx
+.endm
+.macro SET_CD c, d
+  movl \c, %ecx
   movl \d, %edx
 .endm
 
@@ -484,6 +489,11 @@ todoNtStr: .ascii "!! TODO reached !!\n\0"
   PNT_ASCII $'\n'
 .endm
 
+.macro PNT_UX_SPC v
+  PNT_UX \v
+  PNT_ASCII $' '
+.endm
+
 .macro PNT_UX_PRETTY v
   movl \v, %ebx
   call pntEbxUxPretty
@@ -577,45 +587,40 @@ panicStartNtStr: .ascii "!! PANIC !! code=0x\0"
 .align 4
 panicDefault:
   PNT_NTSTR $panicStartNtStr
-  PNT_UX_NL panicErr
+  PNT_UX_SPC panicErr
+  PNT_NTSTR_NL panicNtStr
   call pntPstack
   PNT_ASCII $'\n'
   call pntRstackDepth
   EXIT $RC_PANIC
 
-.macro PANIC_LANDING err, code
-  .equ ERR_\err, \code
-panicNow_\err :
-  movl $ERR_\err, panicErr
-  jmp *(panic)
+.set CURRENT_PANIC_CODE, 0x001
+.set PREV_PANIC_ADDR, 0
+
+.macro PANIC_LANDING err
+  .equ ERR_\err , CURRENT_PANIC_CODE
+  .set CURRENT_PANIC_CODE, CURRENT_PANIC_CODE+1
+
+  // Keep panics in a linked list so we can add them to the dictionary easily.
+  .align 4
+  errNext_\err : .int PREV_PANIC_ADDR
+  .set PREV_PANIC_ADDR, errNext_\err
+
+  errNtStr_\err : .ascii "\err \0"
+  .align 4
+  panicNow_\err :
+    movl $ERR_\err, panicErr
+    movl $errNtStr_\err, panicNtStr
+    jmp *(panic)
 .endm
+
 
 .macro PANIC err
   jmp panicNow_\err
 .endm
 
-// Our Panic Locations
-
-PANIC_LANDING SEE_MSG,          0x001
-PANIC_LANDING OKAY,             0xBedabb1e
-PANIC_LANDING PSTACK_OVERFLOW,  0x301
-PANIC_LANDING PSTACK_UNDERFLOW, 0x303
-PANIC_LANDING RSTACK_OVERFLOW,  0x304
-PANIC_LANDING RSTACK_UNDERFLOW, 0x305
-PANIC_LANDING MAX_WORD_CNT,     0x306
-PANIC_LANDING WORD_MISSING,     0x307
-PANIC_LANDING NUMBER_INVALID,   0x308
-PANIC_LANDING UNKNOWN_WORD,     0x309
-PANIC_LANDING STATE_REDUNDANT,  0x310
-PANIC_LANDING STACK_UNDERFLOW,  0x311
-PANIC_LANDING WORD_NOT_FOUND,   0x312
-PANIC_LANDING INVALID_FLAG,     0x313
-PANIC_LANDING INVALID_CHAR,     0x314
-PANIC_LANDING STACK_NOT_EMPTY,  0x315
-PANIC_LANDING STATE_INCORRECT,  0x316
-PANIC_LANDING EMIT_ERR,         0x317
-PANIC_LANDING NULL_NAMETOKEN,   0x318
-PANIC_LANDING ERRNO,            0xDEADBEA7
+PANIC_LANDING OKAY      # used in debugging
+PANIC_LANDING ERRNO
 
 panicNow_eaxIsErrno:
   movl %eax, errno
@@ -706,7 +711,8 @@ panicErrInvalidStr: .ascii "!! panicErr not expected value: \0"
 .align 4
 panicErrInvalid:
   PNT_NTSTR $panicErrInvalidStr
-  PNT_UX_NL panicErr
+  PNT_UX_SPC panicErr
+  PNT_NTSTR_NL $panicNtStr
   jmp exitFailTest
 
 .macro ASSERT_PANICED err
@@ -714,6 +720,7 @@ panicErrInvalid:
   cmpl \err, panicErr
   jne panicErrInvalid
   movl $0, panicErr
+  movl $0, panicNtStr
 .endm
 
 assertStackEmptyStr: .ascii "!! Stack not empty: \n\0"
@@ -803,6 +810,11 @@ TESTCASE pureAsm
 // (parameter stack) and rstack (return stack). We have defined pstackMin/Max
 // and rstackMin/Max to specify the stack locations, and %ebp is our pstack
 // pointer and %esp our rstack pointer.
+
+PANIC_LANDING PSTACK_OVERFLOW
+PANIC_LANDING PSTACK_UNDERFLOW
+PANIC_LANDING RSTACK_OVERFLOW
+PANIC_LANDING RSTACK_UNDERFLOW
 
 pushDsInvalid:
   # Checks to make sure that the datastack hasn't overflowed.
@@ -998,6 +1010,7 @@ TESTCASE bcmp
 
 alToUpper: TO_UPPER %al
 ahToUpper: TO_UPPER %ah
+blToUpper: TO_UPPER %bl
 
 beqNocase: # %eax:&a %ebx:aCount %ecx:&b %edx:bCount ( -- ) %eax:bool
   // Compare byte sequence a to b for equality, ignoring case
@@ -1187,6 +1200,82 @@ TESTCASE sll
   ASSERT_REG_EQ testSpace_04, $0
   ret
 
+PANIC_LANDING INVALID_HEX_AL
+
+blToHex:
+  call blToUpper
+  cmpb $'9', %bl
+  jbe blToHex_be9
+  # above 9
+  cmpb $'F', %bl
+  ja panicNow_INVALID_HEX_AL
+  # between 9 and F
+  cmpb $'A', %bl
+  jb panicNow_INVALID_HEX_AL
+  subb $'A'-10, %bl
+  ret
+blToHex_be9:
+  cmpb $'0', %bl
+  jb panicNow_INVALID_HEX_AL
+  subb $'0', %bl
+  ret
+
+PANIC_LANDING INVALID_HEX_OVERFLOW
+PANIC_LANDING INVALID_HEX_LEN
+
+asciiToHex: # %ecx:&b %edx:count ( -- ) %eax:value
+  // Convert ascii values to hexadecimal
+  JRZ %edx, panicNow_INVALID_HEX_LEN
+  addl %ecx, %edx # edx=end-addr
+  ZERO %eax
+  ZERO %ebx
+asciiToHex_loop:
+  JMP_E %ecx, %edx, return
+  movb (%ecx), %bl
+  cmpb $'_', %bl
+  je asciiToHex_skip      # ignore underscores
+  test $0xF0000000, %eax  # panic if shift will result in "overflow"
+  jnz panicNow_INVALID_HEX_OVERFLOW # jo=jmp overflow
+  shl $4, %eax    # eax=eax*16
+  call blToHex
+  addl %ebx, %eax
+asciiToHex_skip:
+  inc %ecx
+  jmp asciiToHex_loop
+
+.macro TEST_ASCII_TO_HEX asciiAddr, count, expected
+  BMOVE \count, \asciiAddr, %ebp
+  SET_CD %ebp, \count
+  call asciiToHex
+  ASSERT_REG_EQ %eax, \expected
+.endm
+test_asciiToHex_0: .ascii "0"
+test_asciiToHex_42: .ascii "42"
+test_asciiToHex_3aB03: .ascii "3aB03"
+test_asciiToHex_DeadBeef: .ascii "DeadBeef"
+test_asciiToHex_2002_1111: .ascii "2002_1111"
+test_asciiToHex_1_0000_0000: .ascii "1_0000_0000"
+.align 4
+TESTCASE asciiToHex
+  subl $0x10, %ebp
+  TEST_ASCII_TO_HEX $test_asciiToHex_0,           $0x1, $0x00000000
+  TEST_ASCII_TO_HEX $test_asciiToHex_42,          $0x2, $0x00000042
+  TEST_ASCII_TO_HEX $test_asciiToHex_3aB03,       $0x5, $0x0003aB03
+  TEST_ASCII_TO_HEX $test_asciiToHex_DeadBeef,    $0x8, $0xDeadBeef
+  TEST_ASCII_TO_HEX $test_asciiToHex_2002_1111,   $0x9, $0x20021111
+
+#  // TODO: cannot get tests to work (panics actually happen...)
+#  EXPECT_PANIC $1f
+#  TEST_ASCII_TO_HEX $test_asciiToHex_1_0000_0000, $0xB, $0xD1E
+#1:ASSERT_PANICED $ERR_INVALID_HEX_OVERFLOW
+#  call assertPanicClean
+#
+#  EXPECT_PANIC $1f
+#  SET_CD $0, $0
+#  call asciiToHex
+#1:ASSERT_PANICED $ERR_INVALID_HEX_LEN
+  addl $0x10, %ebp
+  ret
 
 ################################################################################
 #### Reading words from source                                              ####
@@ -1290,6 +1379,8 @@ flush_sourceCStr_to_wordCStr:
   movl $sourceStr, %ecx # ecx=&to
   call bmove
   ret
+
+PANIC_LANDING MAX_WORD_CNT
 
 word: # Store the next word from the source into wordCStr
   call fillSourceCStr
@@ -1769,6 +1860,7 @@ testSuite:
   call testcase_bmove
   call testcase_align4
   call testcase_sll
+  call testcase_asciiToHex
 
   call testcase_findWhitespace
   call testcase_fillSourceCStr
@@ -1808,7 +1900,6 @@ afterSetupStack:
   PNT_NTSTR $mainStartNtStr
   call testSuite
   EXIT $0
-
 
 .section .data
 heap: .int 0 # see setupMem
