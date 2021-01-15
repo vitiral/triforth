@@ -1240,12 +1240,11 @@ blToHex_be9:
   subb $'0', %bl
   ret
 
-PANIC_LANDING INVALID_HEX_OVERFLOW
-PANIC_LANDING INVALID_HEX_LEN
-
+PANIC_LANDING INVALID_NUM_OVERFLOW
+PANIC_LANDING INVALID_NUM_LEN
 asciiToHex: # %ecx:&b %edx:count ( -- ) %eax:value
   // Convert ascii values to hexadecimal
-  JRZ %edx, panicNow_INVALID_HEX_LEN
+  JRZ %edx, panicNow_INVALID_NUM_LEN
   addl %ecx, %edx # edx=end-addr
   ZERO %eax
   ZERO %ebx
@@ -1255,7 +1254,7 @@ asciiToHex_loop:
   cmpb $'_', %bl
   je asciiToHex_skip      # ignore underscores
   test $0xF0000000, %eax  # panic if shift will result in "overflow"
-  jnz panicNow_INVALID_HEX_OVERFLOW # jo=jmp overflow
+  jnz panicNow_INVALID_NUM_OVERFLOW
   shl $4, %eax    # eax=eax*16
   call blToHex
   addl %ebx, %eax
@@ -1286,17 +1285,128 @@ TESTCASE asciiToHex
 
   EXPECT_PANIC $1f
   TEST_ASCII_TO_HEX $test_asciiToHex_1_0000_0000, $0xB, $0xD1E
-1:ASSERT_PANICED $ERR_INVALID_HEX_OVERFLOW
+1:ASSERT_PANICED $ERR_INVALID_NUM_OVERFLOW
   // handle extra item on the return stack (never returned from asciiToHex)
   DROPR 1
 
   EXPECT_PANIC $1f
   SET_CD $0, $0
   call asciiToHex
-1:ASSERT_PANICED $ERR_INVALID_HEX_LEN
-  DROPR 1 # handle extra return stack item
+1:ASSERT_PANICED $ERR_INVALID_NUM_LEN
+  DROPR 1 # handle never returning from asciiToHex
   addl $0x10, %ebp
   ret
+
+PANIC_LANDING INVALID_BINARY
+asciiToBinary: # %ecx:&b %edx:count ( -- ) %eax:value
+  // Convert ascii values to binary
+  JRZ %edx, panicNow_INVALID_NUM_LEN
+  addl %ecx, %edx # edx=end-addr
+  ZERO %eax
+  ZERO %ebx
+asciiToBinary_loop:
+  JMP_E %ecx, %edx, return
+  movb (%ecx), %bl
+  cmpb $'_', %bl
+  je asciiToBinary_skip      # ignore underscores
+  test $0x80000000, %eax  # panic if shift will result in "overflow"
+  jnz panicNow_INVALID_NUM_OVERFLOW
+  shl $1, %eax    # eax=eax*2
+  subb $'0', %bl
+  cmpb $1, %bl
+  ja panicNow_INVALID_BINARY
+  addl %ebx, %eax
+asciiToBinary_skip:
+  inc %ecx
+  jmp asciiToBinary_loop
+
+##
+# Nshl and Nshr
+# The shl and shr functions only take a CONSTANT. Therefore we have to create a
+# jump table so that we can shift by 0-31 bits in forth
+.macro LOC_NSH direction, N
+Nsh\N\direction :
+  sh\direction $0x\N , %eax
+  ret
+.endm
+
+.macro DEFINE_NSH direction
+  Nsh\direction : # %eax:value %ebx:numShift ( -- ) %eax:shiftedValue
+    JMP_A $0x100, %ebx, Nsh_ret0_\direction
+    jmp *Nshjt_\direction(,%ebx,4)
+  Nsh_ret0_\direction :
+    ZERO %eax
+    ret
+  .align 4
+  Nshjt_\direction :
+    .int Nsh00\direction
+    .int Nsh01\direction
+    .int Nsh02\direction
+    .int Nsh03\direction
+    .int Nsh04\direction
+    .int Nsh05\direction
+    .int Nsh06\direction
+    .int Nsh07\direction
+    .int Nsh08\direction
+    .int Nsh09\direction
+    .int Nsh0A\direction
+    .int Nsh0B\direction
+    .int Nsh0C\direction
+    .int Nsh0D\direction
+    .int Nsh0E\direction
+    .int Nsh0F\direction
+    .int Nsh10\direction
+    .int Nsh11\direction
+    .int Nsh12\direction
+    .int Nsh13\direction
+    .int Nsh14\direction
+    .int Nsh15\direction
+    .int Nsh16\direction
+    .int Nsh17\direction
+    .int Nsh18\direction
+    .int Nsh19\direction
+    .int Nsh1A\direction
+    .int Nsh1B\direction
+    .int Nsh1C\direction
+    .int Nsh1D\direction
+    .int Nsh1E\direction
+    .int Nsh1F\direction
+    LOC_NSH \direction, 00
+    LOC_NSH \direction, 01
+    LOC_NSH \direction, 02
+    LOC_NSH \direction, 03
+    LOC_NSH \direction, 04
+    LOC_NSH \direction, 05
+    LOC_NSH \direction, 06
+    LOC_NSH \direction, 07
+    LOC_NSH \direction, 08
+    LOC_NSH \direction, 09
+    LOC_NSH \direction, 0A
+    LOC_NSH \direction, 0B
+    LOC_NSH \direction, 0C
+    LOC_NSH \direction, 0D
+    LOC_NSH \direction, 0E
+    LOC_NSH \direction, 0F
+    LOC_NSH \direction, 10
+    LOC_NSH \direction, 11
+    LOC_NSH \direction, 12
+    LOC_NSH \direction, 13
+    LOC_NSH \direction, 14
+    LOC_NSH \direction, 15
+    LOC_NSH \direction, 16
+    LOC_NSH \direction, 17
+    LOC_NSH \direction, 18
+    LOC_NSH \direction, 19
+    LOC_NSH \direction, 1A
+    LOC_NSH \direction, 1B
+    LOC_NSH \direction, 1C
+    LOC_NSH \direction, 1D
+    LOC_NSH \direction, 1E
+    LOC_NSH \direction, 1F
+.endm
+
+DEFINE_NSH l
+DEFINE_NSH r
 
 ################################################################################
 #### Reading words from source                                              ####
