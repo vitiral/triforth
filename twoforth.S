@@ -1324,10 +1324,24 @@ asciiToBinary_skip:
 # Nshl and Nshr
 # The shl and shr functions only take a CONSTANT. Therefore we have to create a
 # jump table so that we can shift by 0-31 bits in forth
+
+.macro INT_NSH direction, N
+  .int Nsh\N\direction
+.endm
 .macro LOC_NSH direction, N
 Nsh\N\direction :
   sh\direction $0x\N , %eax
   ret
+.endm
+.macro NSH_BLOCK cmd, direction, n0, n1, n2, n3, n4, n5, n6, n7
+    \cmd \direction, \n0
+    \cmd \direction, \n1
+    \cmd \direction, \n2
+    \cmd \direction, \n3
+    \cmd \direction, \n4
+    \cmd \direction, \n5
+    \cmd \direction, \n6
+    \cmd \direction, \n7
 .endm
 
 .macro DEFINE_NSH direction
@@ -1339,74 +1353,19 @@ Nsh\N\direction :
     ret
   .align 4
   Nshjt_\direction :
-    .int Nsh00\direction
-    .int Nsh01\direction
-    .int Nsh02\direction
-    .int Nsh03\direction
-    .int Nsh04\direction
-    .int Nsh05\direction
-    .int Nsh06\direction
-    .int Nsh07\direction
-    .int Nsh08\direction
-    .int Nsh09\direction
-    .int Nsh0A\direction
-    .int Nsh0B\direction
-    .int Nsh0C\direction
-    .int Nsh0D\direction
-    .int Nsh0E\direction
-    .int Nsh0F\direction
-    .int Nsh10\direction
-    .int Nsh11\direction
-    .int Nsh12\direction
-    .int Nsh13\direction
-    .int Nsh14\direction
-    .int Nsh15\direction
-    .int Nsh16\direction
-    .int Nsh17\direction
-    .int Nsh18\direction
-    .int Nsh19\direction
-    .int Nsh1A\direction
-    .int Nsh1B\direction
-    .int Nsh1C\direction
-    .int Nsh1D\direction
-    .int Nsh1E\direction
-    .int Nsh1F\direction
-    LOC_NSH \direction, 00
-    LOC_NSH \direction, 01
-    LOC_NSH \direction, 02
-    LOC_NSH \direction, 03
-    LOC_NSH \direction, 04
-    LOC_NSH \direction, 05
-    LOC_NSH \direction, 06
-    LOC_NSH \direction, 07
-    LOC_NSH \direction, 08
-    LOC_NSH \direction, 09
-    LOC_NSH \direction, 0A
-    LOC_NSH \direction, 0B
-    LOC_NSH \direction, 0C
-    LOC_NSH \direction, 0D
-    LOC_NSH \direction, 0E
-    LOC_NSH \direction, 0F
-    LOC_NSH \direction, 10
-    LOC_NSH \direction, 11
-    LOC_NSH \direction, 12
-    LOC_NSH \direction, 13
-    LOC_NSH \direction, 14
-    LOC_NSH \direction, 15
-    LOC_NSH \direction, 16
-    LOC_NSH \direction, 17
-    LOC_NSH \direction, 18
-    LOC_NSH \direction, 19
-    LOC_NSH \direction, 1A
-    LOC_NSH \direction, 1B
-    LOC_NSH \direction, 1C
-    LOC_NSH \direction, 1D
-    LOC_NSH \direction, 1E
-    LOC_NSH \direction, 1F
+    NSH_BLOCK INT_NSH, \direction, 00, 01, 02, 03, 04, 05, 06, 07
+    NSH_BLOCK INT_NSH, \direction, 08, 09, 0A, 0B, 0C, 0D, 0E, 0F
+    NSH_BLOCK INT_NSH, \direction, 10, 11, 12, 13, 14, 15, 16, 17
+    NSH_BLOCK INT_NSH, \direction, 18, 19, 1A, 1B, 1C, 1D, 1E, 1F
+
+    NSH_BLOCK LOC_NSH, \direction, 00, 01, 02, 03, 04, 05, 06, 07
+    NSH_BLOCK LOC_NSH, \direction, 08, 09, 0A, 0B, 0C, 0D, 0E, 0F
+    NSH_BLOCK LOC_NSH, \direction, 10, 11, 12, 13, 14, 15, 16, 17
+    NSH_BLOCK LOC_NSH, \direction, 18, 19, 1A, 1B, 1C, 1D, 1E, 1F
 .endm
 
-DEFINE_NSH l
-DEFINE_NSH r
+DEFINE_NSH l # Nshl: shifts eax left by ebx bytes
+DEFINE_NSH r # Nshr: shifts eax right by ebx bytes
 
 ################################################################################
 #### Reading words from source                                              ####
