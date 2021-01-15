@@ -49,7 +49,83 @@
 .equ FALSE, 0
 .equ TRUE, 1
 
-.section .text
+################################################################################
+#### DATA SECTION -- mutable memory must go here.                           ####
+################################################################################
+//###############
+// Data layout
+// |-rstack----|-pstack-|-"code"-------------------|-memory---...
+//
+// Code contains _only_ code (not the word dictionary). The word dictionary is
+// a normal linked-list, except the name, flags and type is all kept inside of
+// "memory" and so can be dropped once the "compilation" is complete.
+.section .data
+
+######
+# Stacks
+.equ RSTACK_SIZE, 0x2000
+rstackExtraRoot: .space 0x4
+rstackMinRoot: .space RSTACK_SIZE # return stack
+rstackMaxRoot:
+.equ PSTACK_SIZE, 0x100
+pstackExtraRoot: .space 0x20      # guaranteed space above the pstack
+pstackMinRoot: .space PSTACK_SIZE # data stack
+pstackMaxRoot:
+rstackMin: .int 0
+rstackMax: .int 0
+pstackMin: .int 0
+pstackMax: .int 0
+
+######
+# Global Variables / State / Buffers
+initialEsp: .int 0 # initial %esp register, use to get args/ENV
+pntFd: .int STDERR # where to PNT to
+.equ EMIT_BUFFER_SIZE, 16
+sourceFd: .int STDIN   # where the source code is read from
+.equ SOURCE_STR_CNT_MAX, 0x46  # maximim bytes of source read
+.equ WORD_CNT_MAX, 0x23        # maximum word size
+.equ WORD_STACK_SIZE, WORD_CNT_MAX+1
+sourceEof: .byte 0 # Whether an EOF was encountered at the last read
+sourceCStr: .byte 0 # Used for reading source word
+sourceStr: .space SOURCE_STR_CNT_MAX
+wordCStr: .byte 0
+wordStr: .space WORD_CNT_MAX
+errno: .int 0
+panic: .int panicDefault # function to call when panicing
+panicErr: .int 0  # error to print while panicing
+compilingType: .int 0xFFFFffff
+
+.macro DECLARE_DICT type
+  dict\type :
+  dictCodeMin\type  : .int 0
+  dictCodeHere\type : .int 0
+  dictCodeMax\type  : .int 0
+  dictMetaMin\type  : .int 0
+  dictMetaHere\type : .int 0
+  dictMetaMax\type  : .int 0
+.endm
+DECLARE_DICT RTime
+DECLARE_DICT CTime
+
+dictBucketsAddr : .int 0
+dictBucketsAndValue : .int 0 # Value used to MOD via AND (power_of_2-1)
+
+# LocalTime dict, mostly implemented in forth
+dictLTimeRoot: .int 0
+dictLTimeMin:  .int 0
+dictLTimeHere: .int 0
+dictLTimeMax:  .int 0
+
+######
+# Debugging / Testing Variables
+registerSnapshot: .space 0x20
+testingNtStr: .int 0
+panicRestore: .int 0
+testSpace_00: .int 0
+testSpace_04: .int 0
+testSpace_08: .int 0
+testSpace_0C: .int 0
+testSpace_10: .int 0
 
 ################################################################################
 #### PURE ASSEMBLY                                                          ####
@@ -66,7 +142,7 @@
 //
 // Finally, we develop a way to "panic", printing out debug information in the
 // process. We use indirection so that we can expect panics in our tests.
-
+.section .text
 .macro ZERO reg
   // Zero a register. Uses xor which is more compact than mov
   xor \reg, \reg
@@ -1733,84 +1809,8 @@ afterSetupStack:
   call testSuite
   EXIT $0
 
-################################################################################
-#### DATA SECTION -- mutable memory must go here.                           ####
-################################################################################
-//###############
-// Data layout
-// |-rstack----|-pstack-|-"code"-------------------|-memory---...
-//
-// Code contains _only_ code (not the word dictionary). The word dictionary is
-// a normal linked-list, except the name, flags and type is all kept inside of
-// "memory" and so can be dropped once the "compilation" is complete.
+
 .section .data
-
-######
-# Stacks
-.equ RSTACK_SIZE, 0x2000
-rstackExtraRoot: .space 0x4
-rstackMinRoot: .space RSTACK_SIZE # return stack
-rstackMaxRoot:
-.equ PSTACK_SIZE, 0x100
-pstackExtraRoot: .space 0x20      # guaranteed space above the pstack
-pstackMinRoot: .space PSTACK_SIZE # data stack
-pstackMaxRoot:
-rstackMin: .int 0
-rstackMax: .int 0
-pstackMin: .int 0
-pstackMax: .int 0
-
-######
-# Global Variables / State / Buffers
-initialEsp: .int 0 # initial %esp register, use to get args/ENV
-pntFd: .int STDERR # where to PNT to
-.equ EMIT_BUFFER_SIZE, 16
-sourceFd: .int STDIN   # where the source code is read from
-.equ SOURCE_STR_CNT_MAX, 0x46  # maximim bytes of source read
-.equ WORD_CNT_MAX, 0x23        # maximum word size
-.equ WORD_STACK_SIZE, WORD_CNT_MAX+1
-sourceEof: .byte 0 # Whether an EOF was encountered at the last read
-sourceCStr: .byte 0 # Used for reading source word
-sourceStr: .space SOURCE_STR_CNT_MAX
-wordCStr: .byte 0
-wordStr: .space WORD_CNT_MAX
-errno: .int 0
-panic: .int panicDefault # function to call when panicing
-panicErr: .int 0  # error to print while panicing
-compilingType: .int 0xFFFFffff
-
-.macro DECLARE_DICT type
-  dict\type :
-  dictCodeMin\type  : .int 0
-  dictCodeHere\type : .int 0
-  dictCodeMax\type  : .int 0
-  dictMetaMin\type  : .int 0
-  dictMetaHere\type : .int 0
-  dictMetaMax\type  : .int 0
-.endm
-DECLARE_DICT RTime
-DECLARE_DICT CTime
-
-dictBucketsAddr : .int 0
-dictBucketsAndValue : .int 0 # Value used to MOD via AND (power_of_2-1)
-
-# LocalTime dict, mostly implemented in forth
-dictLTimeRoot: .int 0
-dictLTimeMin:  .int 0
-dictLTimeHere: .int 0
-dictLTimeMax:  .int 0
-
-######
-# Debugging / Testing Variables
-registerSnapshot: .space 0x20
-testingNtStr: .int 0
-panicRestore: .int 0
-testSpace_00: .int 0
-testSpace_04: .int 0
-testSpace_08: .int 0
-testSpace_0C: .int 0
-testSpace_10: .int 0
-
 heap: .int 0 # see setupMem
 .align 0x100
 heapMin:                     .space 0x200000  # 2MiB TODO: do dynamically from runtime
