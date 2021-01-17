@@ -1370,6 +1370,7 @@ DEFINE_NSH r # Nshr: shifts eax right by ebx bytes
 ################################################################################
 #### Reading words from source                                              ####
 ################################################################################
+# This is extremely important for obvious reasons :D
 
 sysopen: # %ebx:&fnameNt %ecx:intention %edx:permissions ( -- ) %eax:fd
   # Open the nt filename.
@@ -1696,10 +1697,8 @@ dictResetLTime:
   movl $0, dictLTimeRoot
   ret
 
-
-
-pjwHashEax: # %ecx:&bytes %edx:count  ( -- ) %edi:hash
-  // Do a PJW hash on count bytes.
+pjwHashNoCaseEax: # %ecx:&bytes %edx:count  ( -- ) %edi:hash
+  // Do a PJW hash (ignoring case) on count bytes.
   // https://en.wikipedia.org/wiki/PJW_hash_function
   ZERO %edi
   addl %ecx, %edx # edx=end addr
@@ -1708,6 +1707,7 @@ pjwHashEax_loop:
   # Next 4 lines: h = (h << 4) + *s++
   shll $4, %edi
   MOVB_A (%ecx)
+  call alToUpper
   addl %eax, %edi
   inc %edi
   movl %edi, %ebx  # ebx will = high bits below
@@ -1729,7 +1729,7 @@ dictCStrBucketAddr: # %ecx:&cStr ( -- ) %edi:&root
   // sll* methods since the first item is a pointer to a node.
   MOVB_D (%ecx)
   inc %ecx # ecx=&str
-  call pjwHashEax
+  call pjwHashNoCaseEax
   andl dictBucketsAndValue, %edi
   MUL4 %edi
   addl dictBucketsAddr, %edi
@@ -1822,11 +1822,11 @@ foundLTime:
   # asserts that a compares to b
   MOVB_D \aCStr
   movl $\aCStr+1, %ecx
-  call pjwHashEax
+  call pjwHashNoCaseEax
   PUSHP %edi
   MOVB_D \bCStr
   movl $\bCStr+1, %ecx
-  call pjwHashEax
+  call pjwHashNoCaseEax
   POPP %ebx
   movl %edi, %eax
   call \assert
@@ -1840,7 +1840,7 @@ hashTest_cStr3: .byte 5
 hashTest_cStr4: .byte 5
   .ascii "zzazz"
 .align 4
-TESTCASE pjwHashEax
+TESTCASE pjwHash
   // This isn't a very good test, but makes sure there is some spread in the
   // values.
   TEST_HASH assertEaxEbxEq, hashTest_cStr1, hashTest_cStr1
@@ -1957,7 +1957,7 @@ testSuite:
   call testcase_flush_sourceCStr_to_wordCStr
   call testcase_word
 
-  call testcase_pjwHashEax
+  call testcase_pjwHash
   call testcase_dictMacros
   call testcase_dictPush
 
