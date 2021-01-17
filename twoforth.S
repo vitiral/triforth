@@ -49,6 +49,8 @@
 .equ FALSE, 0
 .equ TRUE, 1
 
+.equ CELL, 4
+
 ################################################################################
 #### DATA SECTION -- mutable memory must go here.                           ####
 ################################################################################
@@ -826,7 +828,7 @@ pushDsInvalid:
   PANIC PSTACK_OVERFLOW
 
 .macro PUSHP reg
-  subl $4, %ebp
+  subl $CELL, %ebp
   cmpl pstackMin, %ebp
   jl pushDsInvalid
   movl \reg , (%ebp)
@@ -839,13 +841,13 @@ popDsInvalid:
   movl (%ebp) , \reg
   cmpl pstackMax, %ebp
   jge popDsInvalid
-  addl $4, %ebp
+  addl $CELL, %ebp
 .endm
 
 
 .macro DROP_INVALID_LANDING n
 dropInvalid\n :
-  subl $4*\n , %ebp
+  subl $CELL*\n , %ebp
   PANIC PSTACK_UNDERFLOW
 .endm
 
@@ -855,14 +857,14 @@ DROP_INVALID_LANDING 3
 DROP_INVALID_LANDING 4
 
 .macro DROPP n
-  addl $4*\n , %ebp
+  addl $CELL*\n , %ebp
   cmpl pstackMax, %ebp
   jg dropInvalid\n
 .endm
 
 .macro DROPR_INVALID_LANDING n
 droprInvalid\n :
-  subl $4*\n , %esp
+  subl $CELL*\n , %esp
   PANIC RSTACK_UNDERFLOW
 .endm
 
@@ -872,7 +874,7 @@ DROPR_INVALID_LANDING 3
 DROPR_INVALID_LANDING 4
 
 .macro DROPR n
-  addl $4*\n , %esp
+  addl $CELL*\n , %esp
   cmpl rstackMax, %esp
   jg droprInvalid\n
 .endm
@@ -880,7 +882,7 @@ DROPR_INVALID_LANDING 4
 drop:
   cmpl pstackMax, %ebp
   jge popDsInvalid
-  addl $4, %ebp
+  addl $CELL, %ebp
   ret
 
 assertEq: # ( a b -- )
@@ -917,7 +919,7 @@ TESTCASE pstack
 pushRsInvalid:
   # Checks to make sure that the datastack hasn't overflowed.
   # If it has, re-increments and panics with appropriate error.
-  addl $4, %esp
+  addl $CELL, %esp
   PANIC RSTACK_OVERFLOW
 
 .macro PUSHR reg
@@ -929,7 +931,7 @@ pushRsInvalid:
 popRsInvalid:
   # Checks to make sure that the datastack hasn't underflowed.
   # If it has, re-decrements and panics with appropriate error.
-  subl $4, %esp
+  subl $CELL, %esp
   PANIC RSTACK_UNDERFLOW
 
 .macro POPR reg
@@ -1797,7 +1799,7 @@ metaSllFindName_dne:
   DROPP 2
   ret
 
-dictFindName: # %ecx:&cStr ( -- ) &eax:&node
+dictFindName: # %ecx:&cStr ( -- ) &eax:mt (aka &node)
   // eax=0 if no node found.
   PUSHP %ecx
   # First try to find in localtime dict
@@ -1935,6 +1937,35 @@ dictNew: # %eax:dictType %ecx:&nameCStr ( -- ) %eax:mt %ebx:xt
   addl $4, %ebx
   DICT_META_SET %eax, xt, %ebx, %edx # set xt in metadata
   ret
+
+.equ INFO_IMM, 0x10000000
+
+compile: # %ebx:value ( -- )
+  # compile the value into the current code space.
+  movl compilingType, %eax
+  call getDictTypeGlobalAddr
+  DICT_GLOBAL_GET_ADDR CODE_HERE, %eax  # eax=&HERE
+  movl (%eax), %ecx  # ecx=HERE
+  movl %ebx, (%ecx)  # set value at HERE
+  addl $CELL, (%eax) # increment HERE
+  ret
+
+.macro XT_TO_MT xtReg, reg
+  movl -4(\xtReg), \reg
+.endm
+
+PANIC_LANDING INVALID_XT
+
+compileXt: # %ebx:xt ( -- )
+  // Compile an xt, checking that it's type is allowed
+  JMP_B dictCodeMinRTime, %ebx, panicNow_INVALID_XT
+  JMP_B dictCodeMinCTime, %ebx, compileXt_RTime
+  JMP_A dictCodeMaxCTime, %ebx, panicNow_INVALID_XT
+  TODO # valid CTime
+  jmp compile
+compileXt_RTime:
+  TODO # valid RTime
+  jmp compile
 
 ##############################
 # Main Entrypoint and test suite
