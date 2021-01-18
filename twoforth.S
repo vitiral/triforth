@@ -346,8 +346,7 @@ pntEcxNtStr: # %ecx:ntstr ( -- )
   // Does not change any registers
   call countntEcx   # edx=bytesToWrite
   movl pntFd, %ebx
-  call syswriteall
-  ret
+  jmp syswriteall
 
 asciiStr: .ascii "~~~~~~~~~\t\n~~\r~~"  # 0x0-F
           .ascii "~~~~~~~~~~~~~~~~"     # 0x10-1F
@@ -364,8 +363,7 @@ pntEcxAscii: # %ecx:byte ( -- )
   movl pntFd, %ebx      # fd
   addl $asciiStr, %ecx  # &buff
   movl $1, %edx         # bytesToWrite
-  call syswriteall
-  ret
+  jmp syswriteall
 
 .macro PNT_ASCII a
   movl \a , %ecx
@@ -464,8 +462,7 @@ pntCStr: # %ecx=&cStr
   movl pntFd, %ebx
   MOVB_D (%ecx)
   inc %ecx
-  call syswriteall
-  ret
+  jmp syswriteall
 
 .macro PNT_CSTR cStr
   movl \cStr, %ecx
@@ -565,8 +562,7 @@ pntPstack: # ( -- )
   movl %ebx, (%ebp)     # start
   movl pstackMax, %ebx
   movl %ebx, 4(%ebp)    # end
-  call pntMem
-  ret
+  jmp pntMem
 
 pntRstackDepth: # print the depth of the return stack
   PNT_NTSTR $rstackNtStr
@@ -757,8 +753,7 @@ assertPanicClean:
 assertClean:
   call checkErrno
   call assertPanicClean
-  call assertStackEmpty
-  ret
+  jmp assertStackEmpty
 
 .macro TESTCASE name
   testname_\name : .ascii "\name\0"
@@ -888,8 +883,7 @@ drop:
 assertEq: # ( a b -- )
   POPP %eax
   POPP %ebx
-  call assertEaxEbxEq
-  ret
+  jmp assertEaxEbxEq
 
 .macro ASSERT_TOP v
   PUSHP \v
@@ -913,8 +907,7 @@ TESTCASE pstack
   call unreachable
 1:ASSERT_PANICED $ERR_PSTACK_OVERFLOW
   movl pstackMax, %ebp
-  call assertClean
-  ret
+  jmp assertClean
 
 pushRsInvalid:
   # Checks to make sure that the datastack hasn't overflowed.
@@ -1097,8 +1090,7 @@ cStrMove: # %ebx:&fromCstr &ecx:&toCstr
   movb %al, (%ecx)   # set `to` to same count
   inc %ebx  # inc both to point at bytes (not count)
   inc %ecx
-  call bmove
-  ret
+  jmp bmove
 
 .macro CSTR_MOVE from, to
   SET_BC \from, \to
@@ -1110,16 +1102,14 @@ cmpCStr: # %eax:&aCStr %ecx:&bCStr ( -- ) %eax:cmp
   inc %eax
   MOVB_D (%ecx)
   inc %ecx
-  call bcmp
-  ret
+  jmp bcmp
 
 cStrNocaseEq: # %eax:&aCStr %ecx:&bCStr
   MOVB_B (%eax)
   inc %eax
   MOVB_D (%ecx)
   inc %ecx
-  call beqNocase
-  ret
+  jmp beqNocase
 
 .macro ASSERT_CSTR_NOCASE_EQ aCStr, bCStr
   movl \aCStr, %eax
@@ -1470,8 +1460,7 @@ flush_sourceCStr_to_wordCStr:
   movb %al, sourceCStr  # update count
   # eax=count-after-non-whitespace, ebx=&after-non-whitespace
   movl $sourceStr, %ecx # ecx=&to
-  call bmove
-  ret
+  jmp bmove
 
 PANIC_LANDING MAX_WORD_CNT
 
@@ -1488,8 +1477,7 @@ word: # Store the next word from the source into wordCStr
   movl %eax, %ebx # eax will = wordCount
   MOVB_A sourceCStr
   subl %ebx, %eax
-  call flush_sourceCStr_to_wordCStr
-  ret
+  jmp flush_sourceCStr_to_wordCStr
 word_noWhitespace:
   // There can be no whitespace for a few reasons:
   // - We reached the EOF, meaning this is the last word -- return whatever we
@@ -1505,8 +1493,7 @@ word_noWhitespace:
   PANIC MAX_WORD_CNT
 word_eof: # eof reached, return what we have
   MOVB_A sourceCStr
-  call flush_sourceCStr_to_wordCStr
-  ret
+  jmp flush_sourceCStr_to_wordCStr
 
 .macro TEST_FIND_WHITESPACE fn, cStr, expectedCountRemaining
   # Test findWhitespace using the cStr and the count
@@ -1689,8 +1676,7 @@ dictSetup:
   movl %eax, dictLTimeMin
   addl $DEFAULT_LTIME_SIZE, %eax
   movl %eax, dictLTimeMax
-  call dictResetLTime
-  ret
+  jmp dictResetLTime
 
 dictResetLTime:
   // The Localtime dict can be completely reset quickly.
@@ -1812,8 +1798,7 @@ dictFindName: # %ecx:&cStr ( -- ) &eax:mt (aka &node)
   JRZ %edi, return
   movl (%edi), %eax # eax=&firstNode
   POPP %ecx
-  call metaSllFindName
-  ret
+  jmp metaSllFindName
 foundLTime:
   DROPP 1
   ret
@@ -1955,17 +1940,32 @@ compile: # %ebx:value ( -- )
 .endm
 
 PANIC_LANDING INVALID_XT
-
 compileXt: # %ebx:xt ( -- )
   // Compile an xt, checking that it's type is allowed
   JMP_B dictCodeMinRTime, %ebx, panicNow_INVALID_XT
-  JMP_B dictCodeMinCTime, %ebx, compileXt_RTime
+  JMP_B dictCodeMinCTime, %ebx, compileXt_valid
   JMP_A dictCodeMaxCTime, %ebx, panicNow_INVALID_XT
-  TODO # valid CTime
+compileXt_valid:
   jmp compile
-compileXt_RTime:
-  TODO # valid RTime
-  jmp compile
+
+_callXt: # %ebx:xt ( * -- * )
+  # Executes an xt, returning control when complete.
+  # This can be used to execute forth words from within assembly.
+  pushl %esi  # store current esi so it can be restored
+  movl $callXt_exit, %esi # set the "currently executing" to own control flow
+  jmp *(%ebx)
+.align 4
+# The double indirection is there because of how DOCOL and EXIT work together.
+callXt_exit: .int callXt_xt # kind of a "fake exit"
+callXt_xt: .int callXt_cont # kind of a "fake xt"
+callXt_cont:
+  popl %esi # restore esi
+  ret
+
+execOrCompile: # %ebx:xt ( -- )
+  // Check the IMM of the xt. Execute it if it is immediate, compile it if it
+  // is not.
+
 
 ##############################
 # Main Entrypoint and test suite
@@ -1992,14 +1992,12 @@ testSuite:
   call testcase_dictMacros
   call testcase_dictPush
 
-  call assertClean
-  ret
+  jmp assertClean
 
 setupHeap:
   // Sets up the heap, including the dictionary and other data structures.
   movl $heapMin, heap
-  call dictSetup
-  ret
+  jmp dictSetup
 
 setupStack:
   movl $rstackMinRoot, rstackMin
