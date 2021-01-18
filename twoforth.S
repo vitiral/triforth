@@ -451,7 +451,10 @@ pntEbxUxPretty: # %ebx:f ( -- )
   movl \s, %ecx
   call pntEcxNtStr
 .endm
-
+.macro PNT_NTSTR_SPC s
+  PNT_NTSTR \s
+  PNT_ASCII $' '
+.endm
 .macro PNT_NTSTR_NL s
   PNT_NTSTR \s
   PNT_ASCII $'\n'
@@ -802,82 +805,183 @@ PANIC_LANDING PSTACK_UNDERFLOW
 PANIC_LANDING RSTACK_OVERFLOW
 PANIC_LANDING RSTACK_UNDERFLOW
 
-pushDsInvalid:
-  # Checks to make sure that the datastack hasn't overflowed.
-  # If it has, re-increments and panics with appropriate error.
-  addl $4, %ebp
+.macro INVALID_PUSHP num
+invalidPushp\num :
+  addl $4*\num, %ebp
   PANIC PSTACK_OVERFLOW
+.endm
+INVALID_PUSHP 1
+INVALID_PUSHP 2
+INVALID_PUSHP 3
+INVALID_PUSHP 4
+INVALID_PUSHP 5
 
-.macro PUSHP reg
-  subl $CELL, %ebp
-  cmpl pstackMin, %ebp
-  jl pushDsInvalid
-  movl \reg , (%ebp)
-.endm
-.macro PUSHP2 a, b  # ( -- a b )
-  PUSHP \b
-  PUSHP \a
-.endm
-.macro PUSHP3 a, b, c # ( -- a b c )
-  PUSHP \c
-  PUSHP2 \a, \b
-.endm
-.macro PUSHP4 a, b, c, d # ( -- a b c d )
-  PUSHP \d
-  PUSHP3 \a, \b, \c
-.endm
-.macro PUSHP5 a, b, c, d, e # ( -- a b c d e )
-  PUSHP \e
-  PUSHP4 \a, \b, \c, \d
-.endm
-
-.macro POPP reg
-  movl (%ebp) , \reg
-  cmpl pstackMax, %ebp
-  jge panicNow_PSTACK_UNDERFLOW
-  addl $CELL, %ebp
-.endm
-.macro POPP2 aReg, bReg # ( a b -- ) aReg:a bReg:b
-  POPP \aReg
-  POPP \bReg
-.endm
-.macro POPP3 aReg, bReg, cReg # ( a b c -- ) aReg:a bReg:b cReg:c
-  POPP2 \aReg, \bReg
-  POPP \cReg
-.endm
-
-.macro DROP_INVALID_LANDING n
-dropInvalid\n :
-  subl $CELL*\n , %ebp
+.macro INVALID_POPP num
+invalidPopp\num :
+  subl $4*\num, %ebp
   PANIC PSTACK_UNDERFLOW
 .endm
+INVALID_POPP 1
+INVALID_POPP 2
+INVALID_POPP 3
+INVALID_POPP 4
+INVALID_POPP 5
 
-DROP_INVALID_LANDING 1
-DROP_INVALID_LANDING 2
-DROP_INVALID_LANDING 3
-DROP_INVALID_LANDING 4
+.macro INVALID_PUSHR num
+invalidPushr\num :
+  addl $4*\num, %esp
+  PANIC RSTACK_OVERFLOW
+.endm
+INVALID_PUSHR 1
+INVALID_PUSHR 2
+INVALID_PUSHR 3
+
+.macro INVALID_POPR num
+invalidPopr\num :
+  subl $4*\num, %esp
+  PANIC RSTACK_UNDERFLOW
+.endm
+INVALID_POPR 1
+INVALID_POPR 2
+INVALID_POPR 3
+
+// Set one or more indexes on the stack
+.macro SET_P1 c0 # ( c0 )
+  movl \c0, (%ebp)
+.endm
+.macro SET_P2 c0, c1 # ( c0 c1 )
+  SET_P1 \c0
+  movl \c1, CELL(%ebp)
+.endm
+.macro SET_P3 c0, c1, c2 # ( c0 c1 c2 )
+  SET_P2 \c0, \c1
+  movl \c2, 2*CELL(%ebp)
+.endm
+.macro SET_P4 c0, c1, c2, c3 # ( c0 c1 c2 c3 )
+  SET_P3 \c0, \c1, \c2
+  movl \c3, 3*CELL(%ebp)
+.endm
+.macro SET_P5 c0, c1, c2, c3, c4 # ( c0 c1 c2 c3 c4 )
+  SET_P4 \c0, \c1, \c2, \c3
+  movl \c4, 4*CELL(%ebp)
+.endm
+
+// get 1 or more indexes on the stack
+.macro GET_P1 c0 # ( c0 ) \ set the index at the stack
+  movl (%ebp), \c0
+.endm
+.macro GET_P2 c0, c1 # ( c0 c1 )
+  GET_P1 \c0
+  movl CELL(%ebp), \c1
+.endm
+.macro GET_P3 c0, c1, c2 # ( c0 c1 c2 )
+  GET_P2 \c0, \c1
+  movl 2*CELL(%ebp), \c2
+.endm
+.macro GET_P4 c0, c1, c2, c3 # ( c0 c1 c2 c3 )
+  GET_P3 \c0, \c1, \c2
+  movl 3*CELL(%ebp), \c3
+.endm
+.macro GET_P5 c0, c1, c2, c3, c4 # ( c0 c1 c2 c3 c4 )
+  GET_P4 \c0, \c1, \c2, \c3
+  movl 4*CELL(%ebp), \c4
+.endm
+
+.macro UNCK_PUSHP c0 # ( -- c0 ) \ unchecked push
+  subl $CELL, %ebp
+  SET_P1 \c0
+.endm
+.macro UNCK_PUSHP2 c0, c1 # ( -- c0 c1 )
+  subl $2*CELL, %ebp
+  SET_P2 \c0, \c1
+.endm
+.macro UNCK_PUSHP3 c0, c1, c2 # ( -- c0 c1 c2 )
+  subl $3*CELL, %ebp
+  SET_P3 \c0, \c1, \c2
+.endm
+.macro UNCK_PUSHP4 c0, c1, c2, c3 # ( -- c0 c1 c2 c3 )
+  subl $4*CELL, %ebp
+  SET_P3 \c0, \c1, \c2, \c3
+.endm
+.macro UNCK_PUSHP5 c0, c1, c2, c3, c4 # ( -- c0 c1 c2 c3 c4 )
+  subl $5*CELL, %ebp
+  SET_P3 \c0, \c1, \c2, \c3, \c4
+.endm
+
+.macro UNCK_POPP c0 # ( c0 -- )
+  GET_P1 \c0
+  addl $CELL, %ebp
+.endm
+.macro UNCK_POPP2 c0, c1 # ( c0 c1 -- )
+  GET_P2 \c0, \c2
+  addl $2*CELL, %ebp
+.endm
+.macro UNCK_POPP3 c0, c1, c2 # ( c0 c1 c2 -- )
+  GET_P3 \c0, \c2, \c3
+  addl $3*CELL, %ebp
+.endm
+
+.macro PSTACK_PUSH_PREPARE_AND_CHECK num
+  // Moves the pstack down by num cells and checks validity
+  subl $CELL*\num, %ebp
+  cmpl pstackMin, %ebp
+  jb invalidPushp\num
+.endm
+.macro PUSHP c0 # ( -- c0 ) \ checked push
+  PSTACK_PUSH_PREPARE_AND_CHECK 1
+  SET_P1 \c0
+.endm
+.macro PUSHP2 c0, c1 # ( -- c0 c1 )
+  PSTACK_PUSH_PREPARE_AND_CHECK 2
+  SET_P2 \c0, \c1
+.endm
+.macro PUSHP3 c0, c1, c2 # ( -- c0 c1 c2 )
+  PSTACK_PUSH_PREPARE_AND_CHECK 3
+  SET_P3 \c0, \c1, \c2
+.endm
+.macro PUSHP4 c0, c1, c2, c3 # ( -- c0 c1 c2 c3 )
+  PSTACK_PUSH_PREPARE_AND_CHECK 4
+  SET_P4 \c0, \c1, \c2, \c3
+.endm
+.macro PUSHP5 c0, c1, c2, c3, c4 # ( -- c0 c1 c2 c3 c4 )
+  PSTACK_PUSH_PREPARE_AND_CHECK 5
+  SET_P5 \c0, \c1, \c2, \c3, \c4
+.endm
+
+.macro PSTACK_POP_PREPARE_AND_CHECK num
+  // Checks that there is enough room in pstack before proceeding
+  // Note: we use negative indexing for retrieving the values after
+  // this step
+  addl $CELL*\num, %ebp
+  cmpl pstackMax, %ebp
+  ja invalidPopp\num
+.endm
+.macro POPP c0 # ( c0 -- )
+  PSTACK_POP_PREPARE_AND_CHECK 1
+  movl -CELL(%ebp), \c0
+.endm
+.macro POPP2 c0, c1 # ( c0 c1 -- )
+  PSTACK_POP_PREPARE_AND_CHECK 2
+  movl -2*CELL(%ebp), \c0
+  movl -CELL(%ebp), \c1
+.endm
+.macro POPP3 c0, c1, c2 # ( c0 c1 c2 -- )
+  PSTACK_POP_PREPARE_AND_CHECK 3
+  movl -3*CELL(%ebp), \c0
+  movl -2*CELL(%ebp), \c1
+  movl -CELL(%ebp), \c2
+.endm
 
 .macro DROPP n
   addl $CELL*\n , %ebp
   cmpl pstackMax, %ebp
-  jg dropInvalid\n
+  jg invalidPopp\n
 .endm
-
-.macro DROPR_INVALID_LANDING n
-droprInvalid\n :
-  subl $CELL*\n , %esp
-  PANIC RSTACK_UNDERFLOW
-.endm
-
-DROPR_INVALID_LANDING 1
-DROPR_INVALID_LANDING 2
-DROPR_INVALID_LANDING 3
-DROPR_INVALID_LANDING 4
 
 .macro DROPR n
   addl $CELL*\n , %esp
   cmpl rstackMax, %esp
-  jg droprInvalid\n
+  jg invalidPopr\n
 .endm
 
 drop:
@@ -894,6 +998,44 @@ assertEq: # ( a b -- )
 .macro ASSERT_TOP v
   PUSHP \v
   call assertEq
+.endm
+
+.macro ASSERT_FAILED_LANDING name
+  assertFailedStr\name : .ascii "\name\0"
+  assertFailed\name :
+    PNT_NTSTR_SPC $assertFailStr
+    PNT_NTSTR_SPC $assertFailedStr\name
+.endm
+
+.macro ASSERT_AB a, b
+  ASSERT_FAILED_LANDING ASSERT_AB
+    PNT_UX_SPC \a
+    PNT_UX_SPC \b
+    jmp exitFailTest
+  JMP_NE \a, %eax, assertFailedASSERT_AB
+  JMP_NE \b, %ebx, assertFailedASSERT_AB
+.endm
+.macro ASSERT_ABC a, b, c
+  ASSERT_FAILED_LANDING ASSERT_ABC
+    PNT_UX_SPC \a
+    PNT_UX_SPC \b
+    PNT_UX_SPC \c
+    jmp exitFailTest
+  JMP_NE \a, %eax, assertFailedASSERT_ABC
+  JMP_NE \b, %ebx, assertFailedASSERT_ABC
+  JMP_NE \c, %ecx, assertFailedASSERT_ABC
+.endm
+.macro ASSERT_ABCD a, b, c, d
+  ASSERT_FAILED_LANDING ASSERT_ABCD
+    PNT_UX_SPC \a
+    PNT_UX_SPC \b
+    PNT_UX_SPC \c
+    PNT_UX_SPC \d
+    jmp exitFailTest
+  JMP_NE \a, %eax, assertFailedASSERT_ABCD
+  JMP_NE \b, %ebx, assertFailedASSERT_ABCD
+  JMP_NE \c, %ecx, assertFailedASSERT_ABCD
+  JMP_NE \d, %edx, assertFailedASSERT_ABCD
 .endm
 
 TESTCASE pstack
@@ -913,6 +1055,26 @@ TESTCASE pstack
   call unreachable
 1:ASSERT_PANICED $ERR_PSTACK_OVERFLOW
   movl pstackMax, %ebp
+
+  PUSHP2 $1, $2
+  ASSERT_TOP $1
+  ASSERT_TOP $2
+
+  PUSHP3 $1, $2, $3
+  ASSERT_TOP $1
+  ASSERT_TOP $2
+  ASSERT_TOP $3
+
+  PUSHP4 $1, $2, $3, $4
+  ASSERT_TOP $1
+  ASSERT_TOP $2
+  ASSERT_TOP $3
+  ASSERT_TOP $4
+
+  PUSHP2 $1, $2
+  POPP2 %eax, %ebx
+  ASSERT_AB $1, $2
+
   jmp assertClean
 
 pushRsInvalid:
@@ -944,14 +1106,6 @@ popRsInvalid:
 .endm
 .macro SET_P index, reg
   movl \reg, 4*\index(%ebp)
-.endm
-
-.macro CHECK_PSTACK num, reg 
-  // check that stack is at least num size using reg as temp
-  movl rstackMax, \reg
-  addl $CELL*\num, \reg
-  cmpl \reg , %ebp
-  jae panicNow_PSTACK_UNDERFLOW
 .endm
 
 ################################################################################
@@ -2075,28 +2229,34 @@ afterSetupStack:
 //   before execution of forth source code.
 // - code: the code to execute for this word.
 
-.macro ASM_WORD name
+.macro ASM_WORD_NAME name, asmName
   .align 4
-  mtAddr_\name :        .int PREV_WORD_MT
-  xt_\name:             .int word_\name
-  nameNtStr_\name :     .ascii "\name\0"
-  word_\name :
-  .set PREV_WORD_MT,    mtAddr_\name
+  mtAddr_\asmName :        .int PREV_WORD_MT
+  xt_\asmName:          .int word_\asmName
+  nameNtStr_\asmName :     .ascii "\name\0"
+  word_\asmName :
+  .set PREV_WORD_MT,    mtAddr_\asmName
+.endm
+.macro ASM_WORD name
+  ASM_WORD_NAME "\name", "\name"
+.endm
+.macro NEXT_ASM_WORD_NAME name, asmName
+  NEXT
+  ASM_WORD_NAME "\name", "\asmName"
 .endm
 .macro NEXT_ASM_WORD name
   NEXT
-  ASM_WORD \name
+  ASM_WORD "\name"
 .endm
 
 ASM_WORD "exit"
   popl %esi
 NEXT_ASM_WORD "swap" # ( c0 c1 -- c1 c0 )
   POPP2 %eax, %ebx
-  PUSHP2 %ebx, %eax
+  UNCK_PUSHP2 %ebx, %eax
 NEXT_ASM_WORD "dup" # ( c0 -- c0 c0 )
   POPP %eax
-  PUSHP %eax
-  PUSHP %eax
+  PUSHP2 %eax, %eax
 NEXT_ASM_WORD "2dup" # ( c0 c1 -- c0 c1 c0 c1 )
   POPP2 %eax, %ebx
   PUSHP2 %eax, %ebx
@@ -2112,9 +2272,8 @@ NEXT_ASM_WORD "rrot" # ( c0 c1 c2 -- c2 c0 c1 )
   POPP3 %eax, %ebx, %ecx
   PUSHP3 %ecx, %eax, %ebx
 NEXT_ASM_WORD "over" # ( c0 c1 -- c0 c1 c0 )
-  CHECK_PSTACK 2, %eax
-  GET_P 1, %eax
-  PUSHP %eax
+  POPP2 %eax, %ebx
+  PUSHP3 %eax, %ebx, %eax
 NEXT_ASM_WORD "nip" # ( c0 c1 -- c1 )
   POPP2 %eax, %ebx
   PUSHP %ebx
@@ -2128,11 +2287,11 @@ NEXT_ASM_WORD "pick" # ( index ... -- c ... ) \ Get cell at index
 NEXT_ASM_WORD "replace" # ( index c ... -- .... ) \ replace cell at index with c
   POPP2 %eax, %ebx
   movl %ebx, (%ebp,%eax,CELL)
-# NEXT_ASM_WORD "?dup" # ( c -- c c? ) \ dup top of stack if non-zero
-#   POPP %eax
-#   PUSHP %eax
-#   JRZ %eax, word_next
-#   PUSHP %eax
+NEXT_ASM_WORD_NAME "?dup", maybeDup # ( c -- c c? ) \ dup top of stack if non-zero
+  POPP %eax
+  PUSHP %eax
+  JRZ %eax, word_next
+  PUSHP %eax
 
 .macro NEXT_ASM_WORD_MACRO_N name, do, n
   NEXT_ASM_WORD "\name"
