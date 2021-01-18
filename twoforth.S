@@ -814,17 +814,37 @@ pushDsInvalid:
   jl pushDsInvalid
   movl \reg , (%ebp)
 .endm
-
-popDsInvalid:
-  PANIC PSTACK_UNDERFLOW
+.macro PUSHP2 a, b  # ( -- a b )
+  PUSHP \b
+  PUSHP \a
+.endm
+.macro PUSHP3 a, b, c # ( -- a b c )
+  PUSHP \c
+  PUSHP2 \a, \b
+.endm
+.macro PUSHP4 a, b, c, d # ( -- a b c d )
+  PUSHP \d
+  PUSHP3 \a, \b, \c
+.endm
+.macro PUSHP5 a, b, c, d, e # ( -- a b c d e )
+  PUSHP \e
+  PUSHP4 \a, \b, \c, \d
+.endm
 
 .macro POPP reg
   movl (%ebp) , \reg
   cmpl pstackMax, %ebp
-  jge popDsInvalid
+  jge panicNow_PSTACK_UNDERFLOW
   addl $CELL, %ebp
 .endm
-
+.macro POPP2 aReg, bReg # ( a b -- ) aReg:a bReg:b
+  POPP \aReg
+  POPP \bReg
+.endm
+.macro POPP3 aReg, bReg, cReg # ( a b c -- ) aReg:a bReg:b cReg:c
+  POPP2 \aReg, \bReg
+  POPP \cReg
+.endm
 
 .macro DROP_INVALID_LANDING n
 dropInvalid\n :
@@ -862,7 +882,7 @@ DROPR_INVALID_LANDING 4
 
 drop:
   cmpl pstackMax, %ebp
-  jge popDsInvalid
+  jge panicNow_PSTACK_UNDERFLOW
   addl $CELL, %ebp
   ret
 
@@ -919,27 +939,19 @@ popRsInvalid:
   jge popRsInvalid
 .endm
 
-.macro PUSHP2 a, b  # ( -- a b )
-  PUSHP \b
-  PUSHP \a
-.endm
-.macro PUSHP3 a, b, c # ( -- a b c )
-  PUSHP \c
-  PUSHP2 \a, \b
-.endm
-.macro PUSHP4 a, b, c, d # ( -- a b c d )
-  PUSHP \d
-  PUSHP3 \a, \b, \c
-.endm
-.macro PUSHP5 a, b, c, d, e # ( -- a b c d e )
-  PUSHP \e
-  PUSHP4 \a, \b, \c, \d
-.endm
 .macro GET_P index, reg
   movl 4*\index(%ebp), \reg
 .endm
 .macro SET_P index, reg
   movl \reg, 4*\index(%ebp)
+.endm
+
+.macro CHECK_PSTACK num, reg 
+  // check that stack is at least num size using reg as temp
+  movl rstackMax, \reg
+  addl $CELL*\num, \reg
+  cmpl \reg , %ebp
+  jae panicNow_PSTACK_UNDERFLOW
 .endm
 
 ################################################################################
@@ -1584,6 +1596,9 @@ test_words_end:
 //      immediate or debugging) for use within a function. Can be used to make one-off macros
 //      for helpful variable naming, etc.
 
+# Bitmap for info0
+.equ INFO0_IMM, 0x10000000
+
 # Offsets into the global "dict struct"
 .equ DICT_OFFSET_STRUCT,    0x0  # start of the struct
 .equ DICT_OFFSET_CODE_MIN,  0x0
@@ -1899,7 +1914,9 @@ dictNew: # %eax:dictType %ecx:&nameCStr ( -- ) %eax:mt %ebx:xt
   DICT_META_SET %eax, xt, %ebx, %edx # set xt in metadata
   ret
 
-.equ INFO_IMM, 0x10000000
+################################################################################
+#### Compiling Forth Words                                                  ####
+################################################################################
 
 compile: # %ebx:value ( -- )
   # compile the value into the current code space.
@@ -1924,12 +1941,37 @@ compileXt: # %ebx:xt ( -- )
 compileXt_valid:
   jmp compile
 
-_callXt: # %ebx:xt ( * -- * )
-  # Executes an xt, returning control when complete.
-  # This can be used to execute forth words from within assembly.
+################################################################################
+#### Executing Forth Words                                                  ####
+################################################################################
+.macro NEXT
+  // NEXT simply loads the next instruction to execute while also, pointing to
+  // the one after that. It then runs the loaded instruction.
+  //
+  // Note the double indirection. Annother name for an xt may be &&code. It is
+  // a double pointer to executable code.
+  lodsl # same as: movl (%esi), %eax; addl $4, %esi
+  jmp *(%eax)
+.endm
+
+word_next: NEXT  # a place to jmp to like `return`
+
+doWord:
+  // The executable that most forth words point to.
+  // 1. Push the next xt from the _calling word_ (esi) onto the return stack
+  pushl %esi
+  // 2. Add CELL to our own xt (stored at eax from NEXT) and make esi point to
+  //    the next cell
+  addl $CELL, %eax
+  movl %eax, %esi
+  NEXT
+
+callXt: # %eax:xt ( * -- * )
+  // Executes an xt, returning control to this function when complete.  This
+  // can be used to execute forth words from within assembly.
   pushl %esi  # store current esi so it can be restored
   movl $callXt_exit, %esi # set the "currently executing" to own control flow
-  jmp *(%ebx)
+  jmp *(%eax)
 .align 4
 # The double indirection is there because of how DOCOL and EXIT work together.
 callXt_exit: .int callXt_xt # kind of a "fake exit"
@@ -1938,9 +1980,26 @@ callXt_cont:
   popl %esi # restore esi
   ret
 
-execOrCompile: # %ebx:xt ( -- )
+
+execOrComp: # %eax:xt ( -- )
   // Check the IMM of the xt. Execute it if it is immediate, compile it if it
   // is not.
+  XT_TO_MT %eax, %ebx
+  addl $DICT_FIELD_info0, %ebx
+  movl (%ebx), %ebx  # ebx=info0
+  test $INFO0_IMM, %ebx
+  jz execOrCompile_compile
+  jmp callXt
+execOrCompile_compile:
+  movl %eax, %ebx
+  jmp compileXt
+
+.macro CALL_XT xt
+  movl \xt, %eax
+  call callXt
+.endm
+
+
 
 
 ##############################
@@ -1996,6 +2055,96 @@ afterSetupStack:
   EXIT $0
 
 .section .data
+.set PREV_WORD_MT, 0
+
+################################################################################
+#### Pure Assembly Forth Words                                              ####
+################################################################################
+// Note: we must define these in the .data section because we must mutate the
+// mtAddr_\name memory to point to the actual metadata once the word is added
+// to the dictionary (and you cannot mutate memory in the .text section).
+//
+// A pure assembly forth word will have the following structure:
+// mt | &code -> | nameNtStr | code
+//
+// - mt: WILL point to the "metadata" of the word in the dictionary. For now,
+//   (since we will add the words later) it will point at the previously
+//   defined word
+// - wordNtName is the words null-terminated ascii name. This, along with the
+//   singly linked list formed by the mt will be used to populate the dictionary
+//   before execution of forth source code.
+// - code: the code to execute for this word.
+
+.macro ASM_WORD name
+  .align 4
+  mtAddr_\name :        .int PREV_WORD_MT
+  xt_\name:             .int word_\name
+  nameNtStr_\name :     .ascii "\name\0"
+  word_\name :
+  .set PREV_WORD_MT,    mtAddr_\name
+.endm
+.macro NEXT_ASM_WORD name
+  NEXT
+  ASM_WORD \name
+.endm
+
+ASM_WORD "exit"
+  popl %esi
+NEXT_ASM_WORD "swap" # ( c0 c1 -- c1 c0 )
+  POPP2 %eax, %ebx
+  PUSHP2 %ebx, %eax
+NEXT_ASM_WORD "dup" # ( c0 -- c0 c0 )
+  POPP %eax
+  PUSHP %eax
+  PUSHP %eax
+NEXT_ASM_WORD "2dup" # ( c0 c1 -- c0 c1 c0 c1 )
+  POPP2 %eax, %ebx
+  PUSHP2 %eax, %ebx
+  PUSHP2 %eax, %ebx
+NEXT_ASM_WORD "3dup" # ( c0 c1 c2-- c0 c1 c2 c0 c1 c2 )
+  POPP3 %eax, %ebx, %ecx
+  PUSHP3 %eax, %ebx, %ecx
+  PUSHP3 %eax, %ebx, %ecx
+NEXT_ASM_WORD "lrot" # ( c0 c1 c2 -- c1 c2 c0 )
+  POPP3 %eax, %ebx, %ecx
+  PUSHP3 %ebx, %ecx, %eax
+NEXT_ASM_WORD "rrot" # ( c0 c1 c2 -- c2 c0 c1 )
+  POPP3 %eax, %ebx, %ecx
+  PUSHP3 %ecx, %eax, %ebx
+NEXT_ASM_WORD "over" # ( c0 c1 -- c0 c1 c0 )
+  CHECK_PSTACK 2, %eax
+  GET_P 1, %eax
+  PUSHP %eax
+NEXT_ASM_WORD "nip" # ( c0 c1 -- c1 )
+  POPP2 %eax, %ebx
+  PUSHP %ebx
+NEXT_ASM_WORD "tuck" # ( c0 c1-- c0 c1 c0 )
+  POPP2 %eax, %ebx
+  PUSHP3 %eax, %ebx, %eax
+NEXT_ASM_WORD "pick" # ( index ... -- c ... ) \ Get cell at index
+  POPP %eax
+  movl (%ebp,%eax,CELL), %eax
+  PUSHP %eax
+NEXT_ASM_WORD "replace" # ( index c ... -- .... ) \ replace cell at index with c
+  POPP2 %eax, %ebx
+  movl %ebx, (%ebp,%eax,CELL)
+# NEXT_ASM_WORD "?dup" # ( c -- c c? ) \ dup top of stack if non-zero
+#   POPP %eax
+#   PUSHP %eax
+#   JRZ %eax, word_next
+#   PUSHP %eax
+
+.macro NEXT_ASM_WORD_MACRO_N name, do, n
+  NEXT_ASM_WORD "\name"
+  \do \n
+.endm
+NEXT_ASM_WORD_MACRO_N "drop", DROPP, 1    # ( c0 -- )
+NEXT_ASM_WORD_MACRO_N "2drop", DROPP, 2   # ( c0 c1 -- )
+NEXT_ASM_WORD_MACRO_N "3drop", DROPP, 3   # ( c0 c1 c2 -- )
+NEXT_ASM_WORD_MACRO_N "4drop", DROPP, 4   # ( c0 c1 c2 c3 -- )
+
+
+
 heap: .int 0 # see setupMem
 .align 0x100
 heapMin:                     .space 0x200000  # 2MiB TODO: do dynamically from runtime
