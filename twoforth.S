@@ -356,7 +356,6 @@ asciiStr: .ascii "~~~~~~~~~\t\n~~\r~~"  # 0x0-F
           .ascii "PQRSTUVWXYZ[\\]^_"    # 0x50-5F
           .ascii "`abcdefghijklmno"     # 0x60-6F
           .ascii "pqrstuvwxyz{|}~\0"    # 0x70-7E
-.align 4
 pntEcxAscii: # %ecx:byte ( -- )
   // Print the ascii value in Ecx
   // writesys requires a pointer so this allows printing single characters.
@@ -475,7 +474,6 @@ pntCStr: # %ecx=&cStr
 .endm
 
 todoNtStr: .ascii "!! TODO reached !!\n\0"
-.align 4
 .macro TODO
   PNT_NTSTR $todoNtStr
   EXIT $42
@@ -513,7 +511,6 @@ dbgRegNtStr_ecx: .ascii " ecx=\0"
 dbgRegNtStr_edx: .ascii " edx=\0"
 dbgRegNtStr_edi: .ascii " edi=\0"
 dbgEndNtStr: .ascii ")\n\0"
-.align 4
 .macro DBG_REG reg
   PNT_NTSTR $dbgRegNtStr_\reg
   PNT_UX_PRETTY registerSnapshot+offset_\reg
@@ -554,7 +551,6 @@ pntMem_return:
 
 pstackNtStr: .ascii "PSTACK: \0"
 rstackNtStr: .ascii "RSTACK: depth=\0"
-.align 4
 pntPstack: # ( -- )
   PNT_NTSTR $pstackNtStr
   movl %ebp, %ebx   # cache ebp (pstack pointer)
@@ -585,7 +581,6 @@ pntRstackDepth: # print the depth of the return stack
 .endm
 
 panicStartNtStr: .ascii "!! PANIC !! code=0x\0"
-.align 4
 panicDefault:
   PNT_NTSTR $panicStartNtStr
   PNT_UX_SPC panicErr
@@ -608,7 +603,6 @@ panicDefault:
   .set PREV_PANIC_ADDR, errNext_\err
 
   errNtStr_\err : .ascii "\err \0"
-  .align 4
   panicNow_\err :
     movl $ERR_\err, panicErr
     movl $errNtStr_\err, panicNtStr
@@ -630,7 +624,6 @@ panicNow_eaxIsErrno:
   jmp *(panic)
 
 checkErrno_str: .ascii "!! errno=\0"
-.align 4
 checkErrno:
   // Checks that errno is zero or panics
   // Mutates no registers.
@@ -647,7 +640,6 @@ checkErrno:
 
 testStartNtStr: .ascii "## Test \0"
 testFailedNtStr: .ascii "!! Test failed: \0"
-.align 4
 startingTest:
   PNT_NTSTR $testStartNtStr
   PNT_NTSTR testingNtStr
@@ -665,7 +657,6 @@ exitFailTest:
 
 assertFailStr: .ascii "!! ASSERT FAIL: \0"
 assertEaxEbxEq_str: .ascii " = \0"
-.align 4
 assertEaxEbxEq:
   JMP_E %eax, %ebx, return
   subl $8, %ebp
@@ -679,7 +670,6 @@ assertEaxEbxEq:
   jmp exitFailTest
 
 assertEaxEbxNe_str: .ascii " = \0"
-.align 4
 assertEaxEbxNe:
   JMP_NE %eax, %ebx, return
   subl $8, %ebp
@@ -709,7 +699,6 @@ panicExpected:
 .endm
 
 panicErrInvalidStr: .ascii "!! panicErr not expected value: \0"
-.align 4
 panicErrInvalid:
   PNT_NTSTR $panicErrInvalidStr
   PNT_UX_SPC panicErr
@@ -725,7 +714,6 @@ panicErrInvalid:
 .endm
 
 assertStackEmptyStr: .ascii "!! Stack not empty: \n\0"
-.align 4
 assertStackEmpty:
   movl pstackMax, %eax
   subl %ebp, %eax
@@ -737,7 +725,6 @@ assertStackEmpty:
 
 assertPanicClean_str1: .ascii "!! Not clean panic==panicExpected\n\0"
 assertPanicClean_str2: .ascii "!! Not clean panicErr==\0"
-.align 4
 assertPanicClean:
   cmpl $panicExpected, panic
   je 1f
@@ -757,7 +744,6 @@ assertClean:
 
 .macro TESTCASE name
   testname_\name : .ascii "\name\0"
-  .align 4
   testcase_\name :
     movl $testname_\name, testingNtStr
     call startingTest
@@ -1003,7 +989,6 @@ bcmp_lt:
 .endm
 
 test_bcmpStr: .ascii "aabbcc\0"
-.align 4
 TESTCASE bcmp
   ASSERT_BYTES_CMP $EQ, $test_bcmpStr,   $3, $test_bcmpStr   ,$3 # same string is equal
   ASSERT_BYTES_CMP $LT, $test_bcmpStr,   $2, $test_bcmpStr   ,$3 # less count is less than
@@ -1061,7 +1046,6 @@ beqNocase_eq:
 .endm
 
 test_beqNocaseStr: .ascii "aaAAbbBB\0"
-.align 4
 TESTCASE beqNocase
   ASSERT_BYTES_NOCASE_EQ $3, $test_beqNocaseStr, $3, $test_beqNocaseStr   # same string =
   ASSERT_BYTES_NOCASE_EQ $2, $test_beqNocaseStr, $2, $test_beqNocaseStr+2 # different case =
@@ -1122,7 +1106,6 @@ test_bmoveCStr: .byte 0x06
   .ascii "abcDEz"
 test_bmoveCStr2: .byte 0x03
   .ascii "p12"
-.align 4
 TESTCASE bmove
   subl $0x20, %ebp
 rightHereTODO:
@@ -1266,7 +1249,6 @@ test_asciiToHex_3aB03: .ascii "3aB03"
 test_asciiToHex_DeadBeef: .ascii "DeadBeef"
 test_asciiToHex_2002_1111: .ascii "2002_1111"
 test_asciiToHex_1_0000_0000: .ascii "1_0000_0000"
-.align 4
 TESTCASE asciiToHex
   subl $0x10, %ebp
   TEST_ASCII_TO_HEX $test_asciiToHex_0,           $0x1, $0x00000000
@@ -1518,7 +1500,6 @@ test_wordCStr1: .byte 0xC
 test_wordStr1: .ascii "the    quick"
 test_wordCStr2: .byte 8
 test_wordStr2: .ascii "   quick"
-.align 4
 TESTCASE findWhitespace
   TEST_FIND_WHITESPACE findWhitespaceStart, test_wordCStr1, 9 # note: 9 REMAIN
   TEST_FIND_WHITESPACE findWhitespaceStart, test_wordCStr2, 8
@@ -1533,7 +1514,6 @@ file_some_words_cStr: .byte 0x46
 test_wordCStr_specialFill: .byte 0x46
   .ascii "the     quick\n\n\t\t    \tbrown\n  fox jumped over    the "
   .ascii "lazy    dog\n\n    "
-.align 4
 TESTCASE fillSourceCStr
   OPEN_SOURCE_FD $file_some_words
   call fillSourceCStr # do a normal fill, assert as expected
@@ -1561,7 +1541,6 @@ TESTCASE flush_sourceCStr_to_wordCStr
 test_wordWordsNtStr:
   .ascii "the\0quick\0brown\0fox\0jumped\0over\0the\0lazy\0dog\0"
   .ascii "the\0quick\0brown\0fox\0jumped\0over\0the\0lazy\0dog\0\0"
-.align 4
 TESTCASE word
   PUSHR $test_wordWordsNtStr # (%esp)=expected word
   OPEN_SOURCE_FD $file_some_words
@@ -1737,7 +1716,6 @@ getDictTypeGlobalAddr: # %eax:dictType ( -- ) %eax:dictGlobalAddr
 dictAddr_ RTime
 dictAddr_ CTime
 
-.align 4
 dictPush: # %eax:dictTypeGlobalAddr %ecx:&nameCStr ( -- ) %eax:mt (aka &newNode)
   PUSHP %ecx # stack: ( &nameCStr )
   DICT_GLOBAL_GET_ADDR META_HERE, %eax # %eax=&metaHere
@@ -1826,7 +1804,6 @@ hashTest_cStr3: .byte 5
   .ascii "zzzzz"
 hashTest_cStr4: .byte 5
   .ascii "zzazz"
-.align 4
 TESTCASE pjwHash
   // This isn't a very good test, but makes sure there is some spread in the
   // values.
@@ -1875,7 +1852,6 @@ test_dictWord1CStr: .byte 9
   .ascii "TestWord1"
 test_dictNameDneCStr: .byte 3
   .ascii "DNE"
-.align 4
 TESTCASE dictPush
   movl dictMetaMinRTime, %eax
   PUSHP %eax # cache where word will be stored
@@ -2009,7 +1985,6 @@ setupStack:
   jmp afterSetupStack # Note: cannot `ret` as we've modified rstack
 
 mainStartNtStr: .ascii "Starting Triforth...\n\0"
-.align 4
 .globl _start
 _start:
   movl %esp, initialEsp # arguments and environment variables stored here
