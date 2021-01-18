@@ -901,11 +901,11 @@ INVALID_POPR 3
 .endm
 .macro UNCK_PUSHP4 c0, c1, c2, c3 # ( -- c0 c1 c2 c3 )
   subl $4*CELL, %ebp
-  SET_P3 \c0, \c1, \c2, \c3
+  SET_P4 \c0, \c1, \c2, \c3
 .endm
 .macro UNCK_PUSHP5 c0, c1, c2, c3, c4 # ( -- c0 c1 c2 c3 c4 )
   subl $5*CELL, %ebp
-  SET_P3 \c0, \c1, \c2, \c3, \c4
+  SET_P5 \c0, \c1, \c2, \c3, \c4
 .endm
 
 .macro UNCK_POPP c0 # ( c0 -- )
@@ -913,12 +913,16 @@ INVALID_POPR 3
   addl $CELL, %ebp
 .endm
 .macro UNCK_POPP2 c0, c1 # ( c0 c1 -- )
-  GET_P2 \c0, \c2
+  GET_P2 \c0, \c1
   addl $2*CELL, %ebp
 .endm
 .macro UNCK_POPP3 c0, c1, c2 # ( c0 c1 c2 -- )
-  GET_P3 \c0, \c2, \c3
+  GET_P3 \c0, \c1, \c2
   addl $3*CELL, %ebp
+.endm
+.macro UNCK_POPP4 c0, c1, c2, c3 # ( c0 c1 c2 c3 -- )
+  GET_P4 \c0, \c1, \c2, \c3
+  addl $4*CELL, %ebp
 .endm
 
 .macro PSTACK_PUSH_PREPARE_AND_CHECK num
@@ -958,18 +962,25 @@ INVALID_POPR 3
 .endm
 .macro POPP c0 # ( c0 -- )
   PSTACK_POP_PREPARE_AND_CHECK 1
-  movl -CELL(%ebp), \c0
+  movl -CELL(%ebp),   \c0
 .endm
 .macro POPP2 c0, c1 # ( c0 c1 -- )
   PSTACK_POP_PREPARE_AND_CHECK 2
   movl -2*CELL(%ebp), \c0
-  movl -CELL(%ebp), \c1
+  movl -CELL(%ebp),   \c1
 .endm
 .macro POPP3 c0, c1, c2 # ( c0 c1 c2 -- )
   PSTACK_POP_PREPARE_AND_CHECK 3
   movl -3*CELL(%ebp), \c0
   movl -2*CELL(%ebp), \c1
-  movl -CELL(%ebp), \c2
+  movl -CELL(%ebp),   \c2
+.endm
+.macro POPP4 c0, c1, c2, c3 # ( c0 c1 c2 c3 -- )
+  PSTACK_POP_PREPARE_AND_CHECK 4
+  movl -4*CELL(%ebp), \c0
+  movl -3*CELL(%ebp), \c1
+  movl -2*CELL(%ebp), \c2
+  movl -CELL(%ebp),   \c3
 .endm
 
 .macro DROPP n
@@ -1003,35 +1014,28 @@ assertEq: # ( a b -- )
 .macro ASSERT_FAILED_LANDING name
   assertFailedStr\name : .ascii "\name\0"
   assertFailed\name :
+    call snapshotRegisters
     PNT_NTSTR_SPC $assertFailStr
-    PNT_NTSTR_SPC $assertFailedStr\name
+    PNT_NTSTR_NL $assertFailedStr\name
+    call dbgRegisters
+    PNT_ASCII $'\n'
+    call restoreRegisters
+    jmp exitFailTest
 .endm
 
+ASSERT_FAILED_LANDING ASSERT_AB
 .macro ASSERT_AB a, b
-  ASSERT_FAILED_LANDING ASSERT_AB
-    PNT_UX_SPC \a
-    PNT_UX_SPC \b
-    jmp exitFailTest
   JMP_NE \a, %eax, assertFailedASSERT_AB
   JMP_NE \b, %ebx, assertFailedASSERT_AB
 .endm
+ASSERT_FAILED_LANDING ASSERT_ABC
 .macro ASSERT_ABC a, b, c
-  ASSERT_FAILED_LANDING ASSERT_ABC
-    PNT_UX_SPC \a
-    PNT_UX_SPC \b
-    PNT_UX_SPC \c
-    jmp exitFailTest
   JMP_NE \a, %eax, assertFailedASSERT_ABC
   JMP_NE \b, %ebx, assertFailedASSERT_ABC
   JMP_NE \c, %ecx, assertFailedASSERT_ABC
 .endm
+ASSERT_FAILED_LANDING ASSERT_ABCD
 .macro ASSERT_ABCD a, b, c, d
-  ASSERT_FAILED_LANDING ASSERT_ABCD
-    PNT_UX_SPC \a
-    PNT_UX_SPC \b
-    PNT_UX_SPC \c
-    PNT_UX_SPC \d
-    jmp exitFailTest
   JMP_NE \a, %eax, assertFailedASSERT_ABCD
   JMP_NE \b, %ebx, assertFailedASSERT_ABCD
   JMP_NE \c, %ecx, assertFailedASSERT_ABCD
@@ -1075,6 +1079,13 @@ TESTCASE pstack
   POPP2 %eax, %ebx
   ASSERT_AB $1, $2
 
+  PUSHP3 $3, $4, $5
+  POPP3 %eax, %ebx, %ecx
+  ASSERT_ABC $3, $4, $5
+
+  PUSHP4 $6, $7, $8, $9
+  POPP4 %eax, %ebx, %ecx, %edx
+  ASSERT_ABCD $6, $7, $8, $9
   jmp assertClean
 
 pushRsInvalid:
