@@ -846,74 +846,76 @@ INVALID_POPR 2
 INVALID_POPR 3
 
 // Set one or more indexes on the stack
-.macro SET_P1 c0 # ( c0 )
+.macro SET_P0 c0 # ( c0 )
   movl \c0, (%ebp)
 .endm
-.macro SET_P2 c0, c1 # ( c0 c1 )
-  SET_P1 \c0
+.macro SET_P1 c0, c1 # ( c0 c1 )
+  SET_P0 \c0
   movl \c1, CELL(%ebp)
 .endm
-.macro SET_P3 c0, c1, c2 # ( c0 c1 c2 )
-  SET_P2 \c0, \c1
+.macro SET_P2 c0, c1, c2 # ( c0 c1 c2 )
+  SET_P1 \c0, \c1
   movl \c2, 2*CELL(%ebp)
 .endm
-.macro SET_P4 c0, c1, c2, c3 # ( c0 c1 c2 c3 )
-  SET_P3 \c0, \c1, \c2
+.macro SET_P3 c0, c1, c2, c3 # ( c0 c1 c2 c3 )
+  SET_P2 \c0, \c1, \c2
   movl \c3, 3*CELL(%ebp)
 .endm
-.macro SET_P5 c0, c1, c2, c3, c4 # ( c0 c1 c2 c3 c4 )
-  SET_P4 \c0, \c1, \c2, \c3
+.macro SET_P4 c0, c1, c2, c3, c4 # ( c0 c1 c2 c3 c4 )
+  SET_P3 \c0, \c1, \c2, \c3
   movl \c4, 4*CELL(%ebp)
 .endm
 
 // get 1 or more indexes on the stack
-.macro GET_P1 c0 # ( c0 ) \ set the index at the stack
+.macro GET_P0 c0 # ( c0 ) \ set the index at the stack
   movl (%ebp), \c0
 .endm
-.macro GET_P2 c0, c1 # ( c0 c1 )
-  GET_P1 \c0
+.macro GET_P1 c0, c1 # ( c0 c1 )
+  GET_P0 \c0
   movl CELL(%ebp), \c1
 .endm
-.macro GET_P3 c0, c1, c2 # ( c0 c1 c2 )
-  GET_P2 \c0, \c1
+.macro GET_P2 c0, c1, c2 # ( c0 c1 c2 )
+  GET_P1 \c0, \c1
   movl 2*CELL(%ebp), \c2
 .endm
-.macro GET_P4 c0, c1, c2, c3 # ( c0 c1 c2 c3 )
-  GET_P3 \c0, \c1, \c2
+.macro GET_P3 c0, c1, c2, c3 # ( c0 c1 c2 c3 )
+  GET_P2 \c0, \c1, \c2
   movl 3*CELL(%ebp), \c3
 .endm
-.macro GET_P5 c0, c1, c2, c3, c4 # ( c0 c1 c2 c3 c4 )
-  GET_P4 \c0, \c1, \c2, \c3
+.macro GET_P4 c0, c1, c2, c3, c4 # ( c0 c1 c2 c3 c4 )
+  GET_P3 \c0, \c1, \c2, \c3
   movl 4*CELL(%ebp), \c4
 .endm
 
+// Push 1 or more values onto the stack. Note this is NOT indexes.
 .macro UNCK_PUSHP c0 # ( -- c0 ) \ unchecked push
   subl $CELL, %ebp
-  SET_P1 \c0
+  SET_P0 \c0
 .endm
 .macro UNCK_PUSHP2 c0, c1 # ( -- c0 c1 )
   subl $2*CELL, %ebp
-  SET_P2 \c0, \c1
+  SET_P1 \c0, \c1
 .endm
 .macro UNCK_PUSHP3 c0, c1, c2 # ( -- c0 c1 c2 )
   subl $3*CELL, %ebp
-  SET_P3 \c0, \c1, \c2
+  SET_P2 \c0, \c1, \c2
 .endm
 .macro UNCK_PUSHP4 c0, c1, c2, c3 # ( -- c0 c1 c2 c3 )
   subl $4*CELL, %ebp
-  SET_P4 \c0, \c1, \c2, \c3
+  SET_P3 \c0, \c1, \c2, \c3
 .endm
 .macro UNCK_PUSHP5 c0, c1, c2, c3, c4 # ( -- c0 c1 c2 c3 c4 )
   subl $5*CELL, %ebp
-  SET_P5 \c0, \c1, \c2, \c3, \c4
+  SET_P4 \c0, \c1, \c2, \c3, \c4
 .endm
 
+// Pop 1 or more values from the stack. Note this is NOT indexes.
 .macro UNCK_POPP c0 # ( c0 -- )
-  GET_P1 \c0
+  GET_P0 \c0
   addl $CELL, %ebp
 .endm
 .macro UNCK_POPP2 c0, c1 # ( c0 c1 -- )
-  GET_P2 \c0, \c1
+  GET_P1 \c0, \c1
   addl $2*CELL, %ebp
 .endm
 .macro UNCK_POPP3 c0, c1, c2 # ( c0 c1 c2 -- )
@@ -921,7 +923,7 @@ INVALID_POPR 3
   addl $3*CELL, %ebp
 .endm
 .macro UNCK_POPP4 c0, c1, c2, c3 # ( c0 c1 c2 c3 -- )
-  GET_P4 \c0, \c1, \c2, \c3
+  GET_P3 \c0, \c1, \c2, \c3
   addl $4*CELL, %ebp
 .endm
 
@@ -933,23 +935,23 @@ INVALID_POPR 3
 .endm
 .macro PUSHP c0 # ( -- c0 ) \ checked push
   PSTACK_PUSH_PREPARE_AND_CHECK 1
-  SET_P1 \c0
+  SET_P0 \c0
 .endm
 .macro PUSHP2 c0, c1 # ( -- c0 c1 )
   PSTACK_PUSH_PREPARE_AND_CHECK 2
-  SET_P2 \c0, \c1
+  SET_P1 \c0, \c1
 .endm
 .macro PUSHP3 c0, c1, c2 # ( -- c0 c1 c2 )
   PSTACK_PUSH_PREPARE_AND_CHECK 3
-  SET_P3 \c0, \c1, \c2
+  SET_P2 \c0, \c1, \c2
 .endm
 .macro PUSHP4 c0, c1, c2, c3 # ( -- c0 c1 c2 c3 )
   PSTACK_PUSH_PREPARE_AND_CHECK 4
-  SET_P4 \c0, \c1, \c2, \c3
+  SET_P3 \c0, \c1, \c2, \c3
 .endm
 .macro PUSHP5 c0, c1, c2, c3, c4 # ( -- c0 c1 c2 c3 c4 )
   PSTACK_PUSH_PREPARE_AND_CHECK 5
-  SET_P5 \c0, \c1, \c2, \c3, \c4
+  SET_P4 \c0, \c1, \c2, \c3, \c4
 .endm
 
 .macro PSTACK_POP_PREPARE_AND_CHECK num
@@ -1117,6 +1119,14 @@ popRsInvalid:
 .endm
 .macro SET_P index, reg
   movl \reg, 4*\index(%ebp)
+.endm
+
+.macro CHECK_PSTACK_INDEX indexReg
+  // Check that the pstack index is valid. WARN: modifes indexReg
+  shll $2, \indexReg # multiply by 4
+  addl \indexReg, %ebp
+  cmpl pstackMax, \indexReg
+  ja panicNow_PSTACK_UNDERFLOW
 .endm
 
 ################################################################################
@@ -1915,11 +1925,11 @@ dictPush: # %eax:dictTypeGlobalAddr %ecx:&nameCStr ( -- ) %eax:mt (aka &newNode)
   PUSHP %edx  # stack: ( &newNode )
   call cStrMove
   // Insert new node into dictionary
-  GET_P 0, %edx # edx=&newNode
+  GET_P0 %edx # edx=&newNode
   DICT_META_GET_ADDR %edx, nameCStr, %ecx # %ecx=&nameCStr
   call dictCStrBucketAddr # edi=&root
   movl %edi, %eax # eax=&root
-  GET_P 0, %ebx   # ebx=&newNode stack: ( )
+  GET_P0 %ebx   # ebx=&newNode stack: ( )
   call sllPush
   POPP %eax # eax=&node=mt
   ret
@@ -1932,13 +1942,13 @@ metaSllFindName_loop:
   addl $DICT_FIELD_nameCStr, %eax # eax=&nameCStr
   call cStrNocaseEq
   JMP_E $TRUE, %eax, metaSllFindName_found
-  GET_P 0, %eax
+  GET_P0 %eax
   movl (%eax), %eax # eax=eax.&next
   SET_P 0, %eax # store new &node in pstack
   GET_P 1, %ecx # ecx:&cStr
   jmp metaSllFindName_loop
 metaSllFindName_found:
-  GET_P 0, %eax
+  GET_P0 %eax
 metaSllFindName_dne:
   DROPP 2
   ret
@@ -1951,7 +1961,7 @@ dictFindName: # %ecx:&cStr ( -- ) &eax:mt (aka &node)
   call metaSllFindName
   JRNZ %eax, foundLTime
   # Then look for in Runtime/Compiletime dicts
-  GET_P 0, %ecx
+  GET_P0 %ecx
   call dictCStrBucketAddr
   JRZ %edi, return
   movl (%edi), %eax # eax=&firstNode
@@ -2037,7 +2047,7 @@ TESTCASE dictPush
   PUSHP %eax # cache where word will be stored
   movl dictMetaHereRTime, %ebx
   DICT_PUSH $dictRTime, $test_dictWord1CStr
-  GET_P 0, %ebx
+  GET_P0 %ebx
   call assertEaxEbxEq  # Got put at the start of meta
   movl %eax, %edi
   ASSERT_REG_EQ (%edi),   $0  # nextAddr=0
@@ -2270,39 +2280,61 @@ NEXT_ASM_WORD "dup" # ( c0 -- c0 c0 )
   PUSHP2 %eax, %eax
 NEXT_ASM_WORD "2dup" # ( c0 c1 -- c0 c1 c0 c1 )
   POPP2 %eax, %ebx
-  PUSHP2 %eax, %ebx
+  UNCK_PUSHP2 %eax, %ebx
   PUSHP2 %eax, %ebx
 NEXT_ASM_WORD "3dup" # ( c0 c1 c2-- c0 c1 c2 c0 c1 c2 )
   POPP3 %eax, %ebx, %ecx
-  PUSHP3 %eax, %ebx, %ecx
+  UNCK_PUSHP3 %eax, %ebx, %ecx
   PUSHP3 %eax, %ebx, %ecx
 NEXT_ASM_WORD "lrot" # ( c0 c1 c2 -- c1 c2 c0 )
   POPP3 %eax, %ebx, %ecx
-  PUSHP3 %ebx, %ecx, %eax
+  UNCK_PUSHP3 %ebx, %ecx, %eax
 NEXT_ASM_WORD "rrot" # ( c0 c1 c2 -- c2 c0 c1 )
   POPP3 %eax, %ebx, %ecx
-  PUSHP3 %ecx, %eax, %ebx
+  UNCK_PUSHP3 %ecx, %eax, %ebx
 NEXT_ASM_WORD "over" # ( c0 c1 -- c0 c1 c0 )
   POPP2 %eax, %ebx
   PUSHP3 %eax, %ebx, %eax
 NEXT_ASM_WORD "nip" # ( c0 c1 -- c1 )
   POPP2 %eax, %ebx
-  PUSHP %ebx
+  UNCK_PUSHP %ebx
 NEXT_ASM_WORD "tuck" # ( c0 c1-- c0 c1 c0 )
   POPP2 %eax, %ebx
   PUSHP3 %eax, %ebx, %eax
 NEXT_ASM_WORD "pick" # ( index ... -- c ... ) \ Get cell at index
   POPP %eax
+  movl %eax, %ebx
+  CHECK_PSTACK_INDEX %ebx
   movl (%ebp,%eax,CELL), %eax
   PUSHP %eax
 NEXT_ASM_WORD "replace" # ( index c ... -- .... ) \ replace cell at index with c
   POPP2 %eax, %ebx
+  movl %eax, %ecx
+  CHECK_PSTACK_INDEX %ecx
   movl %ebx, (%ebp,%eax,CELL)
 NEXT_ASM_WORD_NAME "?dup", maybeDup # ( c -- c c? ) \ dup top of stack if non-zero
   POPP %eax
   PUSHP %eax
   JRZ %eax, word_next
   PUSHP %eax
+NEXT_ASM_WORD "rPush" # p( c0 -- ) r( -- c0 )
+  POPP %eax
+  PUSHR %eax
+NEXT_ASM_WORD "rPop" # p( -- c0 ) r( c0 -- )
+  POPR %eax
+  PUSHP %eax
+NEXT_ASM_WORD "rPushN" # p( ...[n] c:n -- ) r( -- ...[n] )
+  TODO
+NEXT_ASM_WORD "rPopN" # p( ...[n] c:n -- ) r( -- ...[n] )
+  TODO
+NEXT_ASM_WORD_NAME "&dstack" getDstackAddr
+  PUSHP %ebp
+NEXT_ASM_WORD_NAME "!dstack" setDstackAddr
+  POPP %ebp
+NEXT_ASM_WORD_NAME "&rstack" getRstackAddr
+  PUSHP %esp
+NEXT_ASM_WORD_NAME "!rstack" setRstackAddr
+  POPP %esp
 
 .macro NEXT_ASM_WORD_MACRO_N name, do, n
   NEXT_ASM_WORD "\name"
@@ -2312,7 +2344,6 @@ NEXT_ASM_WORD_MACRO_N "drop", DROPP, 1    # ( c0 -- )
 NEXT_ASM_WORD_MACRO_N "2drop", DROPP, 2   # ( c0 c1 -- )
 NEXT_ASM_WORD_MACRO_N "3drop", DROPP, 3   # ( c0 c1 c2 -- )
 NEXT_ASM_WORD_MACRO_N "4drop", DROPP, 4   # ( c0 c1 c2 c3 -- )
-
 
 
 heap: .int 0 # see setupMem
