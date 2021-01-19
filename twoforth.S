@@ -1481,52 +1481,6 @@ asciiToBinary_skip:
   inc %ecx
   jmp asciiToBinary_loop
 
-##
-# Nshl and Nshr
-# The shl and shr functions only take a CONSTANT. Therefore we have to create a
-# jump table so that we can shift by 0-31 bits in forth
-
-.macro INT_NSH direction, N
-  .int Nsh\N\direction
-.endm
-.macro LOC_NSH direction, N
-Nsh\N\direction :
-  sh\direction $0x\N , %eax
-  ret
-.endm
-.macro NSH_BLOCK cmd, direction, n0, n1, n2, n3, n4, n5, n6, n7
-    \cmd \direction, \n0
-    \cmd \direction, \n1
-    \cmd \direction, \n2
-    \cmd \direction, \n3
-    \cmd \direction, \n4
-    \cmd \direction, \n5
-    \cmd \direction, \n6
-    \cmd \direction, \n7
-.endm
-
-.macro DEFINE_NSH direction
-  Nsh\direction : # %eax:value %ebx:numShift ( -- ) %eax:shiftedValue
-    JMP_A $0x100, %ebx, Nsh_ret0_\direction
-    jmp *Nshjt_\direction(,%ebx,4)
-  Nsh_ret0_\direction :
-    ZERO %eax
-    ret
-  .align 4
-  Nshjt_\direction :
-    NSH_BLOCK INT_NSH, \direction, 00, 01, 02, 03, 04, 05, 06, 07
-    NSH_BLOCK INT_NSH, \direction, 08, 09, 0A, 0B, 0C, 0D, 0E, 0F
-    NSH_BLOCK INT_NSH, \direction, 10, 11, 12, 13, 14, 15, 16, 17
-    NSH_BLOCK INT_NSH, \direction, 18, 19, 1A, 1B, 1C, 1D, 1E, 1F
-
-    NSH_BLOCK LOC_NSH, \direction, 00, 01, 02, 03, 04, 05, 06, 07
-    NSH_BLOCK LOC_NSH, \direction, 08, 09, 0A, 0B, 0C, 0D, 0E, 0F
-    NSH_BLOCK LOC_NSH, \direction, 10, 11, 12, 13, 14, 15, 16, 17
-    NSH_BLOCK LOC_NSH, \direction, 18, 19, 1A, 1B, 1C, 1D, 1E, 1F
-.endm
-
-DEFINE_NSH l # Nshl: shifts eax left by ebx bytes
-DEFINE_NSH r # Nshr: shifts eax right by ebx bytes
 
 ################################################################################
 #### Reading words from source                                              ####
@@ -2272,6 +2226,9 @@ afterSetupStack:
 
 ASM_WORD "exit"
   popl %esi
+
+// ########
+// # Parameter Stack Operations
 NEXT_ASM_WORD "swap" # ( c0 c1 -- c1 c0 )
   POPP2 %eax, %ebx
   UNCK_PUSHP2 %ebx, %eax
@@ -2317,25 +2274,6 @@ NEXT_ASM_WORD_NAME "?dup", maybeDup # ( c -- c c? ) \ dup top of stack if non-ze
   PUSHP %eax
   JRZ %eax, word_next
   PUSHP %eax
-NEXT_ASM_WORD "rPush" # p( c0 -- ) r( -- c0 )
-  POPP %eax
-  PUSHR %eax
-NEXT_ASM_WORD "rPop" # p( -- c0 ) r( c0 -- )
-  POPR %eax
-  PUSHP %eax
-NEXT_ASM_WORD "rPushN" # p( ...[n] c:n -- ) r( -- ...[n] )
-  TODO
-NEXT_ASM_WORD "rPopN" # p( ...[n] c:n -- ) r( -- ...[n] )
-  TODO
-NEXT_ASM_WORD_NAME "&dstack" getDstackAddr
-  PUSHP %ebp
-NEXT_ASM_WORD_NAME "!dstack" setDstackAddr
-  POPP %ebp
-NEXT_ASM_WORD_NAME "&rstack" getRstackAddr
-  PUSHP %esp
-NEXT_ASM_WORD_NAME "!rstack" setRstackAddr
-  POPP %esp
-
 .macro NEXT_ASM_WORD_MACRO_N name, do, n
   NEXT_ASM_WORD "\name"
   \do \n
@@ -2345,6 +2283,142 @@ NEXT_ASM_WORD_MACRO_N "2drop", DROPP, 2   # ( c0 c1 -- )
 NEXT_ASM_WORD_MACRO_N "3drop", DROPP, 3   # ( c0 c1 c2 -- )
 NEXT_ASM_WORD_MACRO_N "4drop", DROPP, 4   # ( c0 c1 c2 c3 -- )
 
+// ########
+// # Return Stack Operations
+NEXT_ASM_WORD "rPush" # p( c0 -- ) r( -- c0 )
+  POPP %eax
+  PUSHR %eax
+NEXT_ASM_WORD "rPop" # p( -- c0 ) r( c0 -- )
+  POPR %eax
+  PUSHP %eax
+NEXT_ASM_WORD "rPushN" # p( c:N c0...cN-1 -- ) r( -- c0...cN-1 )
+  TODO
+NEXT_ASM_WORD "rPopN" # p( c:N -- c0...cN-1 ) r( c0...N-1 -- )
+  TODO
+
+// ########
+// # Address Operations
+NEXT_ASM_WORD_NAME "@", fetch  # ( &c -- c ) \ fetch cell at address
+  POPP %eax
+  movl (%eax), %eax
+  PUSHP %eax
+NEXT_ASM_WORD_NAME "f@", bFetch  # ( &b -- b ) \ fetch byte at address
+  POPP %eax
+  ZERO %ebx
+  movb (%eax), %bl
+  PUSHP %ebx
+NEXT_ASM_WORD_NAME "t@", tFetch  # ( &t -- t ) \ fetch tyte at address
+  POPP %eax
+  ZERO %ebx
+  movw (%eax), %bx
+  PUSHP %ebx
+NEXT_ASM_WORD_NAME "!", store  # ( c &c -- ) \ store value to address
+  POPP2 %eax, %ebx
+  movl %eax, (%ebx)
+NEXT_ASM_WORD_NAME "!+", incAddr  # ( &c -- ) \ increment value at addr
+  POPP %eax
+  addl $1, (%eax)
+NEXT_ASM_WORD_NAME "!-", decAddr  # ( &c -- ) \ derement value at addr
+  POPP %eax
+  subl $1, (%eax)
+NEXT_ASM_WORD_NAME "b!", bStore  # ( b &b -- ) \ store byte at addr
+  POPP2 %eax, %ebx
+  movb %al, (%ebx)
+NEXT_ASM_WORD_NAME "t!", tStore  # ( t &t -- ) \ store tyte at addr
+  POPP2 %eax, %ebx
+  movw %ax, (%ebx)
+NEXT_ASM_WORD_NAME "&dstack" getDstackAddr # ( -- &dstack ) \ get the &dstack
+  PUSHP %ebp
+NEXT_ASM_WORD_NAME "!dstack", setDstackAddr # ( addr -- ??? ) \ set the &dstack
+  POPP %ebp
+NEXT_ASM_WORD_NAME "&rstack", getRstackAddr # ( -- &rstack ) \ get the &rstack
+  PUSHP %esp
+NEXT_ASM_WORD_NAME "!rstack", setRstackAddr # ( addr -- ) \ set the &rstack
+  POPP %esp
+
+// ########
+// # Arithmetic
+.macro NEXT_SINGLE_EAX_OP name, asmName, op # ( c0 -- [OP c0] )
+  NEXT_ASM_WORD_NAME "\name", "\asmName"
+    POPP %eax
+    \op
+    PUSHP %eax
+.endm
+.macro NEXT_ARITHMETIC_OP name, asmName, op # ( c0 c1 -- [c0 OP c1] )
+  NEXT_ASM_WORD_NAME "\name", "\asmName"
+    addl $CELL*2, %ebp    # subtract 2 cells to check stack size
+    cmpl pstackMax, %ebp
+    ja invalidPopp2
+    subl $CELL, %ebp       # return stack to item that will remain
+    movl -CELL(%ebp), %eax # move left operand
+    \op %eax, (%ebp)
+.endm
+NEXT_SINGLE_EAX_OP "+1", "inc", "inc %eax"          # ( c -- c+1 )
+NEXT_SINGLE_EAX_OP "+2", "inc2", "addl $2, %eax"    # ( c -- c+2 )
+NEXT_SINGLE_EAX_OP "+4", "inc4", "addl $4, %eax"    # ( c -- c+4 )
+NEXT_SINGLE_EAX_OP "-", "dec", "dec %eax"           # ( c -- c-1 )
+NEXT_SINGLE_EAX_OP "-2", "dec2", "subl $2, %eax"    # ( c -- c-2 )
+NEXT_SINGLE_EAX_OP "-4", "dec4", "subl $4, %eax"    # ( c -- c-4 )
+NEXT_SINGLE_EAX_OP "2/", "div2", "shr $1, %eax"     # ( c -- c/2 )
+NEXT_SINGLE_EAX_OP "4/", "div4", "shr $2, %eax"     # ( c -- c/4 )
+NEXT_SINGLE_EAX_OP "8/", "div8", "shr $3, %eax"     # ( c -- c/8 )
+NEXT_SINGLE_EAX_OP "x10/", "divx10", "shr $4, %eax" # ( c -- c/0x10 )
+NEXT_SINGLE_EAX_OP "2*", "mul2", "shl $1, %eax"     # ( c -- c*2 )
+NEXT_SINGLE_EAX_OP "4*", "mul4", "shl $2, %eax"     # ( c -- c*4 )
+NEXT_SINGLE_EAX_OP "8*", "mul8", "shl $3, %eax"     # ( c -- c*8 )
+NEXT_SINGLE_EAX_OP "x10*", "mulx10", "shl $4, %eax" # ( c -- c*0x10 )
+NEXT_ARITHMETIC_OP "+", "add", addl                 # ( c c -- [c+c] )
+NEXT_ARITHMETIC_OP "-", "sub", subl                 # ( c c -- [c-c] )
+NEXT_ARITHMETIC_OP "and", "and", andl               # ( c c -- [c&c] )
+NEXT_ARITHMETIC_OP "or", "or", orl                  # ( c c -- [c|c] )
+NEXT_ARITHMETIC_OP "xor", "xor", xorl               # ( c c -- [c^c] )
+
+// #######
+// # nShL and nShR
+// The assembly shift-left and shift-right functions only take a CONSTANT.
+// Therefore we have to create a jump table so that we can shift by 0-31 bits
+// in forth
+.macro INT_NSH direction, N
+  .int Nsh\N\direction
+.endm
+.macro LOC_NSH direction, N
+Nsh\N\direction :
+  sh\direction $0x\N , %eax
+  NEXT
+.endm
+.macro NSH_BLOCK4 cmd, direction, n0, n1, n2, n3, n4, n5, n6, n7
+    \cmd \direction, \n0
+    \cmd \direction, \n1
+    \cmd \direction, \n2
+    \cmd \direction, \n3
+.endm
+.macro NSH_BLOCK8 cmd, direction, n0, n1, n2, n3, n4, n5, n6, n7
+    NSH_BLOCK4 \cmd, \direction, \n0, \n1, \n2, \n3
+    NSH_BLOCK4 \cmd, \direction, \n4, \n5, \n6, \n7
+.endm
+.macro DEFINE_NSH direction
+  Nsh\direction : # %eax:value %ebx:numShift ( -- ) %eax:shiftedValue
+    JMP_A $0x100, %ebx, Nsh_ret0_\direction
+    jmp *Nsh_jt_\direction(,%ebx,4)
+  .align 4
+  Nsh_jt_\direction :
+    NSH_BLOCK8 INT_NSH, \direction, 00, 01, 02, 03, 04, 05, 06, 07
+    NSH_BLOCK8 INT_NSH, \direction, 08, 09, 0A, 0B, 0C, 0D, 0E, 0F
+    NSH_BLOCK8 INT_NSH, \direction, 10, 11, 12, 13, 14, 15, 16, 17
+    NSH_BLOCK8 INT_NSH, \direction, 18, 19, 1A, 1B, 1C, 1D, 1E, 1F
+
+    NSH_BLOCK8 LOC_NSH, \direction, 00, 01, 02, 03, 04, 05, 06, 07
+    NSH_BLOCK8 LOC_NSH, \direction, 08, 09, 0A, 0B, 0C, 0D, 0E, 0F
+    NSH_BLOCK8 LOC_NSH, \direction, 10, 11, 12, 13, 14, 15, 16, 17
+    NSH_BLOCK8 LOC_NSH, \direction, 18, 19, 1A, 1B, 1C, 1D, 1E, 1F
+  Nsh_ret0_\direction :
+    PUSHP $0
+.endm
+
+NEXT_ASM_WORD "shl" # ( n c -- c<<n )
+  DEFINE_NSH l 
+NEXT_ASM_WORD "shr" # ( n c -- c>>n )
+  DEFINE_NSH r
 
 heap: .int 0 # see setupMem
 .align 0x100
