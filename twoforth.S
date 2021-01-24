@@ -17,6 +17,10 @@
 // Constants
 // It's better to define these at the top of the file. Use these as a reference
 // as you encounter them.
+.equ FALSE, 0
+.equ TRUE, 1
+.equ CELL, 4
+
 .equ LINUX_SYSCALL,0x80  # linux kernel interrupt vector
 .equ SYS_OPEN, 5
 .equ SYS_WRITE, 4
@@ -45,11 +49,6 @@
 .equ RC_STACK_OVERFLOW, 106
 .equ RC_STACK_OVERFLOW, 106
 .equ RC_ASM_INVARIANT, 107
-
-.equ FALSE, 0
-.equ TRUE, 1
-
-.equ CELL, 4
 
 ################################################################################
 #### DATA SECTION -- mutable memory must go here.                           ####
@@ -83,7 +82,7 @@ pstackMax: .int 0
 # Global Variables / State / Buffers
 initialEsp: .int 0 # initial %esp register, use to get args/ENV
 pntFd: .int STDERR # where to PNT to
-.equ EMIT_BUFFER_SIZE, 16
+compilingType: .int 0xFFFFffff
 sourceFd: .int STDIN   # where the source code is read from
 .equ SOURCE_STR_CNT_MAX, 0x46  # maximim bytes of source read
 .equ WORD_CNT_MAX, 0x23        # maximum word size
@@ -98,7 +97,22 @@ errno: .int 0
 panic: .int panicDefault # function to call when panicing
 panicErr: .int 0    # error to print while panicing
 panicNtStr: .int 0  # error message to print while panicing
-compilingType: .int 0xFFFFffff
+
+# Offsets into the global "dict struct"
+.equ GLOBAL_DICT_OFFSET_STRUCT,    0x0  # start of the struct
+.equ GLOBAL_DICT_OFFSET_CODE_MIN,  0x0
+.equ GLOBAL_DICT_OFFSET_CODE_HERE, 0x4
+.equ GLOBAL_DICT_OFFSET_CODE_MAX,  0x8
+.equ GLOBAL_DICT_OFFSET_META_MIN,  0xC
+.equ GLOBAL_DICT_OFFSET_META_HERE, 0x10
+.equ GLOBAL_DICT_OFFSET_META_MAX,  0x14
+.equ DEFAULT_DICT_BUCKETS_CNT, 0x1000
+
+.macro DICT_GLOBAL_GET_ADDR field, dictGlobalAddr
+  // Get a field from the dictionary (STRUCT, [CODE|META]_[MIN|MAX|HERE])
+  // dictGlobalAddr becomes the address of the field
+  addl $GLOBAL_DICT_OFFSET_\field, \dictGlobalAddr
+.endm
 
 .macro DECLARE_DICT type
   dict\type :
@@ -1242,14 +1256,25 @@ TESTCASE beqNocase
 
 bmove: # %eax:count %ebx:&from %ecx:&to ( -- )
   // Moves count bytes from &from to &to starting at the beginning.
-  // Uses registers a-d
-  JRZ %eax, return
-  movb (%ebx), %dl
-  movb %dl, (%ecx)
-  dec %eax
-  inc %ebx
-  inc %ecx
-  jmp bmove
+  // Uses registers a-d + edi
+  ZERO %edi
+bmove_loop:
+  JMP_GE %eax, %edi, return
+  movb (%ebx,%edi,1), %dl
+  movb %dl, (%ecx,%edi,1)
+  inc %edi
+  jmp bmove_loop
+
+cmove: # %eax:count %ebx:&from %ecx:&to ( -- )
+  // Moves count cells from &from to &to starting at beginning
+  // Uses registers a-d + edi
+  ZERO %edi
+cmove_loop:
+  JMP_GE %eax, %edi, return
+  movl (%ebx, %edi, 4), %edx
+  movl %edx, (%ecx, %edi, 4)
+  inc %edi
+  jmp cmove_loop
 
 .macro BMOVE count, from, to
   SET_ABC \count, \from, \to
@@ -1275,7 +1300,7 @@ cmpCStr: # %eax:&aCStr %ecx:&bCStr ( -- ) %eax:cmp
   inc %ecx
   jmp bcmp
 
-cStrNocaseEq: # %eax:&aCStr %ecx:&bCStr
+cStrEqNocase: # %eax:&aCStr %ecx:&bCStr
   MOVB_B (%eax)
   inc %eax
   MOVB_D (%ecx)
@@ -1285,7 +1310,7 @@ cStrNocaseEq: # %eax:&aCStr %ecx:&bCStr
 .macro ASSERT_CSTR_NOCASE_EQ aCStr, bCStr
   movl \aCStr, %eax
   movl \bCStr, %ecx
-  call cStrNocaseEq
+  call cStrEqNocase
   ASSERT_REG_EQ %eax, $TRUE
 .endm
 
@@ -1295,7 +1320,6 @@ test_bmoveCStr2: .byte 0x03
   .ascii "p12"
 TESTCASE bmove
   subl $0x20, %ebp
-rightHereTODO:
   CSTR_MOVE $test_bmoveCStr, %ebp
   ASSERT_CSTR_NOCASE_EQ $test_bmoveCStr, %ebp
   CSTR_MOVE $test_bmoveCStr2, %ebp
@@ -1303,12 +1327,12 @@ rightHereTODO:
   addl $0x20, %ebp
   ret
 
-zeroFyte: # %eax:count %ebx:&fyte
+fzero: # %eax:count %ebx:&fyte
   // Zero memory in fyte sizes
   JRZ %eax, return
   dec %eax
   movl $0, (%ebx, %eax, 4)
-  jmp zeroFyte
+  jmp fzero
 
 ################################################################################
 #### Simple Pure Assembly Utility Functions and Macros                      ####
@@ -1728,22 +1752,6 @@ test_words_end:
 # Bitmap for info0
 .equ INFO0_IMM, 0x10000000
 
-# Offsets into the global "dict struct"
-.equ DICT_OFFSET_STRUCT,    0x0  # start of the struct
-.equ DICT_OFFSET_CODE_MIN,  0x0
-.equ DICT_OFFSET_CODE_HERE, 0x4
-.equ DICT_OFFSET_CODE_MAX,  0x8
-.equ DICT_OFFSET_META_MIN,  0xC
-.equ DICT_OFFSET_META_HERE, 0x10
-.equ DICT_OFFSET_META_MAX,  0x14
-.equ DEFAULT_DICT_BUCKETS_CNT, 0x1000
-
-.macro DICT_GLOBAL_GET_ADDR field, dictGlobalAddr
-  // Get a field from the dictionary (STRUCT, [CODE|META]_[MIN|MAX|HERE])
-  // dictGlobalAddr becomes the address of the field
-  addl $DICT_OFFSET_\field, \dictGlobalAddr
-.endm
-
 .equ DICT_SIZE_WITHOUT_NAME, 3 * 4
 .equ DICT_FIELD_nextAddr, 0x0
 .equ DICT_FIELD_xt,       0x4
@@ -1793,7 +1801,7 @@ dictSetup:
   addl $DEFAULT_DICT_BUCKETS_CNT*4, heap
   movl $DEFAULT_DICT_BUCKETS_CNT, %eax
   movl dictBucketsAddr, %ebx
-  call zeroFyte
+  call fzero
 
   movl heap, %eax
   movl %eax, dictLTimeMin
@@ -1894,7 +1902,7 @@ metaSllFindName: # %eax:&node %ecx:&cStr ( -- ) %eax:&node
 metaSllFindName_loop:
   JRZ %eax, metaSllFindName_dne
   addl $DICT_FIELD_nameCStr, %eax # eax=&nameCStr
-  call cStrNocaseEq
+  call cStrEqNocase
   JMP_E $TRUE, %eax, metaSllFindName_found
   GET_P0 %eax
   movl (%eax), %eax # eax=eax.&next
@@ -2337,21 +2345,12 @@ NEXT_ASM_WORD_NAME "!rstack", setRstackAddr # ( addr -- ) \ set the &rstack
   POPP %esp
 
 // ########
-// # Arithmetic
+// # Arithmetic Operations
 .macro NEXT_SINGLE_EAX_OP name, asmName, op # ( c0 -- [OP c0] )
   NEXT_ASM_WORD_NAME "\name", "\asmName"
     POPP %eax
     \op
     PUSHP %eax
-.endm
-.macro NEXT_ARITHMETIC_OP name, asmName, op # ( c0 c1 -- [c0 OP c1] )
-  NEXT_ASM_WORD_NAME "\name", "\asmName"
-    addl $CELL*2, %ebp    # subtract 2 cells to check stack size
-    cmpl pstackMax, %ebp
-    ja invalidPopp2
-    subl $CELL, %ebp       # return stack to item that will remain
-    movl -CELL(%ebp), %eax # move left operand
-    \op %eax, (%ebp)
 .endm
 NEXT_SINGLE_EAX_OP "+1", "inc", "inc %eax"          # ( c -- c+1 )
 NEXT_SINGLE_EAX_OP "+2", "inc2", "addl $2, %eax"    # ( c -- c+2 )
@@ -2367,6 +2366,34 @@ NEXT_SINGLE_EAX_OP "2*", "mul2", "shl $1, %eax"     # ( c -- c*2 )
 NEXT_SINGLE_EAX_OP "4*", "mul4", "shl $2, %eax"     # ( c -- c*4 )
 NEXT_SINGLE_EAX_OP "8*", "mul8", "shl $3, %eax"     # ( c -- c*8 )
 NEXT_SINGLE_EAX_OP "x10*", "mulx10", "shl $4, %eax" # ( c -- c*0x10 )
+NEXT_SINGLE_EAX_OP "inv", "inv", "not %eax"         # ( c -- ~c )
+NEXT_SINGLE_EAX_OP "align4", "align4", "ALIGN4 %eax" # ( c -- c )
+NEXT_ASM_WORD "not" # ( c -- bool) \ logical not, if 0 then TRUE else FALSE
+  POPP %eax
+  JRZ %eax, not_wasFalse
+  PUSHP $FALSE
+  NEXT
+not_wasFalse:
+  PUSHP $TRUE
+NEXT_ASM_WORD_NAME "=0", "eq0" # ( c -- bool ) same as NOT
+  jmp word_not
+NEXT_ASM_WORD "bool" # ( c -- bool )
+  POPP %eax
+  JRZ %eax, bool_false
+  PUSHP $TRUE
+  NEXT
+bool_false:
+  PUSHP $FALSE
+
+.macro NEXT_ARITHMETIC_OP name, asmName, op # ( c0 c1 -- [c0 OP c1] )
+  NEXT_ASM_WORD_NAME "\name", "\asmName"
+    addl $CELL*2, %ebp    # subtract 2 cells to check stack size
+    cmpl pstackMax, %ebp
+    ja invalidPopp2
+    subl $CELL, %ebp       # return stack to item that will remain
+    movl -CELL(%ebp), %eax # move left operand
+    \op %eax, (%ebp)
+.endm
 NEXT_ARITHMETIC_OP "+", "add", addl                 # ( c c -- [c+c] )
 NEXT_ARITHMETIC_OP "-", "sub", subl                 # ( c c -- [c-c] )
 NEXT_ARITHMETIC_OP "and", "and", andl               # ( c c -- [c&c] )
@@ -2419,6 +2446,156 @@ NEXT_ASM_WORD "shl" # ( n c -- c<<n )
   DEFINE_NSH l 
 NEXT_ASM_WORD "shr" # ( n c -- c>>n )
   DEFINE_NSH r
+NEXT_ASM_WORD_NAME "/mod" divMod # ( dividend divisor -- quotient remainder )
+  ZERO %edx
+  POPP2 %eax, %ebx
+  divl %ebx # %edx:%eax / %ebx => %eax=quotient %edx=remainder
+  PUSHP2 %eax, %edx
+
+// ########
+// # Comparison Operations
+.macro NEXT_CMP_OP name, asmName, jmp_cmp # ( c0 c1 -- [jmp_cmp c1, c0, true] )
+  POPP2 %eax, %ebx
+  \jmp_cmp %ebx, %eax, 1f
+  PUSHP $FALSE
+  NEXT
+1:
+  PUSHP $TRUE
+  NEXT
+.endm
+
+NEXT_CMP_OP "<", "lt", "JMP_L"      # ( c0 c1 -- [c0 < c1] )
+NEXT_CMP_OP "<=", "lte", "JMP_LE"   # ( c0 c1 -- [c0 <= c1] )
+NEXT_CMP_OP "=", "eq", "JMP_E"      # ( c0 c1 -- [c0 = c1] )
+NEXT_CMP_OP ">=", "gte", "JMP_GE"   # ( c0 c1 -- [c0 >= c1] )
+NEXT_CMP_OP ">", "gt", "JMP_G"      # ( c0 c1 -- [c0 > c1] )
+
+NEXT_CMP_OP "u<", "ult", "JMP_B"      # ( c0 c1 -- [c0 u< c1] )
+NEXT_CMP_OP "u<=", "ulte", "JMP_BE"   # ( c0 c1 -- [c0 u<= c1] )
+NEXT_CMP_OP "u>=", "ugte", "JMP_AE"   # ( c0 c1 -- [c0 u>= c1] )
+NEXT_CMP_OP "u>", "ugt", "JMP_A"      # ( c0 c1 -- [c0 u> c1] )
+
+// ########
+// # Memory Operations
+NEXT_ASM_WORD bcmp # ( aCount &a bCount &b -- comparison )
+  POPP4 %ebx, %eax, %edx, %ecx
+  call bcmp
+  PUSHP %eax
+NEXT_ASM_WORD beqNocase # ( aCount &a bCount &b -- bool )
+  POPP4 %ebx, %eax, %edx, %ecx
+  call beqNocase
+  PUSHP %eax
+NEXT_ASM_WORD bmove # ( c:count c:&dst c:&src -- )
+  POPP3 %eax, %ecx, %ebx
+  call bmove
+NEXT_ASM_WORD bmoveRight # ( c:count c:&dst c:&src -- )
+  TODO
+NEXT_ASM_WORD cmove # ( c:count c:&dst c:&src -- )
+  POPP3 %eax, %ecx, %ebx
+  call cmove
+NEXT_ASM_WORD fzero # ( count &f -- ) \ zero count fytes
+  POPP2 %eax, %ebx
+  call fzero
+
+// ########
+// # String Operations
+NEXT_ASM_WORD countNtStr # ( &ntStr -- c &str )
+  POPP %ecx
+  call countntEcx
+  PUSHP2 %edx, %ecx
+NEXT_ASM_WORD countCStr # ( &cStr -- c &str )
+  POPP %ecx
+  MOVB_A (%ecx) # eax=count
+  inc %ecx
+  PUSHP2 %eax, %ecx
+NEXT_ASM_WORD cmpCStr # ( &aCStr &bCStr -- comparison )
+  POPP2 %eax, %ecx
+  call cmpCStr
+  PUSHP %eax
+NEXT_ASM_WORD cStrEqNocase # ( &aCStr &bCStr -- comparison )
+  POPP2 %eax, %ecx
+  call cStrEqNocase
+  PUSHP %eax
+NEXT_ASM_WORD cStrMove # ( &dstCStr &srcCStr -- )
+  POPP2 %ecx, %ebx
+  call cStrMove
+
+// ########
+// # Number formatting
+NEXT_ASM_WORD asciiToHexFyte # ( count &b -- c )
+  POPP2 %edx, %ecx
+  call asciiToHex
+  PUSHP %eax
+NEXT_ASM_WORD asciiToBinaryFyte # ( count &b -- c )
+  POPP2 %edx, %ecx
+  call asciiToBinary
+  PUSHP %eax
+
+################################################################################
+#### Forth Variables and Constants                                          ####
+################################################################################
+
+.macro NEXT_ASM_CONSTANT name # define a constant
+  NEXT_ASM_WORD "\name"
+    PUSHP $\name
+.endm
+.macro NEXT_ASM_CONSTANT_ADDR name # define an address
+  NEXT_ASM_WORD_NAME "&\name", "addr\name"
+  PUSHP $\name
+.endm
+
+NEXT_ASM_CONSTANT TRUE
+NEXT_ASM_CONSTANT FALSE
+NEXT_ASM_CONSTANT CELL
+NEXT_ASM_CONSTANT SYS_OPEN
+NEXT_ASM_CONSTANT SYS_WRITE
+NEXT_ASM_CONSTANT SYS_READ
+NEXT_ASM_CONSTANT SYS_CLOSE
+NEXT_ASM_CONSTANT SYS_EXIT
+NEXT_ASM_CONSTANT O_RDONLY
+NEXT_ASM_CONSTANT O_WRONLY
+NEXT_ASM_CONSTANT O_RDWR
+NEXT_ASM_CONSTANT WORD_CNT_MAX
+
+# Stack Constants
+NEXT_ASM_CONSTANT_ADDR rstackMin
+NEXT_ASM_CONSTANT_ADDR rstackMax
+NEXT_ASM_CONSTANT_ADDR pstackMin
+NEXT_ASM_CONSTANT_ADDR pstackMax
+NEXT_ASM_CONSTANT_ADDR initialEsp
+
+# Word/Source Constants
+NEXT_ASM_CONSTANT_ADDR pntFd
+NEXT_ASM_CONSTANT_ADDR compilingType
+NEXT_ASM_CONSTANT_ADDR sourceFd
+NEXT_ASM_CONSTANT_ADDR sourceEof
+NEXT_ASM_CONSTANT_ADDR sourceCStr
+NEXT_ASM_CONSTANT_ADDR sourceStr
+NEXT_ASM_CONSTANT_ADDR wordCStr
+NEXT_ASM_CONSTANT_ADDR wordStr
+
+# Error/Panic Constants
+NEXT_ASM_CONSTANT_ADDR errno
+NEXT_ASM_CONSTANT_ADDR panic
+NEXT_ASM_CONSTANT_ADDR panicErr
+NEXT_ASM_CONSTANT_ADDR panicNtStr
+
+# Dictionary Constants
+NEXT_ASM_CONSTANT GLOBAL_DICT_OFFSET_STRUCT
+NEXT_ASM_CONSTANT GLOBAL_DICT_OFFSET_CODE_MIN
+NEXT_ASM_CONSTANT GLOBAL_DICT_OFFSET_CODE_HERE
+NEXT_ASM_CONSTANT GLOBAL_DICT_OFFSET_CODE_MAX
+NEXT_ASM_CONSTANT GLOBAL_DICT_OFFSET_META_MIN
+NEXT_ASM_CONSTANT GLOBAL_DICT_OFFSET_META_HERE
+NEXT_ASM_CONSTANT GLOBAL_DICT_OFFSET_META_MAX
+NEXT_ASM_CONSTANT DEFAULT_DICT_BUCKETS_CNT
+
+NEXT_ASM_CONSTANT_ADDR dictBucketsAddr
+NEXT_ASM_CONSTANT_ADDR dictBucketsAndValue 
+NEXT_ASM_CONSTANT_ADDR dictLTimeRoot
+NEXT_ASM_CONSTANT_ADDR dictLTimeMin
+NEXT_ASM_CONSTANT_ADDR dictLTimeHere
+NEXT_ASM_CONSTANT_ADDR dictLTimeMax
 
 heap: .int 0 # see setupMem
 .align 0x100
