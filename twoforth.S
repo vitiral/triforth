@@ -1622,7 +1622,7 @@ flush_sourceCStr_to_wordCStr:
 
 PANIC_LANDING MAX_WORD_CNT
 
-word: # Store the next word from the source into wordCStr
+word: # Read the next word from the source into wordCStr
   call fillSourceCStr
 
   MOVB_A sourceCStr # eax=sourceCount
@@ -1926,7 +1926,7 @@ metaSllFindName_dne:
   DROPP 2
   ret
 
-dictFindName: # %ecx:&cStr ( -- ) &eax:&meta (aka &node)
+dictGet: # %ecx:&cStr ( -- ) &eax:&meta (aka &node)
   // eax=0 if no node found.
   PUSHP %ecx
   # First try to find in localtime dict
@@ -2028,11 +2028,11 @@ TESTCASE dictPush
   addl $0xC, %edi # edi=nameCStr
   ASSERT_CSTR_NOCASE_EQ $test_dictWord1CStr, %edi
   movl $test_dictWord1CStr, %ecx
-  call dictFindName
+  call dictGet
   POPP %ebx
   call assertEaxEbxEq
   movl $test_dictNameDneCStr, %ecx
-  call dictFindName
+  call dictGet
   ASSERT_REG_EQ %eax, $0
   ret
 
@@ -2128,7 +2128,7 @@ callXt_cont:
   popl %esi # restore esi
   ret
 
-execOrComp: # %eax:xt ( -- )
+execOrCompile: # %eax:xt ( -- )
   // Execute or compile the xt based on compileState and xt.meta.IMM
   JMP_E $0, compileState, callXt # if compileState=0 just run it
   XT_TO_MT %eax, %ebx
@@ -2609,11 +2609,22 @@ NEXT_ASM_CONSTANT_ADDR dictLTimeHere
 NEXT_ASM_CONSTANT_ADDR dictLTimeMax
 
 ################################################################################
-#### Execution Loop                                                         ####
+#### Compiler Intrinsics                                                    ####
 ################################################################################
+
+NEXT_ASM_WORD word # ( -- addr count )
+  call word
+  MOVB_A wordCStr
+  PUSHP2 $wordCStr+1, %eax
+
+NEXT_ASM_WORD execOrCompile # ( ? xt -- ? )
+  POPP %eax
+  call execOrCompile
+
 # The execution loop starts reading from sourceFd and simply executes until it is
 # complete.
 NEXT_ASM_WORD executionLoop
+  call word
 
 heap: .int 0 # see setupMem
 .align 0x100
