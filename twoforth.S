@@ -2244,6 +2244,51 @@ setupStack:
   movl pstackMax, %ebp  # clear pstack
   jmp afterSetupStack # Note: cannot `ret` as we've modified rstack
 
+.macro ASMONLY_XT_TO_NTSTR xt
+  addl $CELL, \xt
+.endm
+
+setupDict: # this has to be at the end so that PREV_WORD_addrMETA is set
+  movl lastWord_addrMETA, %ecx
+  JRZ %ecx, _setupDict_setupImm
+  addrMETA_TO_XT %ecx
+  ASMONLY_XT_TO_NTSTR %ecx
+  call countntEcx
+  MOVB_A (%edx)
+  movb %al, wordCStr # move str count
+  BMOVE %edx, %ecx, $wordStr
+  DICT_PUSH $dictRTime, $wordCStr # eax=&meta
+
+  # Update the loop
+  movl lastWord_addrMETA, %ecx
+  movl (%ecx), %ebx
+  movl %ebx, lastWord_addrMETA
+
+  movl %eax, (%ecx) # update &meta to point to the real thing
+  DICT_META_GET_ADDR %ecx, xt, %ebx
+  movl %ecx, %eax
+  addrMETA_TO_XT %eax
+  movl %eax, (%ebx) # update xt to correct value
+  jmp setupDict
+_setupDict_setupImm:
+  .macro SETUP_IMM asmName
+    movl $metaAddr_\asmName , %ecx
+    DICT_META_GET_ADDR %ecx, info0, %ebx
+    movl (%ebx), %eax
+    orl $INFO0_IMM, %eax
+    movl %eax, (%ebx)
+  .endm
+
+  # update all the asm IMM words to be IMM
+  SETUP_IMM lineComment
+  ret
+
+
+triforthPathNt: .ascii "triforth.tf\0"
+startTriforth:
+  OPEN_SOURCE_FD $triforthPathNt
+  call executionLoop
+
 mainStartNtStr: .ascii "Starting Triforth...\n\0"
 .globl _start
 _start:
@@ -2253,10 +2298,11 @@ afterSetupStack:
   call setupHeap
   PNT_NTSTR $mainStartNtStr
   call testSuite
+  call setupDict
+  # call startTriforth
   EXIT $0
 
 .section .data
-.set PREV_WORD_MT, 0
 
 ################################################################################
 #### Pure Assembly Forth Words                                              ####
@@ -2266,25 +2312,27 @@ afterSetupStack:
 // to the dictionary (and you cannot mutate memory in the .text section).
 //
 // A pure assembly forth word will have the following structure:
-// &meta | &code -> | nameNtStr | code
+// &meta | &code | nameNtStr | code
 //
 // - &meta: WILL point to the "metadata" of the word in the dictionary. For now,
 //   (since we will add the words later) it will point to the previously
 //   defined word
 // - &code: contains pointer to the code section. A pointer to this is called
-//   the "xt"
+//   the "xt" (i.e. xt := &&code)
 // - nameNtName is the words null-terminated ascii name. This, along with the
 //   singly linked list formed by the &meta will be used to populate the
 //   dictionary before execution of forth source code.
 // - code: the code to execute for this word.
 
+
+.set PREV_WORD_addrMETA, 0 # note: changed in ASM_WORD_NAME
 .macro ASM_WORD_NAME name, asmName
   .align 4
-  metaAddr_\asmName :        .int PREV_WORD_MT
+  metaAddr_\asmName :        .int PREV_WORD_addrMETA
   xt_\asmName:          .int word_\asmName
   nameNtStr_\asmName :     .ascii "\name\0"
   word_\asmName :
-  .set PREV_WORD_MT,    metaAddr_\asmName
+  .set PREV_WORD_addrMETA,    metaAddr_\asmName
 .endm
 .macro ASM_WORD name
   ASM_WORD_NAME "\name", "\name"
@@ -2612,6 +2660,37 @@ NEXT_ASM_WORD executionLoop
   call executionLoop
 
 ################################################################################
+#### MISC                                                                   ####
+################################################################################
+NEXT_ASM_WORD_NAME "\\", lineComment
+lineComment:
+  cmpb $0, (sourceCStr)
+  jne 1f
+  call fillSourceCStr
+1:
+  MOVB_A (sourceCStr) # %eax=count
+  JRZ %eax, return # EOF
+  movl $sourceCStr+1, %ebx # %ebx=current character
+  movl %ebx, %ecx
+  addl %eax, %ecx # %ecx=end
+lineComment_loop:
+  JMP_E %ebx, %ecx, lineComment_continue
+  cmpb $'\n', (%ebx)
+  je lineComment_end
+  inc %ebx
+  jmp lineComment_loop
+lineComment_continue: # didn't find a newline, zero sourceCStr and try again
+  movb $0, sourceCStr
+  jmp lineComment
+lineComment_end: # found \n
+  inc %ebx # consume \n
+  subl %ebx, %ecx # ecx=count remaining bytes
+  movb %cl, sourceCStr # update count
+  movl %ecx, %eax # eax=count
+  movl $sourceCStr+1, %ecx # %ecx=&to note: ebx already = &from
+  jmp bmove
+
+################################################################################
 #### Forth Variables and Constants                                          ####
 ################################################################################
 
@@ -2680,7 +2759,8 @@ NEXT_ASM_CONSTANT_ADDR dictLTimeMin
 NEXT_ASM_CONSTANT_ADDR dictLTimeHere
 NEXT_ASM_CONSTANT_ADDR dictLTimeMax
 
-
+.align 4
+lastWord_addrMETA: .int PREV_WORD_addrMETA # used in setupDict
 heap: .int 0 # see setupMem
 .align 0x100
 heapMin:                     .space 0x200000  # 2MiB TODO: do dynamically from runtime
