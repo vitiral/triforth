@@ -1783,7 +1783,7 @@ test_words_end:
 // - There are really 3 dictionaries:
 //   1. Runtime: this is the "standard" one containing forth words that can be
 //      run at runtime. Runtime words should never depend on any other
-//      dictionary's words (and this is maintained by execOrCompile).
+//      dictionary's words (and this is maintained by executeOrCompile).
 //   2. Compiletime: this is a separate dictionary of words which can be
 //      completely discarded (code AND metadata) when "compilation" is
 //      complete. Compiletime words may depend on runtime words but not
@@ -1975,6 +1975,7 @@ dictGet: # %ecx:&cStr ( -- ) &eax:&meta (aka &node)
 foundLTime:
   DROPP 1
   ret
+
 
 ######
 # Dictionary tests
@@ -2169,15 +2170,15 @@ callXt_cont:
   popl %esi # restore esi
   ret
 
-execOrCompile: # %eax:xt ( -- )
+executeOrCompile: # %eax:xt ( -- )
   // Execute or compile the xt based on compileState and xt.meta.IMM
   JMP_E $0, compileState, callXt # if compileState=0 just run it
   XT_TO_MT %eax, %ebx
   addl $DICT_FIELD_info0, %ebx
   movl (%ebx), %ebx  # ebx=info0
-  JMP_TESTZ $INFO0_IMM, %ebx, execOrCompile_compile
+  JMP_TESTZ $INFO0_IMM, %ebx, executeOrCompile_compile
   jmp callXt
-execOrCompile_compile:
+executeOrCompile_compile:
   movl %eax, %ebx
   jmp compileXt
 
@@ -2200,8 +2201,21 @@ executionLoop:
   call dictGet
   JRZ %eax, panicNow_WORD_NOT_FOUND
   addrMETA_TO_XT %eax
-  call execOrCompile
+  call executeOrCompile
   jmp executionLoop
+
+################################################################################
+#### Colon Compiler                                                         ####
+################################################################################
+
+theanswerPathNt: .ascii "tests/theanswer.tf\0"
+TESTCASE theanswer
+  OPEN_SOURCE_FD $theanswerPathNt
+  call executionLoop
+  CLOSE_SOURCE_FD
+  ASSERT_TOP $0x42
+  ret
+
 
 ##############################
 # Main Entrypoint and test suite
@@ -2230,6 +2244,7 @@ testSuite:
 
   jmp assertClean
 
+
 setupHeap:
   // Sets up the heap, including the dictionary and other data structures.
   movl $heapMin, heap
@@ -2254,8 +2269,7 @@ setupDict: # this has to be at the end so that PREV_WORD_addrMETA is set
   addrMETA_TO_XT %ecx
   ASMONLY_XT_TO_NTSTR %ecx
   call countntEcx
-  MOVB_A (%edx)
-  movb %al, wordCStr # move str count
+  movb %dl, wordCStr # move str count
   BMOVE %edx, %ecx, $wordStr
   DICT_PUSH $dictRTime, $wordCStr # eax=&meta
 
@@ -2280,6 +2294,7 @@ _setupDict_setupImm:
   .endm
 
   # update all the asm IMM words to be IMM
+  SETUP_IMM hex
   SETUP_IMM lineComment
   ret
 
@@ -2288,6 +2303,7 @@ triforthPathNt: .ascii "triforth.tf\0"
 startTriforth:
   OPEN_SOURCE_FD $triforthPathNt
   call executionLoop
+  ret
 
 mainStartNtStr: .ascii "Starting Triforth...\n\0"
 .globl _start
@@ -2299,6 +2315,9 @@ afterSetupStack:
   PNT_NTSTR $mainStartNtStr
   call testSuite
   call setupDict
+
+  call testcase_theanswer
+  call assertClean
   # call startTriforth
   EXIT $0
 
@@ -2560,7 +2579,7 @@ NEXT_ASM_WORD "shl" # ( n c -- c<<n )
   DEFINE_NSH l 
 NEXT_ASM_WORD "shr" # ( n c -- c>>n )
   DEFINE_NSH r
-NEXT_ASM_WORD_NAME "/mod" divMod # ( dividend divisor -- quotient remainder )
+NEXT_ASM_WORD_NAME "/mod", divMod # ( dividend divisor -- quotient remainder )
   ZERO %edx
   POPP2 %eax, %ebx
   divl %ebx # %edx:%eax / %ebx => %eax=quotient %edx=remainder
@@ -2645,6 +2664,16 @@ NEXT_ASM_WORD asciiToBinaryFyte # ( count &b -- c )
   call asciiToBinary
   PUSHP %eax
 
+// ########
+// # Number Parsing
+NEXT_ASM_WORD_NAME "0x", hex
+  call word
+  movl $wordCStr, %ecx
+  MOVB_D (%ecx)
+  inc %ecx
+  call asciiToHex
+  PUSHP %eax
+
 ################################################################################
 #### Compiler Intrinsics                                                    ####
 ################################################################################
@@ -2653,9 +2682,9 @@ NEXT_ASM_WORD word # ( -- addr count )
   call word
   MOVB_A wordCStr
   PUSHP2 $wordCStr+1, %eax
-NEXT_ASM_WORD execOrCompile # ( ? xt -- ? )
+NEXT_ASM_WORD executeOrCompile # ( ? xt -- ? )
   POPP %eax
-  call execOrCompile
+  call executeOrCompile
 NEXT_ASM_WORD executionLoop
   call executionLoop
 
