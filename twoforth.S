@@ -80,11 +80,14 @@ pstackMax: .int 0
 
 ######
 # Global Variables / State / Buffers
+sourcePathNt: .byte 0
+  .space 0x3FF # path to current source
+sourceLine: .int 1     # current line of the source code
+sourceFd: .int STDIN   # where the source code is read from
 compileState: .int 0 # 0=runmode else=compiling
 initialEsp: .int 0 # initial %esp register, use to get args/ENV
 pntFd: .int STDERR # where to PNT to
 compilingType: .int 0xFFFFFFFF
-sourceFd: .int STDIN   # where the source code is read from
 .equ SOURCE_STR_CNT_MAX, 0x46  # maximim bytes of source read
 .equ WORD_CNT_MAX, 0x23        # maximum word size
 .equ WORD_STACK_SIZE, WORD_CNT_MAX+1
@@ -609,10 +612,20 @@ pntRstackDepth: # print the depth of the return stack
 .endm
 
 panicStartNtStr: .ascii "!! PANIC !! code=0x\0"
+panicWordNtStr: .ascii "  word=\0"
+panicSourceNtStr: .ascii "  source=\0"
+panicLineNtStr: .ascii "  line=0x\0"
 panicDefault:
   PNT_NTSTR $panicStartNtStr
   PNT_UX_SPC panicErr
   PNT_NTSTR_NL panicNtStr
+  PNT_NTSTR $panicWordNtStr
+  PNT_CSTR_NL $wordCStr
+  PNT_NTSTR $panicSourceNtStr
+  PNT_NTSTR $sourcePathNt
+  PNT_NTSTR $panicLineNtStr
+  PNT_UX_NL sourceLine
+
   call pntPstack
   PNT_ASCII $'\n'
   call pntRstackDepth
@@ -1292,7 +1305,7 @@ cmove_loop:
   call bmove
 .endm
 
-cStrMove: # %ebx:&fromCstr &ecx:&toCstr
+cStrMove: # %ebx:&fromCStr %ecx:&toCStr
   MOVB_A (%ebx)      # eax = count of from
   movb %al, (%ecx)   # set `to` to same count
   inc %ebx  # inc both to point at bytes (not count)
@@ -1302,6 +1315,19 @@ cStrMove: # %ebx:&fromCstr &ecx:&toCstr
 .macro CSTR_MOVE from, to
   SET_BC \from, \to
   call cStrMove
+.endm
+
+ntStrMove: # %ebx:&fromNtStr %ecx:&toNtStr
+  MOVB_A (%ebx)
+  movb %al, (%ecx)
+  JRZ %eax, return # note: the null byte is moved before return
+  inc %ebx
+  inc %ecx
+  jmp ntStrMove
+
+.macro NTSTR_MOVE from, to
+  SET_BC \from, \to
+  call ntStrMove
 .endm
 
 cmpCStr: # %eax:&aCStr %ecx:&bCStr ( -- ) %eax:cmp
@@ -1536,10 +1562,12 @@ sysclose: # %ebx:fd ( -- )
   ret
 
 .macro OPEN_SOURCE_FD filepathNt
-  SET_BCD \filepathNt, $O_RDONLY, $0666 # edx=permissions
+  NTSTR_MOVE \filepathNt, $sourcePathNt
+  SET_BCD $sourcePathNt, $O_RDONLY, $0666 # edx=permissions
   call sysopen
   JMP_L $0, %eax, panicNow_eaxIsErrno
   movl %eax, sourceFd
+  movl $1, sourceLine
 .endm
 .macro CLOSE_SOURCE_FD
   movl sourceFd, %ebx
@@ -1575,6 +1603,10 @@ findWhitespaceEnd: # %eax:count %ebx:&bytes ( -- ) %eax:count_remain %ebx:&not_w
   JRZ %eax, findWhitespaceEnd_none
   cmpb $' ', (%ebx)
   ja return # ja=Jmp Above
+  cmpb $'\n', (%ebx)
+  jne findWhitespaceEnd_notNewline
+  addl $1, (sourceLine)
+findWhitespaceEnd_notNewline:
   dec %eax
   inc %ebx
   jmp findWhitespaceEnd
@@ -1719,7 +1751,7 @@ test_wordWordsNtStr:
   .ascii "the\0quick\0brown\0fox\0jumped\0over\0the\0lazy\0dog\0\0"
 TESTCASE word
   PUSHR $test_wordWordsNtStr # (%esp)=expected word
-  OPEN_SOURCE_FD $file_some_words
+  OPEN_SOURCE_FD $sourcePathNt
 test_words:
   call word # get word from sourceFd
   # Get expected word
@@ -2034,6 +2066,7 @@ TESTCASE dictPush
   movl $test_dictNameDneCStr, %ecx
   call dictGet
   ASSERT_REG_EQ %eax, $0
+  # TODO: reset dictionary
   ret
 
 // Note: execution space looks like:
@@ -2046,6 +2079,14 @@ TESTCASE dictPush
 //
 // note: this is ONLY for new RTime or CTime words (not LTime words, which can
 // be added during compilation of RTime or CTime).
+
+.macro XT_TO_addrMETA xt
+  subl $CELL, \xt
+.endm
+.macro addrMETA_TO_XT addrMeta
+  addl $CELL, \addrMeta
+.endm
+
 dictNew: # %eax:dictType %ecx:&nameCStr ( -- ) %eax:&meta %ebx:xt
   movl %eax, compilingType # keep track of type of word being compiled.
   call getDictTypeGlobalAddr
@@ -2144,6 +2185,23 @@ execOrCompile_compile:
   movl \xt, %eax
   call callXt
 .endm
+
+################################################################################
+#### Execution Loop                                                         ####
+################################################################################
+PANIC_LANDING WORD_NOT_FOUND
+
+executionLoop:
+  call word
+  movl $wordCStr, %ecx
+  cmpb $0, (%ecx)
+  jz return
+
+  call dictGet
+  JRZ %eax, panicNow_WORD_NOT_FOUND
+  addrMETA_TO_XT %eax
+  call execOrCompile
+  jmp executionLoop
 
 ##############################
 # Main Entrypoint and test suite
@@ -2540,6 +2598,20 @@ NEXT_ASM_WORD asciiToBinaryFyte # ( count &b -- c )
   PUSHP %eax
 
 ################################################################################
+#### Compiler Intrinsics                                                    ####
+################################################################################
+
+NEXT_ASM_WORD word # ( -- addr count )
+  call word
+  MOVB_A wordCStr
+  PUSHP2 $wordCStr+1, %eax
+NEXT_ASM_WORD execOrCompile # ( ? xt -- ? )
+  POPP %eax
+  call execOrCompile
+NEXT_ASM_WORD executionLoop
+  call executionLoop
+
+################################################################################
 #### Forth Variables and Constants                                          ####
 ################################################################################
 
@@ -2608,23 +2680,6 @@ NEXT_ASM_CONSTANT_ADDR dictLTimeMin
 NEXT_ASM_CONSTANT_ADDR dictLTimeHere
 NEXT_ASM_CONSTANT_ADDR dictLTimeMax
 
-################################################################################
-#### Compiler Intrinsics                                                    ####
-################################################################################
-
-NEXT_ASM_WORD word # ( -- addr count )
-  call word
-  MOVB_A wordCStr
-  PUSHP2 $wordCStr+1, %eax
-
-NEXT_ASM_WORD execOrCompile # ( ? xt -- ? )
-  POPP %eax
-  call execOrCompile
-
-# The execution loop starts reading from sourceFd and simply executes until it is
-# complete.
-NEXT_ASM_WORD executionLoop
-  call word
 
 heap: .int 0 # see setupMem
 .align 0x100

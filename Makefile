@@ -9,5 +9,9 @@ twoforth: twoforth.S
 run: twoforth
 	out/twoforth
 
+# Notes:
+# - run to run it
+# - disas[semble] to list disasembly
+# - 
 gdb: twoforth
 	gdb out/twoforth
