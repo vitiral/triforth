@@ -80,9 +80,10 @@ pstackMax: .int 0
 
 ######
 # Global Variables / State / Buffers
+compileState: .int 0 # 0=runmode else=compiling
 initialEsp: .int 0 # initial %esp register, use to get args/ENV
 pntFd: .int STDERR # where to PNT to
-compilingType: .int 0xFFFFffff
+compilingType: .int 0xFFFFFFFF
 sourceFd: .int STDIN   # where the source code is read from
 .equ SOURCE_STR_CNT_MAX, 0x46  # maximim bytes of source read
 .equ WORD_CNT_MAX, 0x23        # maximum word size
@@ -268,6 +269,16 @@ testSpace_10: .int 0
 .endm
 .macro MUL4 a
   shll $2, \a # x<<2 is same as x*2^2=x*4
+.endm
+
+# Bit Testing
+.macro JMP_TESTZ a, b, location
+  test \a, \b
+  jz \location
+.endm
+.macro JMP_TESTNZ a, b, location
+  test \a, \b
+  jnz \location
 .endm
 
 return:
@@ -1439,8 +1450,8 @@ asciiToHex_loop:
   movb (%ecx), %bl
   cmpb $'_', %bl
   je asciiToHex_skip      # ignore underscores
-  test $0xF0000000, %eax  # panic if shift will result in "overflow"
-  jnz panicNow_INVALID_NUM_OVERFLOW
+  # panic if shift will result in "overflow"
+  JMP_TESTNZ $0xF0000000, %eax, panicNow_INVALID_NUM_OVERFLOW
   shl $4, %eax    # eax=eax*16
   call blToHex
   addl %ebx, %eax
@@ -1494,8 +1505,8 @@ asciiToBinary_loop:
   movb (%ecx), %bl
   cmpb $'_', %bl
   je asciiToBinary_skip      # ignore underscores
-  test $0x80000000, %eax  # panic if shift will result in "overflow"
-  jnz panicNow_INVALID_NUM_OVERFLOW
+  # panic if shift will result in "overflow"
+  JMP_TESTNZ $0x80000000, %eax, panicNow_INVALID_NUM_OVERFLOW
   shl $1, %eax    # eax=eax*2
   subb $'0', %bl
   cmpb $1, %bl
@@ -2118,13 +2129,12 @@ callXt_cont:
   ret
 
 execOrComp: # %eax:xt ( -- )
-  // Check the IMM of the xt. Execute it if it is immediate, compile it if it
-  // is not.
+  // Execute or compile the xt based on compileState and xt.meta.IMM
+  JMP_E $0, compileState, callXt # if compileState=0 just run it
   XT_TO_MT %eax, %ebx
   addl $DICT_FIELD_info0, %ebx
   movl (%ebx), %ebx  # ebx=info0
-  test $INFO0_IMM, %ebx
-  jz execOrCompile_compile
+  JMP_TESTZ $INFO0_IMM, %ebx, execOrCompile_compile
   jmp callXt
 execOrCompile_compile:
   movl %eax, %ebx
@@ -2134,7 +2144,6 @@ execOrCompile_compile:
   movl \xt, %eax
   call callXt
 .endm
-
 
 ##############################
 # Main Entrypoint and test suite
@@ -2536,7 +2545,7 @@ NEXT_ASM_WORD asciiToBinaryFyte # ( count &b -- c )
 
 .macro NEXT_ASM_CONSTANT name # define a constant
   NEXT_ASM_WORD "\name"
-    PUSHP $\name
+  PUSHP $\name
 .endm
 .macro NEXT_ASM_CONSTANT_ADDR name # define an address
   NEXT_ASM_WORD_NAME "&\name", "addr\name"
@@ -2556,14 +2565,17 @@ NEXT_ASM_CONSTANT O_WRONLY
 NEXT_ASM_CONSTANT O_RDWR
 NEXT_ASM_CONSTANT WORD_CNT_MAX
 
-# Stack Constants
+# Compiler Intrinsics
+NEXT_ASM_CONSTANT_ADDR compileState
+
+# Stack Address Constants
 NEXT_ASM_CONSTANT_ADDR rstackMin
 NEXT_ASM_CONSTANT_ADDR rstackMax
 NEXT_ASM_CONSTANT_ADDR pstackMin
 NEXT_ASM_CONSTANT_ADDR pstackMax
 NEXT_ASM_CONSTANT_ADDR initialEsp
 
-# Word/Source Constants
+# Word/Source Address Constants
 NEXT_ASM_CONSTANT_ADDR pntFd
 NEXT_ASM_CONSTANT_ADDR compilingType
 NEXT_ASM_CONSTANT_ADDR sourceFd
@@ -2573,7 +2585,7 @@ NEXT_ASM_CONSTANT_ADDR sourceStr
 NEXT_ASM_CONSTANT_ADDR wordCStr
 NEXT_ASM_CONSTANT_ADDR wordStr
 
-# Error/Panic Constants
+# Error/Panic Address Constants
 NEXT_ASM_CONSTANT_ADDR errno
 NEXT_ASM_CONSTANT_ADDR panic
 NEXT_ASM_CONSTANT_ADDR panicErr
@@ -2595,6 +2607,13 @@ NEXT_ASM_CONSTANT_ADDR dictLTimeRoot
 NEXT_ASM_CONSTANT_ADDR dictLTimeMin
 NEXT_ASM_CONSTANT_ADDR dictLTimeHere
 NEXT_ASM_CONSTANT_ADDR dictLTimeMax
+
+################################################################################
+#### Execution Loop                                                         ####
+################################################################################
+# The execution loop starts reading from sourceFd and simply executes until it is
+# complete.
+NEXT_ASM_WORD executionLoop
 
 heap: .int 0 # see setupMem
 .align 0x100
