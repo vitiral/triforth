@@ -1144,7 +1144,7 @@ popRsInvalid:
 .endm
 
 ################################################################################
-#### Byte comparison functions                                              ####
+#### Byte comparison and movement functions                                 ####
 ################################################################################
 
 .equ LT, -1
@@ -1868,7 +1868,7 @@ getDictTypeGlobalAddr: # %eax:dictType ( -- ) %eax:dictGlobalAddr
 dictAddr_ RTime
 dictAddr_ CTime
 
-dictPush: # %eax:dictTypeGlobalAddr %ecx:&nameCStr ( -- ) %eax:mt (aka &newNode)
+dictPush: # %eax:dictTypeGlobalAddr %ecx:&nameCStr ( -- ) %eax:&meta (aka &newNode)
   PUSHP %ecx # stack: ( &nameCStr )
   DICT_GLOBAL_GET_ADDR META_HERE, %eax # %eax=&metaHere
   movl (%eax), %edx # edx=metaHere=&newNode
@@ -1893,7 +1893,7 @@ dictPush: # %eax:dictTypeGlobalAddr %ecx:&nameCStr ( -- ) %eax:mt (aka &newNode)
   movl %edi, %eax # eax=&root
   GET_P0 %ebx   # ebx=&newNode stack: ( )
   call sllPush
-  POPP %eax # eax=&node=mt
+  POPP %eax # eax=&node=&meta
   ret
 
 metaSllFindName: # %eax:&node %ecx:&cStr ( -- ) %eax:&node
@@ -1915,7 +1915,7 @@ metaSllFindName_dne:
   DROPP 2
   ret
 
-dictFindName: # %ecx:&cStr ( -- ) &eax:mt (aka &node)
+dictFindName: # %ecx:&cStr ( -- ) &eax:&meta (aka &node)
   // eax=0 if no node found.
   PUSHP %ecx
   # First try to find in localtime dict
@@ -2026,16 +2026,16 @@ TESTCASE dictPush
   ret
 
 // Note: execution space looks like:
-// mt | &code (dereferenced xt) | ...
+// &meta | &code (dereferenced xt) | ...
 //
-// mt is the meta-token and allows fast lookup from xt -> mt -> INFO.
+// &meta is the meta-token and allows fast lookup from xt -> &meta -> INFO.
 // For pure-assembly, &code points to "..." and "..." is the code to execute.
 // For forth words, &code points to an assembly location called "doWordNext"
 // which as you might expect executes words (aka xts)
 //
 // note: this is ONLY for new RTime or CTime words (not LTime words, which can
 // be added during compilation of RTime or CTime).
-dictNew: # %eax:dictType %ecx:&nameCStr ( -- ) %eax:mt %ebx:xt
+dictNew: # %eax:dictType %ecx:&nameCStr ( -- ) %eax:&meta %ebx:xt
   movl %eax, compilingType # keep track of type of word being compiled.
   call getDictTypeGlobalAddr
   PUSHP %eax # stack: ( &dictGlobal )
@@ -2046,7 +2046,7 @@ dictNew: # %eax:dictType %ecx:&nameCStr ( -- ) %eax:mt %ebx:xt
   movl %ebx, (%eax) # update codeHere to new location
   call dictPush
   POPP %ebx # ebx=xt-4
-  movl %eax, (%ebx) # set address left of xt to be backreference to mt
+  movl %eax, (%ebx) # set address left of xt to be backreference to &meta
   addl $4, %ebx
   DICT_META_SET %eax, xt, %ebx, %edx # set xt in metadata
   ret
@@ -2094,7 +2094,7 @@ compileXt_valid:
 word_next: NEXT  # a place to jmp to like `return`
 
 doWord:
-  // The executable that most forth words point to.
+  // The executable address that most forth words point to.
   // 1. Push the next xt from the _calling word_ (esi) onto the return stack
   pushl %esi
   // 2. Add CELL to our own xt (stored at eax from NEXT) and make esi point to
@@ -2117,7 +2117,6 @@ callXt_cont:
   popl %esi # restore esi
   ret
 
-
 execOrComp: # %eax:xt ( -- )
   // Check the IMM of the xt. Execute it if it is immediate, compile it if it
   // is not.
@@ -2135,8 +2134,6 @@ execOrCompile_compile:
   movl \xt, %eax
   call callXt
 .endm
-
-
 
 
 ##############################
@@ -2198,27 +2195,29 @@ afterSetupStack:
 #### Pure Assembly Forth Words                                              ####
 ################################################################################
 // Note: we must define these in the .data section because we must mutate the
-// mtAddr_\name memory to point to the actual metadata once the word is added
+// metaAddr_\name memory to point to the actual metadata once the word is added
 // to the dictionary (and you cannot mutate memory in the .text section).
 //
 // A pure assembly forth word will have the following structure:
-// mt | &code -> | nameNtStr | code
+// &meta | &code -> | nameNtStr | code
 //
-// - mt: WILL point to the "metadata" of the word in the dictionary. For now,
-//   (since we will add the words later) it will point at the previously
+// - &meta: WILL point to the "metadata" of the word in the dictionary. For now,
+//   (since we will add the words later) it will point to the previously
 //   defined word
-// - wordNtName is the words null-terminated ascii name. This, along with the
-//   singly linked list formed by the mt will be used to populate the dictionary
-//   before execution of forth source code.
+// - &code: contains pointer to the code section. A pointer to this is called
+//   the "xt"
+// - nameNtName is the words null-terminated ascii name. This, along with the
+//   singly linked list formed by the &meta will be used to populate the
+//   dictionary before execution of forth source code.
 // - code: the code to execute for this word.
 
 .macro ASM_WORD_NAME name, asmName
   .align 4
-  mtAddr_\asmName :        .int PREV_WORD_MT
+  metaAddr_\asmName :        .int PREV_WORD_MT
   xt_\asmName:          .int word_\asmName
   nameNtStr_\asmName :     .ascii "\name\0"
   word_\asmName :
-  .set PREV_WORD_MT,    mtAddr_\asmName
+  .set PREV_WORD_MT,    metaAddr_\asmName
 .endm
 .macro ASM_WORD name
   ASM_WORD_NAME "\name", "\name"
