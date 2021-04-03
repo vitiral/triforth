@@ -2119,11 +2119,15 @@ TESTCASE dictPush
 // note: this is ONLY for new RTime or CTime words (not LTime words, which can
 // be added during compilation of RTime or CTime).
 
-.macro XT_TO_MT xt
+.macro XT_TO_MT xt # xt -> mt (&&meta)
   subl $CELL, \xt
 .endm
-.macro MT_TO_XT addrMeta
-  addl $CELL, \addrMeta
+.macro XT_TO_addrMeta xt # xt -> &meta
+  XT_TO_MT \xt
+  movl (\xt), \xt
+.endm
+.macro MT_TO_XT mt
+  addl $CELL, \mt
 .endm
 
 dictNew: # %eax:dictType %ecx:&nameCStr ( -- ) %eax:&meta %ebx:xt
@@ -2155,10 +2159,6 @@ compile: # %ebx:value ( -- )
   movl %ebx, (%ecx)  # set value at HERE
   addl $CELL, (%eax) # increment HERE
   ret
-
-.macro XT_TO_MT xtReg, reg
-  movl -4(\xtReg), \reg
-.endm
 
 PANIC_LANDING INVALID_XT
 compileXt: # %ebx:xt ( -- )
@@ -2211,7 +2211,8 @@ callXt_cont:
 executeOrCompile: # %eax:xt ( -- )
   // Execute or compile the xt based on compileState and xt.meta.IMM
   JMP_E $0, compileState, callXt # if compileState=0 just run it
-  XT_TO_MT %eax, %ebx
+  movl %eax, %ebx
+  XT_TO_addrMeta %ebx
   addl $DICT_FIELD_info0, %ebx
   movl (%ebx), %ebx  # ebx=info0
   JMP_TESTZ $INFO0_IMM, %ebx, executeOrCompile_compile
@@ -2232,11 +2233,16 @@ PANIC_LANDING WORD_NOT_FOUND
 
 executionLoop:
   call word
+  MOVB_A wordCStr
+  PNT_UX_NL %eax
+  PNT_CSTR_NL $wordCStr
+
   movl $wordCStr, %ecx
   cmpb $0, (%ecx)
   jz return
 
   call dictGet
+  DBG $0x1111
   JRZ %eax, panicNow_WORD_NOT_FOUND
   MT_TO_XT %eax
   call executeOrCompile
@@ -2258,7 +2264,7 @@ TESTCASE theanswer
 ##############################
 # Main Entrypoint and test suite
 
-testSuite:
+asmTestSuite:
   call assertClean
 
   call testcase_pureAsm
@@ -2281,6 +2287,12 @@ testSuite:
   call testcase_dictPush
 
   jmp assertClean
+
+forthTestSuite:
+  call testcase_theanswer
+  call assertClean
+  ret
+
 
 
 setupHeap:
@@ -2313,19 +2325,39 @@ setupDict: # this has to be at the end so that PREV_WORD_MT is set
 
   PNT_CSTR_NL $wordCStr # TODO: remove
 
-  DICT_PUSH $dictRTime, $wordCStr # eax=&meta
+  DICT_PUSH $dictRTime, $wordCStr # eax=new &meta
 
   # Update the loop with the previous word
-  movl lastWord_MT, %ecx # %ecx=&word (will be &&meta)
-  movl (%ecx), %ebx            # %ebx=&word.&prev
+  movl lastWord_MT, %ecx # %ecx=mt (&word)
+  movl (%ecx), %ebx      # %ebx=&word.&prev
   movl %ebx, lastWord_MT
 
-  movl %eax, (%ecx) # set the &meta slot next to &code to &meta
+  movl %eax, (%ecx) # update mt (&&meta) to valid &meta
 
-  DICT_META_GET_ADDR %eax, xt, %ebx # %ebx=&meta.xt
-  movl %ecx, %eax # ecx=&&meta
-  MT_TO_XT %eax
-  movl %eax, (%ebx) # update xt to correct value
+  movl %ecx, %edx # %edx=mt
+  MT_TO_XT %edx # %edx=xt
+  DICT_META_GET_ADDR %eax, xt, %ebx # %ebx=&xt
+  movl %edx, (%ebx) # update meta.xt to correct value
+
+  # Assert things went as planned
+  movl %ecx, testSpace_00 # expect mt
+  movl (%ecx), %ecx
+  movl %ecx, testSpace_04 # expect &meta
+
+  # assert &meta is the same
+  movl $wordCStr, %ecx
+  call dictGet
+  ASSERT_REG_EQ %eax, testSpace_04
+
+  # assert xt is the same
+  DICT_META_GET testSpace_04, xt, %eax
+  movl testSpace_00, %ebx # ebx=mt
+  MT_TO_XT %ebx
+  call assertEaxEbxEq
+
+  DICT_META_GET_ADDR testSpace_04, nameCStr, %eax
+  ASSERT_CSTR_NOCASE_EQ %eax, $wordCStr
+
   jmp setupDict
 _setupDict_setupImm:
   .macro SETUP_IMM asmName
@@ -2356,11 +2388,12 @@ _start:
 afterSetupStack:
   call setupHeap
   PNT_NTSTR $mainStartNtStr
-  call testSuite
+  call asmTestSuite
+
   call setupDict
 
-  call testcase_theanswer
-  call assertClean
+  call forthTestSuite
+
   # call startTriforth
   EXIT $0
 
