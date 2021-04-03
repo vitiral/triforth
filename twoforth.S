@@ -611,6 +611,15 @@ pntRstackDepth: # print the depth of the return stack
   call restoreRegisters
 .endm
 
+.macro DBG_NTSTR ntStr
+  call snapshotRegisters
+  PNT_NTSTR $dbgStartNtStr
+  PNT_NTSTR_NT \ntStr
+  call pntPstack
+  PNT_NTSTR $dbgEndNtStr
+  call restoreRegisters
+.endm
+
 panicStartNtStr: .ascii "!! PANIC !! code=0x\0"
 panicWordNtStr: .ascii "  word=\0"
 panicSourceNtStr: .ascii "  source=\0"
@@ -1791,6 +1800,40 @@ test_words_end:
 //   3. Localtime: yet another dictionary containing words (typically
 //      immediate or debugging) for use within a function. Can be used to make one-off macros
 //      for helpful variable naming, etc.
+//
+// Before we define our dictionary, it's important to understand how our
+// memeory is going to be layed out. The first thing to know is that our
+// dictionary metadata is completely separate from our executable code. This is
+// important as it means we can drop our dictionary metadata at any time.
+//
+// Our executable code for pure-assembly functions will look like this:
+// &meta | &code | nameNtStr | code
+//
+// This could be called a type of "struct", although both nameNtStr and code can have
+// any size.
+//
+// - &meta: WILL point to the "metadata" of the word in the dictionary. When defining
+//   assembly words it will initially point to the "previous" defined word, but is
+//   updated by setupDict.
+// - &code: contains pointer to the code section.
+// - nameNtName: the words null-terminated ascii name. Used to populate the
+//   initial dictionary from pure assembly functions.
+// - code: the pure-assembly code to execute for this word.
+//
+// A few shortcut aliases here:
+// - mt is aliased as &&meta. It is short for "meta token" and is literally
+//   reference to the &meta for that word. In other words, it has the assumption that
+//   there is a &code stored for the same word directly after it.
+// - xt is aliased as &&code. It is short for "execution token" and is literally a
+//   a reference to the &code for that word.
+//
+// Just for completeness, a "pure forth" word will look something like this:
+// &meta | &code | ... xt's of words to execute for this word ...
+//
+// The dictionary on the other hand is the same for both assembly and pure-forth.
+// It is composed of meta nodes with a structure defined below by the various
+// DICT_FIELD_* constants:
+// &next | xt | info0 | nameCStr (align 4)
 
 # Bitmap for info0
 .equ INFO0_IMM, 0x10000000
@@ -2071,20 +2114,15 @@ TESTCASE dictPush
   ret
 
 // Note: execution space looks like:
-// &meta | &code (dereferenced xt) | ...
 //
-// &meta is the meta-token and allows fast lookup from xt -> &meta -> INFO.
-// For pure-assembly, &code points to "..." and "..." is the code to execute.
-// For forth words, &code points to an assembly location called "doWordNext"
-// which as you might expect executes words (aka xts)
 //
 // note: this is ONLY for new RTime or CTime words (not LTime words, which can
 // be added during compilation of RTime or CTime).
 
-.macro XT_TO_addrMETA xt
+.macro XT_TO_MT xt
   subl $CELL, \xt
 .endm
-.macro addrMETA_TO_XT addrMeta
+.macro MT_TO_XT addrMeta
   addl $CELL, \addrMeta
 .endm
 
@@ -2200,7 +2238,7 @@ executionLoop:
 
   call dictGet
   JRZ %eax, panicNow_WORD_NOT_FOUND
-  addrMETA_TO_XT %eax
+  MT_TO_XT %eax
   call executeOrCompile
   jmp executionLoop
 
@@ -2263,25 +2301,30 @@ setupStack:
   addl $CELL, \xt
 .endm
 
-setupDict: # this has to be at the end so that PREV_WORD_addrMETA is set
-  movl lastWord_addrMETA, %ecx
+setupDict: # this has to be at the end so that PREV_WORD_MT is set
+  movl lastWord_MT, %ecx
   JRZ %ecx, _setupDict_setupImm
-  addrMETA_TO_XT %ecx
+  MT_TO_XT %ecx
   ASMONLY_XT_TO_NTSTR %ecx
+
   call countntEcx
   movb %dl, wordCStr # move str count
   BMOVE %edx, %ecx, $wordStr
+
+  PNT_CSTR_NL $wordCStr # TODO: remove
+
   DICT_PUSH $dictRTime, $wordCStr # eax=&meta
 
-  # Update the loop
-  movl lastWord_addrMETA, %ecx
-  movl (%ecx), %ebx
-  movl %ebx, lastWord_addrMETA
+  # Update the loop with the previous word
+  movl lastWord_MT, %ecx # %ecx=&word (will be &&meta)
+  movl (%ecx), %ebx            # %ebx=&word.&prev
+  movl %ebx, lastWord_MT
 
-  movl %eax, (%ecx) # update &meta to point to the real thing
-  DICT_META_GET_ADDR %ecx, xt, %ebx
-  movl %ecx, %eax
-  addrMETA_TO_XT %eax
+  movl %eax, (%ecx) # set the &meta slot next to &code to &meta
+
+  DICT_META_GET_ADDR %eax, xt, %ebx # %ebx=&meta.xt
+  movl %ecx, %eax # ecx=&&meta
+  MT_TO_XT %eax
   movl %eax, (%ebx) # update xt to correct value
   jmp setupDict
 _setupDict_setupImm:
@@ -2330,28 +2373,18 @@ afterSetupStack:
 // metaAddr_\name memory to point to the actual metadata once the word is added
 // to the dictionary (and you cannot mutate memory in the .text section).
 //
-// A pure assembly forth word will have the following structure:
-// &meta | &code | nameNtStr | code
-//
-// - &meta: WILL point to the "metadata" of the word in the dictionary. For now,
-//   (since we will add the words later) it will point to the previously
-//   defined word
-// - &code: contains pointer to the code section. A pointer to this is called
-//   the "xt" (i.e. xt := &&code)
-// - nameNtName is the words null-terminated ascii name. This, along with the
-//   singly linked list formed by the &meta will be used to populate the
-//   dictionary before execution of forth source code.
-// - code: the code to execute for this word.
+// See the "Forth Dictionary" documentation for the memory layout description.
+// Note that we use the &meta slot to temporarily store the previous pure-asm
+// forth word so that setupDict can find them.
 
-
-.set PREV_WORD_addrMETA, 0 # note: changed in ASM_WORD_NAME
+.set PREV_WORD_MT, 0 # note: changed in ASM_WORD_NAME
 .macro ASM_WORD_NAME name, asmName
   .align 4
-  metaAddr_\asmName :        .int PREV_WORD_addrMETA
+  metaAddr_\asmName :        .int PREV_WORD_MT
   xt_\asmName:          .int word_\asmName
   nameNtStr_\asmName :     .ascii "\name\0"
   word_\asmName :
-  .set PREV_WORD_addrMETA,    metaAddr_\asmName
+  .set PREV_WORD_MT,    metaAddr_\asmName
 .endm
 .macro ASM_WORD name
   ASM_WORD_NAME "\name", "\name"
@@ -2789,7 +2822,7 @@ NEXT_ASM_CONSTANT_ADDR dictLTimeHere
 NEXT_ASM_CONSTANT_ADDR dictLTimeMax
 
 .align 4
-lastWord_addrMETA: .int PREV_WORD_addrMETA # used in setupDict
+lastWord_MT: .int PREV_WORD_MT # used in setupDict
 heap: .int 0 # see setupMem
 .align 0x100
 heapMin:                     .space 0x200000  # 2MiB TODO: do dynamically from runtime
