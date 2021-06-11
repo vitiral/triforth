@@ -2252,14 +2252,6 @@ executionLoop:
 #### Colon Compiler                                                         ####
 ################################################################################
 
-theanswerPathNt: .ascii "tests/theanswer.tf\0"
-TESTCASE theanswer
-  OPEN_SOURCE_FD $theanswerPathNt
-  call executionLoop
-  CLOSE_SOURCE_FD
-  ASSERT_TOP $0x42
-  ret
-
 
 ##############################
 # Main Entrypoint and test suite
@@ -2289,6 +2281,7 @@ asmTestSuite:
   jmp assertClean
 
 forthTestSuite:
+  call testcase_setupDict
   call testcase_theanswer
   call assertClean
   ret
@@ -2371,6 +2364,23 @@ _setupDict_setupImm:
   # update all the asm IMM words to be IMM
   SETUP_IMM hex
   SETUP_IMM lineComment
+  ret
+
+.macro setupDict_assert asmName
+  move the stuff that moves NtSTr to wordCStr into a function/macro and use it
+  here
+.endm
+
+TESTCASE setupDict
+  TODO # 
+  ret
+
+theanswerPathNt: .ascii "tests/theanswer.tf\0"
+TESTCASE theanswer
+  OPEN_SOURCE_FD $theanswerPathNt
+  call executionLoop
+  CLOSE_SOURCE_FD
+  ASSERT_TOP $0x42
   ret
 
 
